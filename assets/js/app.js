@@ -563,6 +563,10 @@ const App = {
                     response = await API.channelDirections.get(id);
                     title = 'Редактирование направления';
                     break;
+                case 'channels':
+                    response = await API.cableChannels.get(id);
+                    title = 'Редактирование канала';
+                    break;
                 case 'markers':
                     response = await API.markerPosts.get(id);
                     title = 'Редактирование столбика';
@@ -701,6 +705,36 @@ const App = {
                         </button>
                     </form>
                 `;
+            } else if (type === 'channels') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
+                        <div class="form-group">
+                            <label>Направление</label>
+                            <input type="text" value="${obj.direction_number || obj.direction_id || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Номер канала</label>
+                            <input type="text" value="${obj.channel_number || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Тип</label>
+                            <select name="kind_id" id="modal-kind-select" data-value="${obj.kind_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние</label>
+                            <select name="status_id" id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Диаметр (мм)</label>
+                            <input type="number" name="diameter_mm" value="${obj.diameter_mm || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
+                        </div>
+                    </form>
+                `;
             } else if (type === 'groups') {
                 formHtml = `
                     <form id="edit-object-form">
@@ -812,6 +846,9 @@ const App = {
                 case 'directions':
                     response = await API.channelDirections.update(id, data);
                     break;
+                case 'channels':
+                    response = await API.cableChannels.update(id, data);
+                    break;
                 case 'markers':
                     response = await API.markerPosts.update(id, data);
                     break;
@@ -870,6 +907,9 @@ const App = {
                     break;
                 case 'directions':
                     response = await API.channelDirections.delete(id);
+                    break;
+                case 'channels':
+                    response = await API.cableChannels.delete(id);
                     break;
                 case 'markers':
                     response = await API.markerPosts.delete(id);
@@ -1589,7 +1629,7 @@ const App = {
                     <input type="hidden" name="object_type_code" value="channel">
                     <div class="form-group">
                         <label>Номер *</label>
-                        <input type="text" name="number" required>
+                        <input type="text" name="number" required readonly style="background: var(--bg-tertiary);">
                     </div>
                     <div class="form-group">
                         <label>Начальный колодец *</label>
@@ -1877,6 +1917,32 @@ const App = {
                     if (document.getElementById('modal-end-well-select')) {
                         document.getElementById('modal-end-well-select').innerHTML = wellOptions;
                     }
+
+                    // Автозаполнение номера направления по выбранным колодцам (start-end)
+                    const startSelect = document.getElementById('modal-start-well-select');
+                    const endSelect = document.getElementById('modal-end-well-select');
+                    const numberInput = document.querySelector('#add-object-form input[name="number"]');
+                    if (numberInput) {
+                        numberInput.readOnly = true;
+                        numberInput.style.background = 'var(--bg-tertiary)';
+                    }
+                    const updateNumber = () => {
+                        if (!numberInput || !startSelect || !endSelect) return;
+                        const startId = startSelect.value;
+                        const endId = endSelect.value;
+                        const startText = startSelect.selectedOptions?.[0]?.textContent?.trim() || '';
+                        const endText = endSelect.selectedOptions?.[0]?.textContent?.trim() || '';
+                        if (startId && endId && startText && endText) {
+                            numberInput.value = `${startText}-${endText}`;
+                        } else {
+                            numberInput.value = '';
+                        }
+                    };
+                    if (startSelect && endSelect && numberInput) {
+                        startSelect.onchange = updateNumber;
+                        endSelect.onchange = updateNumber;
+                        updateNumber();
+                    }
                 }
             }
 
@@ -2027,7 +2093,7 @@ const App = {
                 <input type="hidden" name="end_well_id" value="${endWell.id}">
                 <div class="form-group">
                     <label>Номер *</label>
-                    <input type="text" name="number" required placeholder="Например: ${startWell.number}-${endWell.number}">
+                    <input type="text" name="number" required readonly style="background: var(--bg-tertiary);" value="${startWell.number}-${endWell.number}">
                 </div>
                 <div class="form-group">
                     <label>Начальный колодец</label>
@@ -2261,8 +2327,16 @@ const App = {
      */
     editCurrentObject() {
         const panel = document.getElementById('object-info-panel');
-        const type = panel.dataset.objectType;
+        const rawType = panel.dataset.objectType;
         const id = panel.dataset.objectId;
+
+        // Приводим типы объектов карты к типам вкладок/модалок приложения
+        const typeMap = {
+            well: 'wells',
+            channel_direction: 'directions',
+            marker_post: 'markers',
+        };
+        const type = typeMap[rawType] || rawType;
         
         if (type && id) {
             this.showEditObjectModal(type, id);
