@@ -220,6 +220,11 @@ class UnifiedCableController extends BaseController
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
 
+        // number генерируется автоматически после вставки, но параметр нужен для SQL с :number
+        if (!array_key_exists('number', $data)) {
+            $data['number'] = null;
+        }
+
         // Убедиться, что все необязательные поля присутствуют (даже если null)
         $optionalFields = ['contract_id', 'length_declared', 'installation_date', 'notes'];
         foreach ($optionalFields as $field) {
@@ -303,16 +308,14 @@ class UnifiedCableController extends BaseController
                 $this->updateDuctCableLength($id);
             }
 
-            // Формируем номер: КАБ-<код_собств>-<id>-<суффикс>
+            // Формируем номер: КАБ-<код_собств>-<id>
             $ownerCode = '';
             if (!empty($data['owner_id'])) {
                 $owner = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => (int) $data['owner_id']]);
                 $ownerCode = $owner['code'] ?? '';
             }
-            $suffixRaw = (string) $this->request->input('number_suffix', '');
-            $suffix = preg_replace('/[^0-9A-Za-zА-Яа-яЁё_-]/u', '', $suffixRaw);
-            if ($ownerCode && $suffix) {
-                $number = "КАБ-{$ownerCode}-{$id}-{$suffix}";
+            if ($ownerCode) {
+                $number = "КАБ-{$ownerCode}-{$id}";
                 $this->db->update('cables', ['number' => $number], 'id = :id', ['id' => $id]);
             }
 
@@ -353,7 +356,8 @@ class UnifiedCableController extends BaseController
         }
 
         $data = $this->request->only([
-            'number', 'cable_catalog_id', 'cable_type_id', 'owner_id',
+            // number не редактируется
+            'cable_catalog_id', 'cable_type_id', 'owner_id',
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);

@@ -166,6 +166,11 @@ class MarkerPostController extends BaseController
             'height_m', 'material', 'installation_date', 'notes'
         ]);
 
+        // number генерируется автоматически после вставки, но параметр нужен для SQL с :number
+        if (!array_key_exists('number', $data)) {
+            $data['number'] = null;
+        }
+
         // Убедиться, что все необязательные поля присутствуют (даже если null)
         $optionalFields = ['height_m', 'material', 'installation_date', 'notes'];
         foreach ($optionalFields as $field) {
@@ -225,16 +230,14 @@ class MarkerPostController extends BaseController
             $stmt = $this->db->query($sql, $data);
             $id = $stmt->fetchColumn();
 
-            // Формируем номер: СТ-<код_собств>-<id>-<суффикс>
+            // Формируем номер: СТ-<код_собств>-<id>
             $ownerCode = '';
             if (!empty($data['owner_id'])) {
                 $owner = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => (int) $data['owner_id']]);
                 $ownerCode = $owner['code'] ?? '';
             }
-            $suffixRaw = (string) $this->request->input('number_suffix', '');
-            $suffix = preg_replace('/[^0-9A-Za-zА-Яа-яЁё_-]/u', '', $suffixRaw);
-            if ($ownerCode && $suffix) {
-                $number = "СТ-{$ownerCode}-{$id}-{$suffix}";
+            if ($ownerCode) {
+                $number = "СТ-{$ownerCode}-{$id}";
                 $this->db->update('marker_posts', ['number' => $number], 'id = :id', ['id' => $id]);
             }
 
@@ -268,8 +271,9 @@ class MarkerPostController extends BaseController
             Response::error('Столбик не найден', 404);
         }
 
+        // number не редактируется
         $data = $this->request->only([
-            'number', 'owner_id', 'type_id', 'kind_id', 'status_id',
+            'owner_id', 'type_id', 'kind_id', 'status_id',
             'height_m', 'material', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);

@@ -103,8 +103,10 @@ const App = {
             input.addEventListener('change', () => this.handleLayerToggle(input));
         });
 
-        // Фильтры
-        document.getElementById('btn-apply-filters').addEventListener('click', () => this.applyFilters());
+        // Фильтры (авто-применение при выборе)
+        ['filter-group', 'filter-owner', 'filter-status', 'filter-contract'].forEach((id) => {
+            document.getElementById(id)?.addEventListener('change', () => this.applyFilters());
+        });
         document.getElementById('btn-reset-filters').addEventListener('click', () => this.resetFilters());
 
         // Закрытие панели информации
@@ -602,7 +604,7 @@ const App = {
 
             let formHtml = '';
 
-            if (type === 'wells' || type === 'markers') {
+            if (type === 'wells') {
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
@@ -657,15 +659,66 @@ const App = {
                             <label>Примечания</label>
                             <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
                         </div>
+                    </form>
+                `;
+            } else if (type === 'markers') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
-                            <label>Добавить в группы</label>
-                            <div id="groups-checkboxes" style="max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: 4px;">
-                                ${groups.length > 0 ? groups.map(g => `
-                                    <label style="display: block; margin-bottom: 4px;">
-                                        <input type="checkbox" name="group_ids" value="${g.id}"> ${g.name}
-                                    </label>
-                                `).join('') : '<p class="text-muted">Нет доступных групп</p>'}
+                            <label>Номер</label>
+                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Система координат</label>
+                            <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
+                                <option value="wgs84" selected>WGS84 (широта/долгота)</option>
+                                <option value="msk86">МСК86 Зона 4 (X/Y)</option>
+                            </select>
+                        </div>
+                        <div id="coords-wgs84-inputs">
+                            <div class="form-group">
+                                <label>Широта (WGS84)</label>
+                                <input type="number" name="latitude" step="0.000001" value="${obj.latitude || ''}">
                             </div>
+                            <div class="form-group">
+                                <label>Долгота (WGS84)</label>
+                                <input type="number" name="longitude" step="0.000001" value="${obj.longitude || ''}">
+                            </div>
+                        </div>
+                        <div id="coords-msk86-inputs" style="display: none;">
+                            <div class="form-group">
+                                <label>X (МСК86)</label>
+                                <input type="number" name="x_msk86" step="0.01" value="${obj.x_msk86 || ''}">
+                            </div>
+                            <div class="form-group">
+                                <label>Y (МСК86)</label>
+                                <input type="number" name="y_msk86" step="0.01" value="${obj.y_msk86 || ''}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Собственник *</label>
+                            <select name="owner_id" required id="modal-owner-select" data-value="${obj.owner_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Вид *</label>
+                            <select name="type_id" required id="modal-type-select" data-value="${obj.type_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Тип *</label>
+                            <select name="kind_id" required id="modal-kind-select" data-value="${obj.kind_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние *</label>
+                            <select name="status_id" required id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Дата установки</label>
+                            <input type="date" name="installation_date" value="${obj.installation_date || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
                         </div>
                     </form>
                 `;
@@ -736,6 +789,65 @@ const App = {
                         <div class="form-group">
                             <label>Примечания</label>
                             <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
+                        </div>
+                    </form>
+                `;
+            } else if (type === 'unified_cables') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
+                        <div class="form-group">
+                            <label>Номер</label>
+                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Вид объекта</label>
+                            <input type="text" value="${obj.object_type_name || obj.object_type_code || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Тип кабеля</label>
+                            <select name="cable_type_id" id="modal-cable-type-select" data-value="${obj.cable_type_id || ''}" onchange="App.onCableTypeChange()">
+                                <option value="">Выберите тип...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Кабель (из каталога)</label>
+                            <select name="cable_catalog_id" id="modal-cable-catalog-select" data-value="${obj.cable_catalog_id || ''}">
+                                <option value="">Выберите марку кабеля...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Собственник</label>
+                            <select name="owner_id" id="modal-owner-select" data-value="${obj.owner_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние</label>
+                            <select name="status_id" id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Дата установки</label>
+                            <input type="date" name="installation_date" value="${obj.installation_date || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
+                        </div>
+
+                        <div id="cable-geometry-block" style="display: none;">
+                            <div class="form-group">
+                                <label>Система координат</label>
+                                <select id="cable-coord-system">
+                                    <option value="wgs84">WGS84 (долгота, широта)</option>
+                                    <option value="msk86">МСК86 Зона 4 (X, Y)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Координаты (точки ломаной)</label>
+                                <div id="cable-coordinates-list"></div>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="App.addCableCoordinate()">
+                                    <i class="fas fa-plus"></i> Добавить точку
+                                </button>
+                            </div>
                         </div>
                     </form>
                 `;
@@ -816,13 +928,23 @@ const App = {
             }
             
             // Затем устанавливаем остальные значения
-            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select'];
+            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select', 'modal-cable-type-select', 'modal-cable-catalog-select'];
             selects.forEach(selectId => {
                 const select = document.getElementById(selectId);
                 if (select && select.dataset.value) {
                     select.value = select.dataset.value;
                 }
             });
+
+            // Для кабелей — после установки типа загружаем каталог и применяем сохранённое значение
+            if (type === 'unified_cables' && document.getElementById('modal-cable-type-select')?.value) {
+                this.onCableTypeChange().then(() => {
+                    const catalogSelect = document.getElementById('modal-cable-catalog-select');
+                    if (catalogSelect && catalogSelect.dataset.value) {
+                        catalogSelect.value = catalogSelect.dataset.value;
+                    }
+                });
+            }
         }, 50);
     },
 
@@ -860,6 +982,20 @@ const App = {
                     response = await API.cables.update('ground', id, data);
                     break;
                 case 'unified_cables':
+                    // Для кабелей — добавляем координаты/маршрут если есть блоки
+                    const objectTypeText = (document.querySelector('#edit-object-form input[disabled][value]')?.value || '').toString();
+                    if (objectTypeText) {
+                        // Если есть список координат — отправим coordinates
+                        const coordsList = document.getElementById('cable-coordinates-list');
+                        if (coordsList) {
+                            const coordinates = this.collectCableCoordinates();
+                            if (coordinates.length >= 2) {
+                                data.coordinates = coordinates;
+                                data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
+                            }
+                        }
+                        // Для duct-кабеля могли бы быть route_wells/route_channels — пока не редактируем через UI
+                    }
                     response = await API.unifiedCables.update(id, data);
                     break;
                 case 'groups':
@@ -1511,6 +1647,19 @@ const App = {
         document.getElementById('modal-body').innerHTML = content;
         document.getElementById('modal-footer').innerHTML = footer;
         document.getElementById('modal').classList.remove('hidden');
+
+        // Дата/время по умолчанию для пустых полей
+        const modal = document.getElementById('modal');
+        const now = new Date();
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+        const nowLocal = `${today}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+        modal.querySelectorAll('input[type="date"]').forEach((el) => {
+            if (!el.value) el.value = today;
+        });
+        modal.querySelectorAll('input[type="datetime-local"]').forEach((el) => {
+            if (!el.value) el.value = nowLocal;
+        });
     },
 
     hideModal() {
@@ -1570,8 +1719,8 @@ const App = {
 
         let formHtml = '';
 
-        if (type === 'wells' || type === 'markers') {
-            const numberPrefixLabel = type === 'wells' ? 'ККС' : 'СТ';
+        if (type === 'wells') {
+            const numberPrefixLabel = 'ККС';
             formHtml = `
                 <form id="add-object-form">
                     <input type="hidden" name="object_type_code" value="${objectTypeCodes[type] || ''}">
@@ -1625,6 +1774,68 @@ const App = {
                     <div class="form-group">
                         <label>Состояние *</label>
                         <select name="status_id" required id="modal-status-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Примечания</label>
+                        <textarea name="notes" rows="3"></textarea>
+                    </div>
+                </form>
+            `;
+        } else if (type === 'markers') {
+            formHtml = `
+                <form id="add-object-form">
+                    <input type="hidden" name="object_type_code" value="${objectTypeCodes[type] || ''}">
+                    <div class="form-group">
+                        <label>Номер *</label>
+                        <input type="text" id="modal-marker-number" value="СТ-<код>-<id>" disabled style="background: var(--bg-tertiary);">
+                        <p class="text-muted">Номер формируется автоматически по собственнику и ID</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Система координат</label>
+                        <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
+                            <option value="wgs84" selected>WGS84 (широта/долгота)</option>
+                            <option value="msk86">МСК86 Зона 4 (X/Y)</option>
+                        </select>
+                    </div>
+                    <div id="coords-wgs84-inputs">
+                        <div class="form-group">
+                            <label>Широта (WGS84)</label>
+                            <input type="number" name="latitude" step="0.000001" value="${lat || ''}" placeholder="55.123456">
+                        </div>
+                        <div class="form-group">
+                            <label>Долгота (WGS84)</label>
+                            <input type="number" name="longitude" step="0.000001" value="${lng || ''}" placeholder="37.123456">
+                        </div>
+                    </div>
+                    <div id="coords-msk86-inputs" style="display: none;">
+                        <div class="form-group">
+                            <label>X (МСК86)</label>
+                            <input type="number" name="x_msk86" step="0.01" placeholder="4500000.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Y (МСК86)</label>
+                            <input type="number" name="y_msk86" step="0.01" placeholder="6100000.00">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Собственник *</label>
+                        <select name="owner_id" required id="modal-owner-select"></select>
+                    </div>
+                    <div class="form-group" style="display: none;">
+                        <label>Вид *</label>
+                        <select name="type_id" required id="modal-type-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Тип *</label>
+                        <select name="kind_id" required id="modal-kind-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Состояние *</label>
+                        <select name="status_id" required id="modal-status-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Дата установки</label>
+                        <input type="date" name="installation_date">
                     </div>
                     <div class="form-group">
                         <label>Примечания</label>
@@ -1727,11 +1938,8 @@ const App = {
                 <form id="add-object-form">
                     <div class="form-group">
                         <label>Номер</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" name="number_prefix" id="modal-number-prefix" readonly style="flex: 0 0 220px; background: var(--bg-tertiary);" value="КАБ-">
-                            <input type="text" name="number_suffix" id="modal-number-suffix" required placeholder="Например: ТУ-01" style="flex: 1;">
-                        </div>
-                        <p class="text-muted">Префикс формируется автоматически по собственнику и ID</p>
+                        <input type="text" id="modal-cable-number" value="КАБ-<код>-<id>" disabled style="background: var(--bg-tertiary);">
+                        <p class="text-muted">Номер формируется автоматически по собственнику и ID</p>
                     </div>
                     <div class="form-group">
                         <label>Вид объекта *</label>
@@ -1882,18 +2090,18 @@ const App = {
             // Обновление префикса номера по выбранному собственнику
             const ownerSelect = document.getElementById('modal-owner-select');
             const prefixInput = document.getElementById('modal-number-prefix');
-            if (ownerSelect && prefixInput) {
+            const markerNumberInput = document.getElementById('modal-marker-number');
+            const cableNumberInput = document.getElementById('modal-cable-number');
+            if (ownerSelect && (prefixInput || markerNumberInput || cableNumberInput)) {
                 const updatePrefix = () => {
                     const ownerCode = ownerSelect.selectedOptions?.[0]?.dataset?.code || '';
                     if (!ownerCode) return;
                     if (objectType === 'wells') {
-                        prefixInput.value = `ККС-${ownerCode}-`;
+                        if (prefixInput) prefixInput.value = `ККС-${ownerCode}-`;
                     } else if (objectType === 'markers') {
-                        // ID формируется на сервере, отображаем плейсхолдер
-                        prefixInput.value = `СТ-${ownerCode}-<id>-`;
+                        if (markerNumberInput) markerNumberInput.value = `СТ-${ownerCode}-<id>`;
                     } else if (objectType === 'unified_cables') {
-                        // ID формируется на сервере, отображаем плейсхолдер
-                        prefixInput.value = `КАБ-${ownerCode}-<id>-`;
+                        if (cableNumberInput) cableNumberInput.value = `КАБ-${ownerCode}-<id>`;
                     }
                 };
                 ownerSelect.onchange = updatePrefix;
@@ -2062,26 +2270,6 @@ const App = {
             data.number = `${prefix}${suffix}`;
             delete data.number_prefix;
             delete data.number_suffix;
-        }
-
-        if (type === 'markers') {
-            const suffix = sanitizeSuffix(data.number_suffix);
-            if (!suffix) {
-                this.notify('Введите номер (часть после префикса)', 'error');
-                return;
-            }
-            data.number_suffix = suffix;
-            delete data.number_prefix;
-        }
-
-        if (type === 'unified_cables') {
-            const suffix = sanitizeSuffix(data.number_suffix);
-            if (!suffix) {
-                this.notify('Введите номер (часть после префикса)', 'error');
-                return;
-            }
-            data.number_suffix = suffix;
-            delete data.number_prefix;
         }
 
         try {
