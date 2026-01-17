@@ -100,11 +100,23 @@ class ReferenceController extends BaseController
         
         $sql = "SELECT * FROM {$config['table']} ORDER BY ";
         
-        // Сортировка по sort_order если есть, иначе по name
+        // Сортировка по sort_order если есть, иначе по наиболее подходящему полю.
+        // В некоторых справочниках (например, cable_catalog) поля 'name' нет.
         if (in_array('sort_order', $config['fields'])) {
-            $sql .= "sort_order, name";
-        } else {
+            $sql .= "sort_order";
+            if (in_array('name', $config['fields'])) {
+                $sql .= ", name";
+            } else {
+                $sql .= ", id";
+            }
+        } elseif (in_array('name', $config['fields'])) {
             $sql .= "name";
+        } elseif (in_array('number', $config['fields'])) {
+            $sql .= "number";
+        } elseif (in_array('marking', $config['fields'])) {
+            $sql .= "marking";
+        } else {
+            $sql .= "id";
         }
         
         $data = $this->db->fetchAll($sql);
