@@ -120,6 +120,16 @@ const App = {
         // Поиск объектов
         document.getElementById('search-objects').addEventListener('input', (e) => this.handleSearch(e.target.value));
 
+        // Фильтры для кабелей в списке объектов
+        document.getElementById('cables-filter-object-type')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
+        document.getElementById('cables-filter-owner')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
+
         // Кнопки добавления
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
@@ -372,7 +382,42 @@ const App = {
             t.classList.toggle('active', t.dataset.tab === tab);
         });
 
+        // Показываем фильтры только для кабелей
+        const cableFiltersRow = document.getElementById('cables-filters-row');
+        if (cableFiltersRow) {
+            cableFiltersRow.classList.toggle('hidden', tab !== 'unified_cables');
+            if (tab === 'unified_cables') {
+                this.loadCableListFilters();
+            }
+        }
+
         this.loadObjects();
+    },
+
+    async loadCableListFilters() {
+        const typeSelect = document.getElementById('cables-filter-object-type');
+        const ownerSelect = document.getElementById('cables-filter-owner');
+        if (!typeSelect || !ownerSelect) return;
+
+        // Уже загружено
+        if (typeSelect.options.length > 1 && ownerSelect.options.length > 1) return;
+
+        try {
+            const [typesResp, ownersResp] = await Promise.all([
+                API.unifiedCables.objectTypes(),
+                API.references.all('owners'),
+            ]);
+            if (typesResp?.success) {
+                typeSelect.innerHTML = '<option value="">Вид объекта: все</option>' +
+                    typesResp.data.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+            }
+            if (ownersResp?.success) {
+                ownerSelect.innerHTML = '<option value="">Собственник: все</option>' +
+                    ownersResp.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+            }
+        } catch (e) {
+            // ignore
+        }
     },
 
     /**
@@ -388,6 +433,14 @@ const App = {
         // Добавляем search только если он не пустой
         if (search) {
             params.search = search;
+        }
+
+        // Доп. фильтры для списка кабелей
+        if (this.currentTab === 'unified_cables') {
+            const ot = document.getElementById('cables-filter-object-type')?.value;
+            const owner = document.getElementById('cables-filter-owner')?.value;
+            if (ot) params.object_type_id = ot;
+            if (owner) params.owner_id = owner;
         }
 
         try {
@@ -599,6 +652,24 @@ const App = {
             }
 
             const obj = response.data || response;
+            // Предвыбор каналов маршрута для duct-кабеля (используется при рендере формы)
+            this._editCableRouteChannelIds = [];
+            if (type === 'unified_cables' && obj.object_type_code === 'cable_duct' && Array.isArray(obj.route_channels)) {
+                this._editCableRouteChannelIds = obj.route_channels.map(rc => parseInt(rc.cable_channel_id));
+            }
+            // Предзаполнение координат для ground/aerial
+            this._editCableCoords = [];
+            if (type === 'unified_cables' && (obj.object_type_code === 'cable_ground' || obj.object_type_code === 'cable_aerial') && obj.geometry) {
+                try {
+                    const geom = typeof obj.geometry === 'string' ? JSON.parse(obj.geometry) : obj.geometry;
+                    const coords = geom?.coordinates;
+                    if (geom?.type === 'MultiLineString' && Array.isArray(coords) && Array.isArray(coords[0])) {
+                        this._editCableCoords = coords[0].map(p => [p[0], p[1]]);
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
             
             // Загружаем список групп для возможности добавления объекта в группы
             const groupsResponse = await API.groups.list({ limit: 100 });
@@ -798,9 +869,14 @@ const App = {
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
+                        <input type="hidden" name="object_type_code" value="${obj.object_type_code || ''}">
                         <div class="form-group">
                             <label>Номер</label>
                             <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Длина расч. (м)</label>
+                            <input type="number" value="${obj.length_calculated || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
                         <div class="form-group">
                             <label>Вид объекта</label>
@@ -849,6 +925,14 @@ const App = {
                                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.addCableCoordinate()">
                                     <i class="fas fa-plus"></i> Добавить точку
                                 </button>
+                            </div>
+                        </div>
+
+                        <div id="cable-route-block" style="display: none;">
+                            <div class="form-group">
+                                <label>Каналы маршрута</label>
+                                <select multiple id="cable-route-channels" style="height: 120px; width: 100%;"></select>
+                                <p class="text-muted">Удерживайте Ctrl для выбора нескольких</p>
                             </div>
                         </div>
                     </form>
@@ -947,6 +1031,47 @@ const App = {
                     }
                 });
             }
+
+            // Для кабелей — показываем нужный блок редактирования в зависимости от object_type_code
+            if (type === 'unified_cables') {
+                const objectTypeCode = document.querySelector('#edit-object-form input[name="object_type_code"]')?.value || '';
+                const geomBlock = document.getElementById('cable-geometry-block');
+                const routeBlock = document.getElementById('cable-route-block');
+                if (objectTypeCode === 'cable_duct') {
+                    if (geomBlock) geomBlock.style.display = 'none';
+                    if (routeBlock) {
+                        routeBlock.style.display = 'block';
+                        this.loadCableRouteOptions().then(() => {
+                            // Предвыбор каналов из API
+                            const select = document.getElementById('cable-route-channels');
+                            const ids = (this._editCableRouteChannelIds || []).map(v => parseInt(v));
+                            if (select && ids.length) {
+                                const set = new Set(ids);
+                                Array.from(select.options).forEach(o => o.selected = set.has(parseInt(o.value)));
+                            }
+                        });
+                    }
+                } else if (objectTypeCode === 'cable_ground' || objectTypeCode === 'cable_aerial') {
+                    if (routeBlock) routeBlock.style.display = 'none';
+                    if (geomBlock) geomBlock.style.display = 'block';
+                    // Заполняем координаты если есть
+                    const container = document.getElementById('cable-coordinates-list');
+                    if (container) {
+                        container.innerHTML = '';
+                        (this._editCableCoords || []).forEach(() => this.addCableCoordinate());
+                        const rows = container.querySelectorAll('.cable-coord-row');
+                        rows.forEach((row, idx) => {
+                            const x = row.querySelector('.coord-x');
+                            const y = row.querySelector('.coord-y');
+                            const pt = (this._editCableCoords || [])[idx];
+                            if (pt && x && y) {
+                                x.value = pt[0];
+                                y.value = pt[1];
+                            }
+                        });
+                    }
+                }
+            }
         }, 50);
     },
 
@@ -984,19 +1109,18 @@ const App = {
                     response = await API.cables.update('ground', id, data);
                     break;
                 case 'unified_cables':
-                    // Для кабелей — добавляем координаты/маршрут если есть блоки
-                    const objectTypeText = (document.querySelector('#edit-object-form input[disabled][value]')?.value || '').toString();
-                    if (objectTypeText) {
-                        // Если есть список координат — отправим coordinates
-                        const coordsList = document.getElementById('cable-coordinates-list');
-                        if (coordsList) {
+                    {
+                        const objectTypeCode = document.querySelector('#edit-object-form input[name="object_type_code"]')?.value || '';
+                        if (objectTypeCode === 'cable_ground' || objectTypeCode === 'cable_aerial') {
                             const coordinates = this.collectCableCoordinates();
                             if (coordinates.length >= 2) {
                                 data.coordinates = coordinates;
                                 data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
                             }
+                        } else if (objectTypeCode === 'cable_duct') {
+                            const channelsSelect = document.getElementById('cable-route-channels');
+                            data.route_channels = Array.from(channelsSelect?.selectedOptions || []).map(o => parseInt(o.value));
                         }
-                        // Для duct-кабеля могли бы быть route_wells/route_channels — пока не редактируем через UI
                     }
                     response = await API.unifiedCables.update(id, data);
                     break;
@@ -1900,7 +2024,7 @@ const App = {
                     </div>
                     <div class="form-group">
                         <label>Диаметр (мм)</label>
-                        <input type="number" name="diameter_mm">
+                        <input type="number" name="diameter_mm" value="110">
                     </div>
                     <div class="form-group">
                         <label>Примечания</label>
@@ -1994,10 +2118,6 @@ const App = {
                             <label>Каналы маршрута</label>
                             <select multiple id="cable-route-channels" style="height: 100px; width: 100%;">
                             </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Длина заявленная (м)</label>
-                            <input type="number" name="length_declared" step="0.01" placeholder="Введите длину вручную">
                         </div>
                     </div>
                     
@@ -2646,6 +2766,7 @@ const App = {
             well: 'wells',
             channel_direction: 'directions',
             marker_post: 'markers',
+            unified_cable: 'unified_cables',
         };
         const type = typeMap[rawType] || rawType;
         
@@ -2678,6 +2799,9 @@ const App = {
                     break;
                 case 'marker_post':
                     response = await API.markerPosts.delete(id);
+                    break;
+                case 'unified_cable':
+                    response = await API.unifiedCables.delete(id);
                     break;
                 default:
                     if (type.endsWith('_cable')) {

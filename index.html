@@ -264,6 +264,16 @@
                         <button class="tab" data-tab="unified_cables">Кабели</button>
                         <button class="tab" data-tab="groups">Группы</button>
                     </div>
+
+                    <!-- Фильтры для вкладки "Кабели" -->
+                    <div class="filters-row hidden" id="cables-filters-row">
+                        <select id="cables-filter-object-type">
+                            <option value="">Вид объекта: все</option>
+                        </select>
+                        <select id="cables-filter-owner">
+                            <option value="">Собственник: все</option>
+                        </select>
+                    </div>
                     
                     <div class="search-bar">
                         <input type="text" id="search-objects" placeholder="Поиск объектов...">

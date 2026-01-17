@@ -291,7 +291,7 @@ const MapManager = {
      */
     async loadCables(type) {
         try {
-            const response = await API.cables.geojson(type, this.filters);
+            const response = await API.unifiedCables.geojson(this.filters);
             
             // Проверяем на ошибку API
             if (response.success === false) {
@@ -309,20 +309,24 @@ const MapManager = {
             this.layers[layerName].clearLayers();
             
             const color = this.colors[layerName];
+            const codeMap = { ground: 'cable_ground', aerial: 'cable_aerial', duct: 'cable_duct' };
+            const targetCode = codeMap[type];
             
             // Фильтруем features с невалидной геометрией
-            const validFeatures = response.features.filter(f => f && f.geometry && f.geometry.type);
+            const validFeatures = response.features
+                .filter(f => f && f.geometry && f.geometry.type)
+                .filter(f => !targetCode || f.properties?.object_type_code === targetCode);
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: feature.properties.status_color || color,
+                        color: feature.properties.object_type_color || feature.properties.status_color || color,
                         weight: 2,
                         opacity: 0.8,
                         dashArray: type === 'aerial' ? '5, 5' : null,
                     }),
                     onEachFeature: (feature, layer) => {
-                        layer.on('click', () => this.showObjectInfo(type + '_cable', feature.properties));
+                        layer.on('click', () => this.showObjectInfo('unified_cable', feature.properties));
                         
                         const typeName = {
                             ground: 'в грунте',
@@ -389,6 +393,7 @@ const MapManager = {
             ground_cable: 'Кабель в грунте',
             aerial_cable: 'Воздушный кабель',
             duct_cable: 'Кабель в канализации',
+            unified_cable: 'Кабель',
         };
 
         infoTitle.textContent = `${typeNames[objectType] || 'Объект'}: ${properties.number || properties.id}`;
