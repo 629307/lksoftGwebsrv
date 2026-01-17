@@ -2570,6 +2570,113 @@ const App = {
         }
     },
 
+    async showCablesInWell(wellId) {
+        try {
+            const resp = await API.unifiedCables.byWell(wellId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в колодце', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    async showCablesInDirection(directionId) {
+        try {
+            const resp = await API.unifiedCables.byDirection(directionId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в направлении', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    async showChannelsInDirection(directionId) {
+        try {
+            const resp = await API.channelDirections.get(directionId);
+            const dir = resp.data || resp;
+            const channels = dir.channels || [];
+
+            const content = `
+                <div style="max-height: 60vh; overflow: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Направление</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Номер канала</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Тип</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Состояние</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Диаметр (мм)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${channels.map(ch => `
+                                <tr style="cursor:pointer;" onclick="App.showCablesForChannel(${ch.id})">
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${dir.number || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.channel_number}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.kind_name || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.status_name || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.diameter_mm || '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Клик по каналу покажет кабели, использующие этот канал.</p>
+            `;
+
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            this.showModal('Каналы направления', content, footer);
+        } catch (e) {
+            this.notify('Ошибка загрузки каналов', 'error');
+        }
+    },
+
+    async showCablesForChannel(channelId) {
+        try {
+            const resp = await API.unifiedCables.byChannel(channelId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в канале', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    showCablesTableModal(title, cables) {
+        const content = `
+            <div style="max-height: 60vh; overflow: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Номер</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Вид объекта</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Тип кабеля</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Кабель из каталога</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Собственник</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Состояние</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Длина расч. (м)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(cables || []).map(c => `
+                            <tr style="cursor:pointer;" onclick="MapManager.highlightCableRouteDirections(${c.id}); App.hideModal();">
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.number || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.object_type_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.cable_type_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.cable_marking || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.owner_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.status_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.length_calculated || 0}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-muted" style="margin-top:8px;">Клик по кабелю подсветит маршрут (направления) на карте.</p>
+        `;
+        const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+        this.showModal(title, content, footer);
+    },
+
     /**
      * Обработчик смены вида объекта кабеля
      */

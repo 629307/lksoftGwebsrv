@@ -364,6 +364,22 @@ const API = {
         recalculateLength(id) {
             return API.get(`/unified-cables/${id}/recalculate-length`);
         },
+
+        byWell(wellId) {
+            return API.get(`/unified-cables/by-well/${wellId}`);
+        },
+
+        byDirection(directionId) {
+            return API.get(`/unified-cables/by-direction/${directionId}`);
+        },
+
+        byChannel(channelId) {
+            return API.get(`/unified-cables/by-channel/${channelId}`);
+        },
+
+        routeDirectionsGeojson(id) {
+            return API.get(`/unified-cables/${id}/route-directions-geojson`);
+        },
     },
 
     // ========================

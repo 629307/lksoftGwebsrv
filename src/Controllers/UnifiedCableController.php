@@ -609,4 +609,119 @@ class UnifiedCableController extends BaseController
             ['cable_id' => $cableId]
         );
     }
+
+    /**
+     * GET /api/unified-cables/by-well/{id}
+     * Список кабелей, где колодец входит в маршрут
+     */
+    public function byWell(string $id): void
+    {
+        $wellId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_wells crw
+             JOIN cables c ON crw.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE crw.well_id = :id
+             ORDER BY c.number",
+            ['id' => $wellId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/by-direction/{id}
+     * Список кабелей, где в маршруте есть каналы данного направления
+     */
+    public function byDirection(string $id): void
+    {
+        $directionId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_channels crc
+             JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+             JOIN cables c ON crc.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE ch.direction_id = :id
+             ORDER BY c.number",
+            ['id' => $directionId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/by-channel/{id}
+     * Список кабелей, где в маршруте есть данный канал
+     */
+    public function byChannel(string $id): void
+    {
+        $channelId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_channels crc
+             JOIN cables c ON crc.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE crc.cable_channel_id = :id
+             ORDER BY c.number",
+            ['id' => $channelId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/{id}/route-directions-geojson
+     * GeoJSON направлений, которые входят в маршрут кабеля (через route_channels)
+     */
+    public function routeDirectionsGeojson(string $id): void
+    {
+        $cableId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT cd.id, cd.number,
+                    ST_AsGeoJSON(cd.geom_wgs84)::json as geometry
+             FROM cable_route_channels crc
+             JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+             JOIN channel_directions cd ON ch.direction_id = cd.id
+             WHERE crc.cable_id = :id AND cd.geom_wgs84 IS NOT NULL",
+            ['id' => $cableId]
+        );
+
+        $features = [];
+        foreach ($rows as $row) {
+            $geometry = is_string($row['geometry']) ? json_decode($row['geometry'], true) : $row['geometry'];
+            unset($row['geometry']);
+            if (empty($geometry) || !isset($geometry['type'])) continue;
+            $features[] = ['type' => 'Feature', 'geometry' => $geometry, 'properties' => $row];
+        }
+        Response::geojson($features, ['layer' => 'route_directions', 'count' => count($features)]);
+    }
 }

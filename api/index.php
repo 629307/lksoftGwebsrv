@@ -207,6 +207,10 @@ $router->delete('/api/cables/{type}/{id}', [CableController::class, 'destroy'], 
 $router->get('/api/unified-cables/object-types', [UnifiedCableController::class, 'objectTypes'], ['auth']);
 $router->get('/api/unified-cables/geojson', [UnifiedCableController::class, 'geojson'], ['auth']);
 $router->get('/api/unified-cables', [UnifiedCableController::class, 'index'], ['auth']);
+$router->get('/api/unified-cables/by-well/{id}', [UnifiedCableController::class, 'byWell'], ['auth']);
+$router->get('/api/unified-cables/by-direction/{id}', [UnifiedCableController::class, 'byDirection'], ['auth']);
+$router->get('/api/unified-cables/by-channel/{id}', [UnifiedCableController::class, 'byChannel'], ['auth']);
+$router->get('/api/unified-cables/{id}/route-directions-geojson', [UnifiedCableController::class, 'routeDirectionsGeojson'], ['auth']);
 $router->get('/api/unified-cables/{id}', [UnifiedCableController::class, 'show'], ['auth']);
 $router->get('/api/unified-cables/{id}/recalculate-length', [UnifiedCableController::class, 'recalculateLength'], ['auth']);
 $router->post('/api/unified-cables', [UnifiedCableController::class, 'store'], ['auth']);

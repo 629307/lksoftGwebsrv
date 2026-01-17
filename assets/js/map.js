@@ -22,6 +22,9 @@ const MapManager = {
     addDuctCableMode: false,
     selectedDuctCableChannels: [],
 
+    // Подсветка маршрута (направления) выбранного кабеля
+    highlightLayer: null,
+
     // Цвета для слоёв
     colors: {
         wells: '#3498db',
@@ -423,6 +426,25 @@ const MapManager = {
             }
         }
 
+        // Доп. действия для карты
+        if (objectType === 'well') {
+            html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInWell(${properties.id})">
+                    Показать кабели в колодце
+                </button>
+            </div>`;
+        }
+        if (objectType === 'channel_direction') {
+            html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInDirection(${properties.id})">
+                    Показать кабели в направлении
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showChannelsInDirection(${properties.id})">
+                    Показать каналы направления
+                </button>
+            </div>`;
+        }
+
         infoContent.innerHTML = html;
         
         // Сохраняем данные для редактирования
@@ -430,6 +452,32 @@ const MapManager = {
         infoPanel.dataset.objectId = properties.id;
         
         infoPanel.classList.remove('hidden');
+    },
+
+    clearHighlight() {
+        if (this.highlightLayer) {
+            this.map.removeLayer(this.highlightLayer);
+            this.highlightLayer = null;
+        }
+    },
+
+    async highlightCableRouteDirections(cableId) {
+        try {
+            this.clearHighlight();
+            const resp = await API.unifiedCables.routeDirectionsGeojson(cableId);
+            if (resp && resp.type === 'FeatureCollection') {
+                this.highlightLayer = L.geoJSON(resp, {
+                    style: () => ({ color: '#ef4444', weight: 4, opacity: 0.9 })
+                }).addTo(this.map);
+                const bounds = this.highlightLayer.getBounds();
+                if (bounds && bounds.isValid()) {
+                    this.fitToBounds(bounds, 17);
+                }
+            }
+        } catch (e) {
+            console.error('Ошибка подсветки маршрута кабеля:', e);
+            App.notify('Ошибка подсветки маршрута', 'error');
+        }
     },
 
     /**
