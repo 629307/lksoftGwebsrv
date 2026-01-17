@@ -152,10 +152,14 @@ const App = {
         // Панель инструментов карты
         document.getElementById('btn-add-direction-map')?.addEventListener('click', () => MapManager.startAddDirectionMode());
         document.getElementById('btn-add-well-map')?.addEventListener('click', () => MapManager.startAddingObject('wells'));
+        document.getElementById('btn-add-ground-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_ground'));
+        document.getElementById('btn-add-aerial-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_aerial'));
         document.getElementById('btn-cancel-add-mode')?.addEventListener('click', () => {
             MapManager.cancelAddDirectionMode();
             MapManager.cancelAddingObject();
+            MapManager.cancelAddCableMode();
         });
+        document.getElementById('btn-finish-add-mode')?.addEventListener('click', () => MapManager.finishAddCableMode());
     },
 
     /**
@@ -2193,6 +2197,45 @@ const App = {
         
         // Загружаем справочники
         await this.loadModalSelects('directions');
+    },
+
+    /**
+     * Открыть добавление кабеля из карты с уже заданными координатами
+     */
+    async showAddCableModalFromMap(objectTypeCode, coordinates) {
+        this.showAddObjectModal('unified_cables');
+
+        // Даём модалке/селектам отрисоваться и загрузиться
+        await new Promise(r => setTimeout(r, 150));
+
+        // Выбираем вид объекта по коду (cable_ground / cable_aerial)
+        const typeSelect = document.getElementById('modal-cable-object-type');
+        if (typeSelect) {
+            const opt = Array.from(typeSelect.options).find(o => o.dataset && o.dataset.code === objectTypeCode);
+            if (opt) {
+                typeSelect.value = opt.value;
+                this.onCableObjectTypeChange();
+            }
+        }
+
+        // Заполняем координаты (WGS84: lon/lat)
+        const coordSystemSelect = document.getElementById('cable-coord-system');
+        if (coordSystemSelect) coordSystemSelect.value = 'wgs84';
+        const container = document.getElementById('cable-coordinates-list');
+        if (container) {
+            container.innerHTML = '';
+            (coordinates || []).forEach(() => this.addCableCoordinate());
+            const rows = container.querySelectorAll('.cable-coord-row');
+            rows.forEach((row, idx) => {
+                const x = row.querySelector('.coord-x');
+                const y = row.querySelector('.coord-y');
+                const pt = (coordinates || [])[idx];
+                if (pt && x && y) {
+                    x.value = pt[0];
+                    y.value = pt[1];
+                }
+            });
+        }
     },
 
     /**

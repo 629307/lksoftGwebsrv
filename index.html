@@ -194,11 +194,20 @@
                         <button class="btn btn-sm" id="btn-add-well-map" title="Добавить колодец (кликните на карте)">
                             <i class="fas fa-plus-circle"></i>
                         </button>
+                        <button class="btn btn-sm" id="btn-add-ground-cable-map" title="Добавить кабель в грунте (ломаная линия)">
+                            <i class="fas fa-wave-square"></i>
+                        </button>
+                        <button class="btn btn-sm" id="btn-add-aerial-cable-map" title="Добавить воздушный кабель (ломаная линия)">
+                            <i class="fas fa-broadcast-tower"></i>
+                        </button>
                     </div>
                     
                     <!-- Статус режима добавления -->
                     <div id="add-mode-status" class="add-mode-status hidden">
                         <span id="add-mode-text"></span>
+                        <button class="btn btn-sm btn-primary hidden" id="btn-finish-add-mode">
+                            <i class="fas fa-check"></i> Создать
+                        </button>
                         <button class="btn btn-sm btn-danger" id="btn-cancel-add-mode">
                             <i class="fas fa-times"></i> Отмена
                         </button>

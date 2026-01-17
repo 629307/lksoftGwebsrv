@@ -13,6 +13,11 @@ const MapManager = {
     addDirectionMode: false,
     selectedWellsForDirection: [],
 
+    // Режим добавления кабеля (ломаная)
+    addCableMode: false,
+    addCableTypeCode: null, // cable_ground | cable_aerial
+    selectedCablePoints: [],
+
     // Цвета для слоёв
     colors: {
         wells: '#3498db',
@@ -435,10 +440,114 @@ const MapManager = {
      * Клик по карте (для добавления объектов)
      */
     onMapClick(e) {
+        // Если включён режим добавления кабеля (ломаная линия)
+        if (this.addCableMode) {
+            this.handleAddCableClick(e.latlng);
+            return;
+        }
         // Если включён режим добавления объекта
         if (this.addingObject) {
             this.handleAddObjectClick(e.latlng);
         }
+    },
+
+    /**
+     * Старт режима добавления кабеля (ломаная линия)
+     */
+    startAddCableMode(typeCode) {
+        this.addCableMode = true;
+        this.addCableTypeCode = typeCode;
+        this.selectedCablePoints = [];
+        this.map.getContainer().style.cursor = 'crosshair';
+
+        const statusEl = document.getElementById('add-mode-status');
+        const textEl = document.getElementById('add-mode-text');
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        statusEl.classList.remove('hidden');
+        if (finishBtn) finishBtn.classList.remove('hidden');
+        textEl.textContent = 'Кликните точки ломаной (минимум 2), затем нажмите «Создать»';
+
+        App.notify('Режим добавления кабеля: укажите точки ломаной', 'info');
+    },
+
+    /**
+     * Отмена режима добавления кабеля
+     */
+    cancelAddCableMode() {
+        if (!this.addCableMode) return;
+        this.addCableMode = false;
+        this.addCableTypeCode = null;
+        this.selectedCablePoints = [];
+        this.map.getContainer().style.cursor = '';
+
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        if (finishBtn) finishBtn.classList.add('hidden');
+
+        // Чистим временные слои
+        if (this.tempCableLine) {
+            this.map.removeLayer(this.tempCableLine);
+            this.tempCableLine = null;
+        }
+        if (this.tempCableMarkers) {
+            this.tempCableMarkers.forEach(m => this.map.removeLayer(m));
+            this.tempCableMarkers = [];
+        }
+
+        // Скрываем статус, если не активны другие режимы
+        if (!this.addDirectionMode && !this.addingObject) {
+            document.getElementById('add-mode-status').classList.add('hidden');
+        }
+    },
+
+    /**
+     * Клик по карте в режиме добавления кабеля
+     */
+    handleAddCableClick(latlng) {
+        if (!this.addCableMode) return;
+
+        // Сохраняем как WGS84 lon/lat для формы
+        this.selectedCablePoints.push([parseFloat(latlng.lng.toFixed(6)), parseFloat(latlng.lat.toFixed(6))]);
+
+        // Маркер точки
+        if (!this.tempCableMarkers) this.tempCableMarkers = [];
+        const marker = L.circleMarker([latlng.lat, latlng.lng], {
+            radius: 6,
+            fillColor: '#3b82f6',
+            color: '#fff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9,
+        }).addTo(this.map);
+        this.tempCableMarkers.push(marker);
+
+        // Линия
+        const latLngs = this.selectedCablePoints.map(p => [p[1], p[0]]);
+        if (!this.tempCableLine) {
+            this.tempCableLine = L.polyline(latLngs, { color: '#3b82f6', weight: 3, opacity: 0.9 }).addTo(this.map);
+        } else {
+            this.tempCableLine.setLatLngs(latLngs);
+        }
+
+        const textEl = document.getElementById('add-mode-text');
+        if (textEl) textEl.textContent = `Точек: ${this.selectedCablePoints.length}. Нажмите «Создать» когда готово`;
+    },
+
+    /**
+     * Завершить режим добавления кабеля и открыть форму
+     */
+    finishAddCableMode() {
+        if (!this.addCableMode) return;
+        if (this.selectedCablePoints.length < 2) {
+            App.notify('Нужно указать минимум 2 точки', 'warning');
+            return;
+        }
+
+        const typeCode = this.addCableTypeCode;
+        const coords = [...this.selectedCablePoints];
+
+        this.cancelAddCableMode();
+
+        App.showAddCableModalFromMap(typeCode, coords);
     },
 
     /**
