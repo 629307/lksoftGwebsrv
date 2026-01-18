@@ -27,6 +27,7 @@ class UnifiedCableController extends BaseController
             'object_type_id' => 'c.object_type_id',
             'cable_type_id' => 'c.cable_type_id',
             'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
             '_search' => ['c.number', 'c.notes', 'cc.marking'],
         ]);
 
@@ -82,6 +83,7 @@ class UnifiedCableController extends BaseController
             'object_type_id' => 'c.object_type_id',
             'cable_type_id' => 'c.cable_type_id',
             'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
             '_search' => ['c.number', 'c.notes', 'cc.marking'],
         ]);
 

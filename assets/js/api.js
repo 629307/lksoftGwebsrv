@@ -590,12 +590,12 @@ const API = {
             return API.get('/reports/objects', params);
         },
 
-        contracts() {
-            return API.get('/reports/contracts');
+        contracts(params = {}) {
+            return API.get('/reports/contracts', params);
         },
 
-        owners() {
-            return API.get('/reports/owners');
+        owners(params = {}) {
+            return API.get('/reports/owners', params);
         },
 
         incidents(params = {}) {

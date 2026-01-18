@@ -136,6 +136,10 @@ const App = {
             this.pagination.page = 1;
             this.loadObjects();
         });
+        document.getElementById('cables-filter-contract')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
 
         // Кнопки добавления
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
@@ -496,15 +500,17 @@ const App = {
     async loadCableListFilters() {
         const typeSelect = document.getElementById('cables-filter-object-type');
         const ownerSelect = document.getElementById('cables-filter-owner');
-        if (!typeSelect || !ownerSelect) return;
+        const contractSelect = document.getElementById('cables-filter-contract');
+        if (!typeSelect || !ownerSelect || !contractSelect) return;
 
         // Уже загружено
-        if (typeSelect.options.length > 1 && ownerSelect.options.length > 1) return;
+        if (typeSelect.options.length > 1 && ownerSelect.options.length > 1 && contractSelect.options.length > 1) return;
 
         try {
-            const [typesResp, ownersResp] = await Promise.all([
+            const [typesResp, ownersResp, contractsResp] = await Promise.all([
                 API.unifiedCables.objectTypes(),
                 API.references.all('owners'),
+                API.references.all('contracts'),
             ]);
             if (typesResp?.success) {
                 typeSelect.innerHTML = '<option value="">Вид объекта: все</option>' +
@@ -513,6 +519,10 @@ const App = {
             if (ownersResp?.success) {
                 ownerSelect.innerHTML = '<option value="">Собственник: все</option>' +
                     ownersResp.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+            }
+            if (contractsResp?.success) {
+                contractSelect.innerHTML = '<option value="">Контракт: все</option>' +
+                    contractsResp.data.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
             }
         } catch (e) {
             // ignore
@@ -538,8 +548,10 @@ const App = {
         if (this.currentTab === 'unified_cables') {
             const ot = document.getElementById('cables-filter-object-type')?.value;
             const owner = document.getElementById('cables-filter-owner')?.value;
+            const contract = document.getElementById('cables-filter-contract')?.value;
             if (ot) params.object_type_id = ot;
             if (owner) params.owner_id = owner;
+            if (contract) params.contract_id = contract;
         }
 
         try {
@@ -1803,7 +1815,18 @@ const App = {
     },
 
     renderObjectsReport(data) {
+        // Фильтр по собственнику
+        const owners = data?.owners || [];
         return `
+            <div class="filters-row" style="margin: 12px 0;">
+                <select id="report-objects-owner">
+                    <option value="">Собственник: все</option>
+                    ${owners.map(o => `<option value="${o.id}">${o.name}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="App.applyObjectsReportFilter()">
+                    <i class="fas fa-filter"></i> Применить
+                </button>
+            </div>
             <table>
                 <thead>
                     <tr><th>Тип объекта</th><th>Количество</th><th>Длина (м)</th></tr>
@@ -1821,32 +1844,144 @@ const App = {
         `;
     },
 
+    async applyObjectsReportFilter() {
+        const ownerId = document.getElementById('report-objects-owner')?.value || '';
+        const container = document.getElementById('report-content');
+        if (!container) return;
+        container.innerHTML = '<p>Загрузка...</p>';
+        try {
+            const resp = await API.reports.objects(ownerId ? { owner_id: ownerId } : {});
+            if (resp?.success) {
+                container.innerHTML = `
+                    <div class="panel-header">
+                        <h3>${this.getReportTitle('objects')}</h3>
+                        <button class="btn btn-secondary" onclick="API.reports.export('objects')">
+                            <i class="fas fa-download"></i> Экспорт CSV
+                        </button>
+                    </div>
+                    ${this.renderObjectsReport(resp.data)}
+                `;
+                // сохраняем выбранное значение
+                const sel = container.querySelector('#report-objects-owner');
+                if (sel) sel.value = ownerId;
+            }
+        } catch (e) {
+            container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
+        }
+    },
+
     renderContractsReport(data) {
-        return `
+        const contracts = data?.contracts || [];
+        const selectedId = data?.contract?.id ? String(data.contract.id) : '';
+
+        const contracted = data?.contracted || { stats: { count: 0, length_sum: 0, cost_per_meter: null }, cables: [] };
+        const uncontracted = data?.uncontracted || { stats: { count: 0, length_sum: 0 }, cables: [] };
+
+        const renderCablesTable = (rows) => `
             <table>
                 <thead>
-                    <tr><th>Номер</th><th>Название</th><th>Собственник</th><th>Статус</th><th>Сумма</th></tr>
+                    <tr>
+                        <th>Номер</th>
+                        <th>Вид объекта</th>
+                        <th>Тип кабеля</th>
+                        <th>Кабель (из каталога)</th>
+                        <th>Собственник</th>
+                        <th>Длина расч. (м)</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    ${data.contracts.map(c => `
+                    ${(rows || []).map(c => `
                         <tr>
-                            <td>${c.number}</td>
-                            <td>${c.name}</td>
+                            <td>${c.number || '-'}</td>
+                            <td>${c.object_type_name || '-'}</td>
+                            <td>${c.cable_type_name || '-'}</td>
+                            <td>${c.marking || '-'}</td>
                             <td>${c.owner_name || '-'}</td>
-                            <td>${c.status}</td>
-                            <td>${c.amount || '-'}</td>
+                            <td>${c.length_calculated || 0}</td>
                         </tr>
-                    `).join('')}
+                    `).join('') || '<tr><td colspan="6">Нет данных</td></tr>'}
                 </tbody>
             </table>
         `;
+
+        return `
+            <div class="filters-row" style="margin: 12px 0;">
+                <select id="report-contracts-contract">
+                    <option value="">Контракт: выберите...</option>
+                    ${contracts.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="App.applyContractsReportFilter()">
+                    <i class="fas fa-filter"></i> Показать
+                </button>
+            </div>
+
+            ${selectedId ? `
+                <div style="margin-top: 12px;">
+                    <h4>
+                        Кабеля контракта
+                        <span class="text-muted">
+                            (Количество кабелей: ${contracted.stats.count},
+                            Общая протяженность кабелей (м): ${Number(contracted.stats.length_sum || 0).toFixed(2)},
+                            Стоимость за 1 метр: ${contracted.stats.cost_per_meter === null ? '-' : contracted.stats.cost_per_meter})
+                        </span>
+                    </h4>
+                    ${renderCablesTable(contracted.cables)}
+                </div>
+
+                <div style="margin-top: 18px;">
+                    <h4>
+                        Не законтрактованные Кабеля собственника контракта
+                        <span class="text-muted">
+                            (Количество кабелей: ${uncontracted.stats.count},
+                            Общая протяженность кабелей (м): ${Number(uncontracted.stats.length_sum || 0).toFixed(2)})
+                        </span>
+                    </h4>
+                    ${renderCablesTable(uncontracted.cables)}
+                </div>
+            ` : `
+                <p class="text-muted">Выберите контракт в фильтре — после этого будет сформирован отчёт.</p>
+            `}
+        `;
+    },
+
+    async applyContractsReportFilter() {
+        const contractId = document.getElementById('report-contracts-contract')?.value || '';
+        const container = document.getElementById('report-content');
+        if (!container) return;
+        container.innerHTML = '<p>Загрузка...</p>';
+        try {
+            const resp = await API.reports.contracts(contractId ? { contract_id: contractId } : {});
+            if (resp?.success) {
+                container.innerHTML = `
+                    <div class="panel-header">
+                        <h3>${this.getReportTitle('contracts')}</h3>
+                        <button class="btn btn-secondary" onclick="API.reports.export('contracts')">
+                            <i class="fas fa-download"></i> Экспорт CSV
+                        </button>
+                    </div>
+                    ${this.renderContractsReport(resp.data)}
+                `;
+                const sel = container.querySelector('#report-contracts-contract');
+                if (sel) sel.value = contractId;
+            }
+        } catch (e) {
+            container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
+        }
     },
 
     renderOwnersReport(data) {
         return `
             <table>
                 <thead>
-                    <tr><th>Собственник</th><th>Колодцы</th><th>Направления</th><th>Столбики</th><th>Кабели</th><th>Всего</th></tr>
+                    <tr>
+                        <th>Собственник</th>
+                        <th>Колодцы</th>
+                        <th>Направления</th>
+                        <th>Направление (м)</th>
+                        <th>Столбики</th>
+                        <th>Кабели</th>
+                        <th>Кабели Длинна (м)</th>
+                    </tr>
                 </thead>
                 <tbody>
                     ${data.map(o => `
@@ -1854,9 +1989,10 @@ const App = {
                             <td>${o.name}</td>
                             <td>${o.wells}</td>
                             <td>${o.channel_directions}</td>
+                            <td>${Number(o.channel_directions_length_m || 0).toFixed(2)}</td>
                             <td>${o.marker_posts}</td>
-                            <td>${o.ground_cables + o.aerial_cables + o.duct_cables}</td>
-                            <td>${o.total_objects}</td>
+                            <td>${o.cables}</td>
+                            <td>${Number(o.cables_length_m || 0).toFixed(2)}</td>
                         </tr>
                     `).join('')}
                 </tbody>

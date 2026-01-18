@@ -34,9 +34,6 @@ class ReportController extends BaseController
         if ($where) $directionsSql .= " WHERE {$where}";
         $directions = $this->db->fetch($directionsSql, $params);
 
-        // Каналы
-        $channels = $this->db->fetch("SELECT 'cable_channels' as object_type, 'Каналы' as object_name, COUNT(*) as count FROM cable_channels");
-
         // Столбики
         $postsSql = "SELECT 'marker_posts' as object_type, 'Столбики' as object_name, COUNT(*) as count FROM marker_posts";
         if ($where) $postsSql .= " WHERE {$where}";
@@ -85,7 +82,6 @@ class ReportController extends BaseController
             'summary' => [
                 $wells,
                 $directions,
-                $channels,
                 $posts,
                 $ground,
                 $aerial,
@@ -93,6 +89,7 @@ class ReportController extends BaseController
             ],
             'by_status' => $byStatus,
             'by_owner' => $byOwner,
+            'owners' => $this->db->fetchAll("SELECT id, name FROM owners ORDER BY name"),
         ]);
     }
 
@@ -102,31 +99,101 @@ class ReportController extends BaseController
      */
     public function contracts(): void
     {
+        $contractId = (int) $this->request->query('contract_id', 0);
+
+        // Список контрактов для селекта
         $contracts = $this->db->fetchAll(
-            "SELECT c.id, c.number, c.name, c.start_date, c.end_date, c.status, c.amount,
-                    o.name as owner_name,
-                    (SELECT COUNT(*) FROM ground_cables WHERE contract_id = c.id) as ground_cables,
-                    (SELECT COUNT(*) FROM aerial_cables WHERE contract_id = c.id) as aerial_cables,
-                    (SELECT COUNT(*) FROM duct_cables WHERE contract_id = c.id) as duct_cables,
-                    (SELECT COALESCE(SUM(length_m), 0) FROM ground_cables WHERE contract_id = c.id) +
-                    (SELECT COALESCE(SUM(length_m), 0) FROM aerial_cables WHERE contract_id = c.id) +
-                    (SELECT COALESCE(SUM(length_m), 0) FROM duct_cables WHERE contract_id = c.id) as total_cable_length
+            "SELECT c.id, c.number, c.name, c.amount, c.owner_id, o.name as owner_name
              FROM contracts c
              LEFT JOIN owners o ON c.owner_id = o.id
-             ORDER BY c.start_date DESC"
+             ORDER BY c.start_date DESC NULLS LAST, c.id DESC"
         );
 
-        // Общая статистика
-        $summary = [
-            'total_contracts' => count($contracts),
-            'active_contracts' => count(array_filter($contracts, fn($c) => $c['status'] === 'active')),
-            'total_amount' => array_sum(array_column($contracts, 'amount')),
-            'total_cable_length' => array_sum(array_column($contracts, 'total_cable_length')),
-        ];
+        // По умолчанию ничего не выводим, пока контракт не выбран
+        if ($contractId <= 0) {
+            Response::success([
+                'contracts' => $contracts,
+                'contract' => null,
+                'contracted' => ['stats' => ['count' => 0, 'length_sum' => 0, 'cost_per_meter' => null], 'cables' => []],
+                'uncontracted' => ['stats' => ['count' => 0, 'length_sum' => 0], 'cables' => []],
+            ]);
+        }
+
+        $contract = $this->db->fetch(
+            "SELECT c.*, o.name as owner_name
+             FROM contracts c
+             LEFT JOIN owners o ON c.owner_id = o.id
+             WHERE c.id = :id",
+            ['id' => $contractId]
+        );
+        if (!$contract) {
+            Response::error('Контракт не найден', 404);
+        }
+
+        // Кабели контракта (унифицированные)
+        $contractedCables = $this->db->fetchAll(
+            "SELECT cb.id, cb.number,
+                    ot.name as object_type_name,
+                    ct.name as cable_type_name,
+                    cc.marking,
+                    o.name as owner_name,
+                    cb.length_calculated
+             FROM cables cb
+             LEFT JOIN object_types ot ON cb.object_type_id = ot.id
+             LEFT JOIN cable_types ct ON cb.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON cb.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON cb.owner_id = o.id
+             WHERE cb.contract_id = :cid
+             ORDER BY cb.number",
+            ['cid' => $contractId]
+        );
+        $contractedCount = count($contractedCables);
+        $contractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $contractedCables));
+        $amount = (float) ($contract['amount'] ?? 0);
+        $costPerMeter = $contractedLength > 0 ? round($amount / $contractedLength, 4) : null;
+
+        // Незаконтрактованные кабели собственника контракта (contract_id IS NULL)
+        $ownerId = (int) ($contract['owner_id'] ?? 0);
+        $uncontractedCables = [];
+        if ($ownerId > 0) {
+            $uncontractedCables = $this->db->fetchAll(
+                "SELECT cb.id, cb.number,
+                        ot.name as object_type_name,
+                        ct.name as cable_type_name,
+                        cc.marking,
+                        o.name as owner_name,
+                        cb.length_calculated
+                 FROM cables cb
+                 LEFT JOIN object_types ot ON cb.object_type_id = ot.id
+                 LEFT JOIN cable_types ct ON cb.cable_type_id = ct.id
+                 LEFT JOIN cable_catalog cc ON cb.cable_catalog_id = cc.id
+                 LEFT JOIN owners o ON cb.owner_id = o.id
+                 WHERE cb.owner_id = :oid AND cb.contract_id IS NULL
+                 ORDER BY cb.number",
+                ['oid' => $ownerId]
+            );
+        }
+        $uncontractedCount = count($uncontractedCables);
+        $uncontractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
 
         Response::success([
-            'summary' => $summary,
             'contracts' => $contracts,
+            'contract' => $contract,
+            'contracted' => [
+                'stats' => [
+                    'count' => $contractedCount,
+                    'length_sum' => round($contractedLength, 2),
+                    'cost_per_meter' => $costPerMeter,
+                ],
+                'cables' => $contractedCables,
+            ],
+            'uncontracted' => [
+                'stats' => [
+                    'count' => $uncontractedCount,
+                    'length_sum' => round($uncontractedLength, 2),
+                ],
+                'cables' => $uncontractedCables,
+            ],
         ]);
     }
 
@@ -140,23 +207,14 @@ class ReportController extends BaseController
             "SELECT o.id, o.name, o.short_name, o.inn, o.contact_person, o.contact_phone,
                     (SELECT COUNT(*) FROM wells WHERE owner_id = o.id) as wells,
                     (SELECT COUNT(*) FROM channel_directions WHERE owner_id = o.id) as channel_directions,
+                    (SELECT COALESCE(SUM(length_m), 0) FROM channel_directions WHERE owner_id = o.id) as channel_directions_length_m,
                     (SELECT COUNT(*) FROM marker_posts WHERE owner_id = o.id) as marker_posts,
-                    (SELECT COUNT(*) FROM ground_cables WHERE owner_id = o.id) as ground_cables,
-                    (SELECT COUNT(*) FROM aerial_cables WHERE owner_id = o.id) as aerial_cables,
-                    (SELECT COUNT(*) FROM duct_cables WHERE owner_id = o.id) as duct_cables,
-                    (SELECT COUNT(*) FROM contracts WHERE owner_id = o.id) as contracts,
-                    (SELECT COALESCE(SUM(length_m), 0) FROM ground_cables WHERE owner_id = o.id) +
-                    (SELECT COALESCE(SUM(length_m), 0) FROM aerial_cables WHERE owner_id = o.id) +
-                    (SELECT COALESCE(SUM(length_m), 0) FROM duct_cables WHERE owner_id = o.id) as total_cable_length
+                    (SELECT COUNT(*) FROM cables WHERE owner_id = o.id) as cables,
+                    (SELECT COALESCE(SUM(length_calculated), 0) FROM cables WHERE owner_id = o.id) as cables_length_m,
+                    (SELECT COUNT(*) FROM contracts WHERE owner_id = o.id) as contracts
              FROM owners o
              ORDER BY o.name"
         );
-
-        foreach ($owners as &$owner) {
-            $owner['total_objects'] = $owner['wells'] + $owner['channel_directions'] + 
-                                      $owner['marker_posts'] + $owner['ground_cables'] + 
-                                      $owner['aerial_cables'] + $owner['duct_cables'];
-        }
 
         Response::success($owners);
     }

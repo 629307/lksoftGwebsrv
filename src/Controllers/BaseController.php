@@ -181,13 +181,19 @@ abstract class BaseController
         }
 
         if (!is_dir($uploadPath)) {
-            mkdir($uploadPath, 0755, true);
+            // mkdir может кинуть warning (который у нас превращается в Exception) — подавляем и проверяем явно
+            if (!@mkdir($uploadPath, 0755, true) && !is_dir($uploadPath)) {
+                Response::error('Нет прав на создание директории загрузки. Проверьте права на папку uploads.', 500);
+            }
+        }
+        if (!is_writable($uploadPath)) {
+            Response::error('Нет прав на запись в директорию загрузки. Проверьте владельца/права на папку uploads.', 500);
         }
 
         $filePath = $uploadPath . '/' . $filename;
 
         if (!move_uploaded_file($file['tmp_name'], $filePath)) {
-            Response::error('Ошибка сохранения файла', 500);
+            Response::error('Ошибка сохранения файла. Проверьте права на папку uploads и свободное место.', 500);
         }
 
         return [
