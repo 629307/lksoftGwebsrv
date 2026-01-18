@@ -8,6 +8,7 @@ const App = {
     currentTab: 'wells',
     currentReference: null,
     pagination: { page: 1, limit: 50, total: 0 },
+    incidentDraftRelatedObjects: [],
 
     /**
      * Инициализация приложения
@@ -63,6 +64,12 @@ const App = {
         // Инициализируем карту
         MapManager.init();
 
+        // Подтягиваем цвета типов объектов (слои + отрисовка на карте)
+        this.refreshObjectTypeColors().catch(() => {});
+
+        // Применяем начальную видимость слоёв по чекбоксам
+        document.querySelectorAll('.layer-item input').forEach(input => this.handleLayerToggle(input));
+
         // Загружаем справочники для фильтров (не блокируем основной поток)
         this.loadFilterOptions().catch(err => console.error('Ошибка загрузки фильтров:', err));
 
@@ -103,8 +110,10 @@ const App = {
             input.addEventListener('change', () => this.handleLayerToggle(input));
         });
 
-        // Фильтры
-        document.getElementById('btn-apply-filters').addEventListener('click', () => this.applyFilters());
+        // Фильтры (авто-применение при выборе)
+        ['filter-group', 'filter-owner', 'filter-status', 'filter-contract'].forEach((id) => {
+            document.getElementById(id)?.addEventListener('change', () => this.applyFilters());
+        });
         document.getElementById('btn-reset-filters').addEventListener('click', () => this.resetFilters());
 
         // Закрытие панели информации
@@ -117,6 +126,20 @@ const App = {
 
         // Поиск объектов
         document.getElementById('search-objects').addEventListener('input', (e) => this.handleSearch(e.target.value));
+
+        // Фильтры для кабелей в списке объектов
+        document.getElementById('cables-filter-object-type')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
+        document.getElementById('cables-filter-owner')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
+        document.getElementById('cables-filter-contract')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
 
         // Кнопки добавления
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
@@ -148,14 +171,112 @@ const App = {
         // Редактирование/удаление объекта
         document.getElementById('btn-edit-object').addEventListener('click', () => this.editCurrentObject());
         document.getElementById('btn-delete-object').addEventListener('click', () => this.deleteCurrentObject());
+        document.getElementById('btn-copy-coords')?.addEventListener('click', () => this.copyCurrentObjectCoordinates());
+
+        // Отмена подсветки маршрута кабеля
+        document.getElementById('btn-clear-highlight')?.addEventListener('click', () => MapManager.clearHighlight());
 
         // Панель инструментов карты
         document.getElementById('btn-add-direction-map')?.addEventListener('click', () => MapManager.startAddDirectionMode());
         document.getElementById('btn-add-well-map')?.addEventListener('click', () => MapManager.startAddingObject('wells'));
+        document.getElementById('btn-add-ground-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_ground'));
+        document.getElementById('btn-add-aerial-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_aerial'));
+        document.getElementById('btn-add-duct-cable-map')?.addEventListener('click', () => MapManager.startAddDuctCableMode());
+        document.getElementById('btn-toggle-well-labels')?.addEventListener('click', (e) => {
+            MapManager.toggleWellLabels();
+            e.currentTarget.classList.toggle('active', MapManager.wellLabelsEnabled);
+        });
         document.getElementById('btn-cancel-add-mode')?.addEventListener('click', () => {
             MapManager.cancelAddDirectionMode();
             MapManager.cancelAddingObject();
+            MapManager.cancelAddCableMode();
+            MapManager.cancelAddDuctCableMode();
         });
+        document.getElementById('btn-finish-add-mode')?.addEventListener('click', () => MapManager.finishAddCableMode());
+    },
+
+    copyCurrentObjectCoordinates() {
+        const panel = document.getElementById('object-info-panel');
+        if (!panel) return;
+        const objectType = panel.dataset.objectType;
+        if (objectType !== 'well') return;
+
+        const number = document.getElementById('info-title')?.textContent || 'Колодец';
+        const lat = panel.dataset.lat;
+        const lng = panel.dataset.lng;
+        if (!lat || !lng) {
+            this.notify('Координаты недоступны', 'warning');
+            return;
+        }
+
+        const text = `${number}\nWGS84: ${parseFloat(lat).toFixed(6)}, ${parseFloat(lng).toFixed(6)}`;
+        const doNotify = () => this.notify('Координаты скопированы', 'success');
+
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(doNotify).catch(() => {
+                // fallback
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                doNotify();
+            });
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            doNotify();
+        }
+    },
+
+    async refreshObjectTypeColors(redrawMap = true) {
+        const resp = await API.references.all('object_types');
+        if (!resp?.success) return;
+
+        const byCode = {};
+        (resp.data || []).forEach(t => {
+            if (t?.code) byCode[t.code] = t;
+        });
+
+        // Коды системных типов (используются в логике слоёв/карты)
+        const codeToColor = {
+            well: byCode.well?.color,
+            channel: byCode.channel?.color,
+            marker: byCode.marker?.color,
+            cable_ground: byCode.cable_ground?.color,
+            cable_aerial: byCode.cable_aerial?.color,
+            cable_duct: byCode.cable_duct?.color,
+        };
+
+        // Обновляем MapManager.colors
+        if (codeToColor.well) MapManager.colors.wells = codeToColor.well;
+        if (codeToColor.channel) MapManager.colors.channels = codeToColor.channel;
+        if (codeToColor.marker) MapManager.colors.markers = codeToColor.marker;
+        if (codeToColor.cable_ground) MapManager.colors.groundCables = codeToColor.cable_ground;
+        if (codeToColor.cable_aerial) MapManager.colors.aerialCables = codeToColor.cable_aerial;
+        if (codeToColor.cable_duct) MapManager.colors.ductCables = codeToColor.cable_duct;
+
+        // Обновляем цвета иконок слоёв в меню
+        const setLayerIcon = (checkboxId, color) => {
+            const input = document.getElementById(checkboxId);
+            const icon = input?.closest('label')?.querySelector('.layer-icon');
+            if (icon && color) icon.style.background = color;
+        };
+        setLayerIcon('layer-wells', codeToColor.well);
+        setLayerIcon('layer-channels', codeToColor.channel);
+        setLayerIcon('layer-markers', codeToColor.marker);
+        setLayerIcon('layer-ground-cables', codeToColor.cable_ground);
+        setLayerIcon('layer-aerial-cables', codeToColor.cable_aerial);
+        setLayerIcon('layer-duct-cables', codeToColor.cable_duct);
+
+        if (redrawMap && MapManager?.map) {
+            MapManager.loadAllLayers();
+        }
     },
 
     /**
@@ -364,7 +485,48 @@ const App = {
             t.classList.toggle('active', t.dataset.tab === tab);
         });
 
+        // Показываем фильтры только для кабелей
+        const cableFiltersRow = document.getElementById('cables-filters-row');
+        if (cableFiltersRow) {
+            cableFiltersRow.classList.toggle('hidden', tab !== 'unified_cables');
+            if (tab === 'unified_cables') {
+                this.loadCableListFilters();
+            }
+        }
+
         this.loadObjects();
+    },
+
+    async loadCableListFilters() {
+        const typeSelect = document.getElementById('cables-filter-object-type');
+        const ownerSelect = document.getElementById('cables-filter-owner');
+        const contractSelect = document.getElementById('cables-filter-contract');
+        if (!typeSelect || !ownerSelect || !contractSelect) return;
+
+        // Уже загружено
+        if (typeSelect.options.length > 1 && ownerSelect.options.length > 1 && contractSelect.options.length > 1) return;
+
+        try {
+            const [typesResp, ownersResp, contractsResp] = await Promise.all([
+                API.unifiedCables.objectTypes(),
+                API.references.all('owners'),
+                API.references.all('contracts'),
+            ]);
+            if (typesResp?.success) {
+                typeSelect.innerHTML = '<option value="">Вид объекта: все</option>' +
+                    typesResp.data.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+            }
+            if (ownersResp?.success) {
+                ownerSelect.innerHTML = '<option value="">Собственник: все</option>' +
+                    ownersResp.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+            }
+            if (contractsResp?.success) {
+                contractSelect.innerHTML = '<option value="">Контракт: все</option>' +
+                    contractsResp.data.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
+            }
+        } catch (e) {
+            // ignore
+        }
     },
 
     /**
@@ -380,6 +542,16 @@ const App = {
         // Добавляем search только если он не пустой
         if (search) {
             params.search = search;
+        }
+
+        // Доп. фильтры для списка кабелей
+        if (this.currentTab === 'unified_cables') {
+            const ot = document.getElementById('cables-filter-object-type')?.value;
+            const owner = document.getElementById('cables-filter-owner')?.value;
+            const contract = document.getElementById('cables-filter-contract')?.value;
+            if (ot) params.object_type_id = ot;
+            if (owner) params.owner_id = owner;
+            if (contract) params.contract_id = contract;
         }
 
         try {
@@ -426,6 +598,26 @@ const App = {
                 if (response.pagination) {
                     this.pagination = response.pagination;
                     this.renderPagination();
+                }
+
+                // Итоги по кабелям (по текущему фильтру/поиску, независимо от страницы)
+                if (this.currentTab === 'unified_cables') {
+                    const statsParams = { ...params };
+                    delete statsParams.page;
+                    delete statsParams.limit;
+                    try {
+                        const statsResp = await API.unifiedCables.stats(statsParams);
+                        if (statsResp?.success) {
+                            const count = statsResp.data?.count ?? 0;
+                            const sum = statsResp.data?.length_sum ?? 0;
+                            const countEl = document.getElementById('cables-count');
+                            const sumEl = document.getElementById('cables-length-sum');
+                            if (countEl) countEl.textContent = String(count);
+                            if (sumEl) sumEl.textContent = Number(sum).toFixed(2);
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
                 }
             } else {
                 console.error('API returned error:', response);
@@ -563,6 +755,10 @@ const App = {
                     response = await API.channelDirections.get(id);
                     title = 'Редактирование направления';
                     break;
+                case 'channels':
+                    response = await API.cableChannels.get(id);
+                    title = 'Редактирование канала';
+                    break;
                 case 'markers':
                     response = await API.markerPosts.get(id);
                     title = 'Редактирование столбика';
@@ -587,6 +783,24 @@ const App = {
             }
 
             const obj = response.data || response;
+            // Предвыбор каналов маршрута для duct-кабеля (используется при рендере формы)
+            this._editCableRouteChannelIds = [];
+            if (type === 'unified_cables' && obj.object_type_code === 'cable_duct' && Array.isArray(obj.route_channels)) {
+                this._editCableRouteChannelIds = obj.route_channels.map(rc => parseInt(rc.cable_channel_id));
+            }
+            // Предзаполнение координат для ground/aerial
+            this._editCableCoords = [];
+            if (type === 'unified_cables' && (obj.object_type_code === 'cable_ground' || obj.object_type_code === 'cable_aerial') && obj.geometry) {
+                try {
+                    const geom = typeof obj.geometry === 'string' ? JSON.parse(obj.geometry) : obj.geometry;
+                    const coords = geom?.coordinates;
+                    if (geom?.type === 'MultiLineString' && Array.isArray(coords) && Array.isArray(coords[0])) {
+                        this._editCableCoords = coords[0].map(p => [p[0], p[1]]);
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
             
             // Загружаем список групп для возможности добавления объекта в группы
             const groupsResponse = await API.groups.list({ limit: 100 });
@@ -594,7 +808,7 @@ const App = {
 
             let formHtml = '';
 
-            if (type === 'wells' || type === 'markers') {
+            if (type === 'wells') {
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
@@ -649,15 +863,66 @@ const App = {
                             <label>Примечания</label>
                             <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
                         </div>
+                    </form>
+                `;
+            } else if (type === 'markers') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
-                            <label>Добавить в группы</label>
-                            <div id="groups-checkboxes" style="max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: 4px;">
-                                ${groups.length > 0 ? groups.map(g => `
-                                    <label style="display: block; margin-bottom: 4px;">
-                                        <input type="checkbox" name="group_ids" value="${g.id}"> ${g.name}
-                                    </label>
-                                `).join('') : '<p class="text-muted">Нет доступных групп</p>'}
+                            <label>Номер</label>
+                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Система координат</label>
+                            <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
+                                <option value="wgs84" selected>WGS84 (широта/долгота)</option>
+                                <option value="msk86">МСК86 Зона 4 (X/Y)</option>
+                            </select>
+                        </div>
+                        <div id="coords-wgs84-inputs">
+                            <div class="form-group">
+                                <label>Широта (WGS84)</label>
+                                <input type="number" name="latitude" step="0.000001" value="${obj.latitude || ''}">
                             </div>
+                            <div class="form-group">
+                                <label>Долгота (WGS84)</label>
+                                <input type="number" name="longitude" step="0.000001" value="${obj.longitude || ''}">
+                            </div>
+                        </div>
+                        <div id="coords-msk86-inputs" style="display: none;">
+                            <div class="form-group">
+                                <label>X (МСК86)</label>
+                                <input type="number" name="x_msk86" step="0.01" value="${obj.x_msk86 || ''}">
+                            </div>
+                            <div class="form-group">
+                                <label>Y (МСК86)</label>
+                                <input type="number" name="y_msk86" step="0.01" value="${obj.y_msk86 || ''}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Собственник *</label>
+                            <select name="owner_id" required id="modal-owner-select" data-value="${obj.owner_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Вид *</label>
+                            <select name="type_id" required id="modal-type-select" data-value="${obj.type_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Тип *</label>
+                            <select name="kind_id" required id="modal-kind-select" data-value="${obj.kind_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние *</label>
+                            <select name="status_id" required id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Дата установки</label>
+                            <input type="date" name="installation_date" value="${obj.installation_date || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
                         </div>
                     </form>
                 `;
@@ -701,13 +966,121 @@ const App = {
                         </button>
                     </form>
                 `;
+            } else if (type === 'channels') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
+                        <div class="form-group">
+                            <label>Направление</label>
+                            <input type="text" value="${obj.direction_number || obj.direction_id || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Номер канала</label>
+                            <input type="text" value="${obj.channel_number || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Тип</label>
+                            <select name="kind_id" id="modal-kind-select" data-value="${obj.kind_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние</label>
+                            <select name="status_id" id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Диаметр (мм)</label>
+                            <input type="number" name="diameter_mm" value="${obj.diameter_mm || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
+                        </div>
+                    </form>
+                `;
+            } else if (type === 'unified_cables') {
+                formHtml = `
+                    <form id="edit-object-form">
+                        <input type="hidden" name="id" value="${obj.id}">
+                        <input type="hidden" name="object_type_code" value="${obj.object_type_code || ''}">
+                        <div class="form-group">
+                            <label>Номер</label>
+                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Длина расч. (м)</label>
+                            <input type="number" value="${obj.length_calculated || ''}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Вид объекта</label>
+                            <input type="text" value="${obj.object_type_name || obj.object_type_code || '-'}" disabled style="background: var(--bg-tertiary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Тип кабеля</label>
+                            <select name="cable_type_id" id="modal-cable-type-select" data-value="${obj.cable_type_id || ''}" onchange="App.onCableTypeChange()">
+                                <option value="">Выберите тип...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Кабель (из каталога)</label>
+                            <select name="cable_catalog_id" id="modal-cable-catalog-select" data-value="${obj.cable_catalog_id || ''}">
+                                <option value="">Выберите марку кабеля...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Собственник</label>
+                            <select name="owner_id" id="modal-owner-select" data-value="${obj.owner_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние</label>
+                            <select name="status_id" id="modal-status-select" data-value="${obj.status_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Контракт</label>
+                            <select name="contract_id" id="modal-contract-select" data-value="${obj.contract_id || ''}">
+                                <option value="">Не указан</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Дата установки</label>
+                            <input type="date" name="installation_date" value="${obj.installation_date || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Примечания</label>
+                            <textarea name="notes" rows="3">${obj.notes || ''}</textarea>
+                        </div>
+
+                        <div id="cable-geometry-block" style="display: none;">
+                            <div class="form-group">
+                                <label>Система координат</label>
+                                <select id="cable-coord-system">
+                                    <option value="wgs84">WGS84 (долгота, широта)</option>
+                                    <option value="msk86">МСК86 Зона 4 (X, Y)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Координаты (точки ломаной)</label>
+                                <div id="cable-coordinates-list"></div>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="App.addCableCoordinate()">
+                                    <i class="fas fa-plus"></i> Добавить точку
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="cable-route-block" style="display: none;">
+                            <div class="form-group">
+                                <label>Каналы маршрута</label>
+                                <select multiple id="cable-route-channels" style="height: 120px; width: 100%;"></select>
+                                <p class="text-muted">Удерживайте Ctrl для выбора нескольких</p>
+                            </div>
+                        </div>
+                    </form>
+                `;
             } else if (type === 'groups') {
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер</label>
-                            <input type="text" name="number" value="${obj.number || ''}">
+                            <input type="text" name="number" value="${obj.number || obj.id || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
                         <div class="form-group">
                             <label>Название *</label>
@@ -740,6 +1113,37 @@ const App = {
                 `;
             }
 
+            // Фото для объектов (редактирование)
+            const photosTableMap = {
+                wells: 'wells',
+                directions: 'channel_directions',
+                channels: 'cable_channels',
+                markers: 'marker_posts',
+                unified_cables: 'cables',
+            };
+            const photoTable = photosTableMap[type];
+            if (photoTable && formHtml.includes('</form>')) {
+                formHtml = formHtml.replace(
+                    '</form>',
+                    `
+                        <hr>
+                        <h4>Фото</h4>
+                        <div id="object-photos" data-object-table="${photoTable}" data-object-id="${obj.id}">
+                            <div class="text-muted">Загрузка...</div>
+                        </div>
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label>Добавить фото</label>
+                            <input type="file" id="object-photo-file" accept="image/*">
+                            <input type="text" id="object-photo-description" placeholder="Описание (необязательно)" style="margin-top: 8px;">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="App.uploadObjectPhoto()" style="margin-top: 8px;">
+                                <i class="fas fa-upload"></i> Загрузить
+                            </button>
+                        </div>
+                    </form>
+                    `
+                );
+            }
+
             const footer = `
                 <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
                 <button class="btn btn-danger" onclick="App.deleteObject('${type}', ${id})" style="margin-right: auto;">
@@ -752,10 +1156,98 @@ const App = {
             
             // Загружаем справочники и устанавливаем значения
             await this.loadModalSelectsWithValues(type);
+
+            // Подгружаем фотографии (если блок есть)
+            if (photoTable) {
+                this.loadObjectPhotos(photoTable, obj.id).catch(() => {});
+            }
             
         } catch (error) {
             console.error('Ошибка загрузки объекта:', error);
             this.notify('Ошибка загрузки данных', 'error');
+        }
+    },
+
+    async loadObjectPhotos(objectTable, objectId) {
+        const container = document.getElementById('object-photos');
+        if (!container) return;
+        container.innerHTML = `<div class="text-muted">Загрузка...</div>`;
+
+        const resp = await API.photos.byObject(objectTable, objectId);
+        if (!resp?.success) {
+            container.innerHTML = `<div class="text-muted">Не удалось загрузить фото</div>`;
+            return;
+        }
+        const photos = resp.data || [];
+        if (!photos.length) {
+            container.innerHTML = `<div class="text-muted">Фотографий нет</div>`;
+            return;
+        }
+
+        container.innerHTML = `
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                ${photos.map(p => `
+                    <div style="width:120px;">
+                        <a href="${p.url}" target="_blank" rel="noopener">
+                            <img src="${p.thumbnail_url || p.url}" alt="" style="width:120px; height:120px; object-fit:cover; border-radius:6px; border:1px solid var(--border-color);">
+                        </a>
+                        <div class="text-muted" style="font-size:12px; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            ${p.description || ''}
+                        </div>
+                        <button type="button" class="btn btn-sm btn-danger" style="margin-top:6px; width:100%; justify-content:center;" onclick="App.deleteObjectPhoto(${p.id})">
+                            <i class="fas fa-trash"></i> Удалить
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    },
+
+    async uploadObjectPhoto() {
+        const block = document.getElementById('object-photos');
+        const fileInput = document.getElementById('object-photo-file');
+        if (!block || !fileInput) return;
+        const objectTable = block.dataset.objectTable;
+        const objectId = block.dataset.objectId;
+        const file = fileInput.files?.[0];
+        const desc = document.getElementById('object-photo-description')?.value || '';
+        if (!objectTable || !objectId || !file) {
+            this.notify('Выберите файл', 'warning');
+            return;
+        }
+        try {
+            const resp = await API.photos.upload(objectTable, objectId, file, desc);
+            if (resp?.success) {
+                fileInput.value = '';
+                const d = document.getElementById('object-photo-description');
+                if (d) d.value = '';
+                this.notify('Фотография загружена', 'success');
+                await this.loadObjectPhotos(objectTable, objectId);
+            } else {
+                this.notify(resp?.message || 'Ошибка загрузки фото', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка загрузки фото', 'error');
+        }
+    },
+
+    async deleteObjectPhoto(photoId) {
+        if (!confirm('Удалить фотографию?')) return;
+        const block = document.getElementById('object-photos');
+        const objectTable = block?.dataset.objectTable;
+        const objectId = block?.dataset.objectId;
+        try {
+            const resp = await API.photos.delete(photoId);
+            if (resp?.success) {
+                this.notify('Фотография удалена', 'success');
+                if (objectTable && objectId) {
+                    await this.loadObjectPhotos(objectTable, objectId);
+                }
+            } else {
+                this.notify(resp?.message || 'Ошибка удаления', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка удаления', 'error');
         }
     },
 
@@ -778,13 +1270,64 @@ const App = {
             }
             
             // Затем устанавливаем остальные значения
-            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select'];
+            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select', 'modal-contract-select', 'modal-cable-type-select', 'modal-cable-catalog-select'];
             selects.forEach(selectId => {
                 const select = document.getElementById(selectId);
                 if (select && select.dataset.value) {
                     select.value = select.dataset.value;
                 }
             });
+
+            // Для кабелей — после установки типа загружаем каталог и применяем сохранённое значение
+            if (type === 'unified_cables' && document.getElementById('modal-cable-type-select')?.value) {
+                this.onCableTypeChange().then(() => {
+                    const catalogSelect = document.getElementById('modal-cable-catalog-select');
+                    if (catalogSelect && catalogSelect.dataset.value) {
+                        catalogSelect.value = catalogSelect.dataset.value;
+                    }
+                });
+            }
+
+            // Для кабелей — показываем нужный блок редактирования в зависимости от object_type_code
+            if (type === 'unified_cables') {
+                const objectTypeCode = document.querySelector('#edit-object-form input[name="object_type_code"]')?.value || '';
+                const geomBlock = document.getElementById('cable-geometry-block');
+                const routeBlock = document.getElementById('cable-route-block');
+                if (objectTypeCode === 'cable_duct') {
+                    if (geomBlock) geomBlock.style.display = 'none';
+                    if (routeBlock) {
+                        routeBlock.style.display = 'block';
+                        this.loadCableRouteOptions().then(() => {
+                            // Предвыбор каналов из API
+                            const select = document.getElementById('cable-route-channels');
+                            const ids = (this._editCableRouteChannelIds || []).map(v => parseInt(v));
+                            if (select && ids.length) {
+                                const set = new Set(ids);
+                                Array.from(select.options).forEach(o => o.selected = set.has(parseInt(o.value)));
+                            }
+                        });
+                    }
+                } else if (objectTypeCode === 'cable_ground' || objectTypeCode === 'cable_aerial') {
+                    if (routeBlock) routeBlock.style.display = 'none';
+                    if (geomBlock) geomBlock.style.display = 'block';
+                    // Заполняем координаты если есть
+                    const container = document.getElementById('cable-coordinates-list');
+                    if (container) {
+                        container.innerHTML = '';
+                        (this._editCableCoords || []).forEach(() => this.addCableCoordinate());
+                        const rows = container.querySelectorAll('.cable-coord-row');
+                        rows.forEach((row, idx) => {
+                            const x = row.querySelector('.coord-x');
+                            const y = row.querySelector('.coord-y');
+                            const pt = (this._editCableCoords || [])[idx];
+                            if (pt && x && y) {
+                                x.value = pt[0];
+                                y.value = pt[1];
+                            }
+                        });
+                    }
+                }
+            }
         }, 50);
     },
 
@@ -812,6 +1355,9 @@ const App = {
                 case 'directions':
                     response = await API.channelDirections.update(id, data);
                     break;
+                case 'channels':
+                    response = await API.cableChannels.update(id, data);
+                    break;
                 case 'markers':
                     response = await API.markerPosts.update(id, data);
                     break;
@@ -819,6 +1365,19 @@ const App = {
                     response = await API.cables.update('ground', id, data);
                     break;
                 case 'unified_cables':
+                    {
+                        const objectTypeCode = document.querySelector('#edit-object-form input[name="object_type_code"]')?.value || '';
+                        if (objectTypeCode === 'cable_ground' || objectTypeCode === 'cable_aerial') {
+                            const coordinates = this.collectCableCoordinates();
+                            if (coordinates.length >= 2) {
+                                data.coordinates = coordinates;
+                                data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
+                            }
+                        } else if (objectTypeCode === 'cable_duct') {
+                            const channelsSelect = document.getElementById('cable-route-channels');
+                            data.route_channels = Array.from(channelsSelect?.selectedOptions || []).map(o => parseInt(o.value));
+                        }
+                    }
                     response = await API.unifiedCables.update(id, data);
                     break;
                 case 'groups':
@@ -870,6 +1429,9 @@ const App = {
                     break;
                 case 'directions':
                     response = await API.channelDirections.delete(id);
+                    break;
+                case 'channels':
+                    response = await API.cableChannels.delete(id);
                     break;
                 case 'markers':
                     response = await API.markerPosts.delete(id);
@@ -1253,7 +1815,18 @@ const App = {
     },
 
     renderObjectsReport(data) {
+        // Фильтр по собственнику
+        const owners = data?.owners || [];
         return `
+            <div class="filters-row" style="margin: 12px 0;">
+                <select id="report-objects-owner">
+                    <option value="">Собственник: все</option>
+                    ${owners.map(o => `<option value="${o.id}">${o.name}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="App.applyObjectsReportFilter()">
+                    <i class="fas fa-filter"></i> Применить
+                </button>
+            </div>
             <table>
                 <thead>
                     <tr><th>Тип объекта</th><th>Количество</th><th>Длина (м)</th></tr>
@@ -1271,32 +1844,144 @@ const App = {
         `;
     },
 
+    async applyObjectsReportFilter() {
+        const ownerId = document.getElementById('report-objects-owner')?.value || '';
+        const container = document.getElementById('report-content');
+        if (!container) return;
+        container.innerHTML = '<p>Загрузка...</p>';
+        try {
+            const resp = await API.reports.objects(ownerId ? { owner_id: ownerId } : {});
+            if (resp?.success) {
+                container.innerHTML = `
+                    <div class="panel-header">
+                        <h3>${this.getReportTitle('objects')}</h3>
+                        <button class="btn btn-secondary" onclick="API.reports.export('objects')">
+                            <i class="fas fa-download"></i> Экспорт CSV
+                        </button>
+                    </div>
+                    ${this.renderObjectsReport(resp.data)}
+                `;
+                // сохраняем выбранное значение
+                const sel = container.querySelector('#report-objects-owner');
+                if (sel) sel.value = ownerId;
+            }
+        } catch (e) {
+            container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
+        }
+    },
+
     renderContractsReport(data) {
-        return `
+        const contracts = data?.contracts || [];
+        const selectedId = data?.contract?.id ? String(data.contract.id) : '';
+
+        const contracted = data?.contracted || { stats: { count: 0, length_sum: 0, cost_per_meter: null }, cables: [] };
+        const uncontracted = data?.uncontracted || { stats: { count: 0, length_sum: 0 }, cables: [] };
+
+        const renderCablesTable = (rows) => `
             <table>
                 <thead>
-                    <tr><th>Номер</th><th>Название</th><th>Собственник</th><th>Статус</th><th>Сумма</th></tr>
+                    <tr>
+                        <th>Номер</th>
+                        <th>Вид объекта</th>
+                        <th>Тип кабеля</th>
+                        <th>Кабель (из каталога)</th>
+                        <th>Собственник</th>
+                        <th>Длина расч. (м)</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    ${data.contracts.map(c => `
+                    ${(rows || []).map(c => `
                         <tr>
-                            <td>${c.number}</td>
-                            <td>${c.name}</td>
+                            <td>${c.number || '-'}</td>
+                            <td>${c.object_type_name || '-'}</td>
+                            <td>${c.cable_type_name || '-'}</td>
+                            <td>${c.marking || '-'}</td>
                             <td>${c.owner_name || '-'}</td>
-                            <td>${c.status}</td>
-                            <td>${c.amount || '-'}</td>
+                            <td>${c.length_calculated || 0}</td>
                         </tr>
-                    `).join('')}
+                    `).join('') || '<tr><td colspan="6">Нет данных</td></tr>'}
                 </tbody>
             </table>
         `;
+
+        return `
+            <div class="filters-row" style="margin: 12px 0;">
+                <select id="report-contracts-contract">
+                    <option value="">Контракт: выберите...</option>
+                    ${contracts.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="App.applyContractsReportFilter()">
+                    <i class="fas fa-filter"></i> Показать
+                </button>
+            </div>
+
+            ${selectedId ? `
+                <div style="margin-top: 12px;">
+                    <h4>
+                        Кабеля контракта
+                        <span class="text-muted">
+                            (Количество кабелей: ${contracted.stats.count},
+                            Общая протяженность кабелей (м): ${Number(contracted.stats.length_sum || 0).toFixed(2)},
+                            Стоимость за 1 метр: ${contracted.stats.cost_per_meter === null ? '-' : contracted.stats.cost_per_meter})
+                        </span>
+                    </h4>
+                    ${renderCablesTable(contracted.cables)}
+                </div>
+
+                <div style="margin-top: 18px;">
+                    <h4>
+                        Не законтрактованные Кабеля собственника контракта
+                        <span class="text-muted">
+                            (Количество кабелей: ${uncontracted.stats.count},
+                            Общая протяженность кабелей (м): ${Number(uncontracted.stats.length_sum || 0).toFixed(2)})
+                        </span>
+                    </h4>
+                    ${renderCablesTable(uncontracted.cables)}
+                </div>
+            ` : `
+                <p class="text-muted">Выберите контракт в фильтре — после этого будет сформирован отчёт.</p>
+            `}
+        `;
+    },
+
+    async applyContractsReportFilter() {
+        const contractId = document.getElementById('report-contracts-contract')?.value || '';
+        const container = document.getElementById('report-content');
+        if (!container) return;
+        container.innerHTML = '<p>Загрузка...</p>';
+        try {
+            const resp = await API.reports.contracts(contractId ? { contract_id: contractId } : {});
+            if (resp?.success) {
+                container.innerHTML = `
+                    <div class="panel-header">
+                        <h3>${this.getReportTitle('contracts')}</h3>
+                        <button class="btn btn-secondary" onclick="API.reports.export('contracts')">
+                            <i class="fas fa-download"></i> Экспорт CSV
+                        </button>
+                    </div>
+                    ${this.renderContractsReport(resp.data)}
+                `;
+                const sel = container.querySelector('#report-contracts-contract');
+                if (sel) sel.value = contractId;
+            }
+        } catch (e) {
+            container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
+        }
     },
 
     renderOwnersReport(data) {
         return `
             <table>
                 <thead>
-                    <tr><th>Собственник</th><th>Колодцы</th><th>Направления</th><th>Столбики</th><th>Кабели</th><th>Всего</th></tr>
+                    <tr>
+                        <th>Собственник</th>
+                        <th>Колодцы</th>
+                        <th>Направления</th>
+                        <th>Направление (м)</th>
+                        <th>Столбики</th>
+                        <th>Кабели</th>
+                        <th>Кабели Длинна (м)</th>
+                    </tr>
                 </thead>
                 <tbody>
                     ${data.map(o => `
@@ -1304,9 +1989,10 @@ const App = {
                             <td>${o.name}</td>
                             <td>${o.wells}</td>
                             <td>${o.channel_directions}</td>
+                            <td>${Number(o.channel_directions_length_m || 0).toFixed(2)}</td>
                             <td>${o.marker_posts}</td>
-                            <td>${o.ground_cables + o.aerial_cables + o.duct_cables}</td>
-                            <td>${o.total_objects}</td>
+                            <td>${o.cables}</td>
+                            <td>${Number(o.cables_length_m || 0).toFixed(2)}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -1358,6 +2044,12 @@ const App = {
      */
     async showReference(type) {
         this.currentReference = type;
+
+        // Справочник display_styles удалён
+        if (type === 'display_styles') {
+            this.notify('Справочник удалён', 'warning');
+            return;
+        }
         
         document.querySelector('.references-grid').classList.add('hidden');
         document.getElementById('reference-content').classList.remove('hidden');
@@ -1370,7 +2062,6 @@ const App = {
             contracts: 'Контракты',
             cable_types: 'Типы кабелей',
             cable_catalog: 'Каталог кабелей',
-            display_styles: 'Стили отображения',
         };
         
         document.getElementById('ref-title').textContent = titles[type] || type;
@@ -1467,6 +2158,19 @@ const App = {
         document.getElementById('modal-body').innerHTML = content;
         document.getElementById('modal-footer').innerHTML = footer;
         document.getElementById('modal').classList.remove('hidden');
+
+        // Дата/время по умолчанию для пустых полей
+        const modal = document.getElementById('modal');
+        const now = new Date();
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+        const nowLocal = `${today}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+        modal.querySelectorAll('input[type="date"]').forEach((el) => {
+            if (!el.value) el.value = today;
+        });
+        modal.querySelectorAll('input[type="datetime-local"]').forEach((el) => {
+            if (!el.value) el.value = nowLocal;
+        });
     },
 
     hideModal() {
@@ -1526,13 +2230,18 @@ const App = {
 
         let formHtml = '';
 
-        if (type === 'wells' || type === 'markers') {
+        if (type === 'wells') {
+            const numberPrefixLabel = 'ККС';
             formHtml = `
                 <form id="add-object-form">
                     <input type="hidden" name="object_type_code" value="${objectTypeCodes[type] || ''}">
                     <div class="form-group">
                         <label>Номер *</label>
-                        <input type="text" name="number" required>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" name="number_prefix" id="modal-number-prefix" readonly style="flex: 0 0 180px; background: var(--bg-tertiary);" value="${numberPrefixLabel}-">
+                            <input type="text" name="number_suffix" id="modal-number-suffix" required placeholder="Например: ТУ-01" style="flex: 1;">
+                        </div>
+                        <p class="text-muted">Префикс формируется автоматически по собственнику</p>
                     </div>
                     <div class="form-group">
                         <label>Система координат</label>
@@ -1583,13 +2292,75 @@ const App = {
                     </div>
                 </form>
             `;
+        } else if (type === 'markers') {
+            formHtml = `
+                <form id="add-object-form">
+                    <input type="hidden" name="object_type_code" value="${objectTypeCodes[type] || ''}">
+                    <div class="form-group">
+                        <label>Номер *</label>
+                        <input type="text" id="modal-marker-number" value="СТ-<код>-<id>" disabled style="background: var(--bg-tertiary);">
+                        <p class="text-muted">Номер формируется автоматически по собственнику и ID</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Система координат</label>
+                        <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
+                            <option value="wgs84" selected>WGS84 (широта/долгота)</option>
+                            <option value="msk86">МСК86 Зона 4 (X/Y)</option>
+                        </select>
+                    </div>
+                    <div id="coords-wgs84-inputs">
+                        <div class="form-group">
+                            <label>Широта (WGS84)</label>
+                            <input type="number" name="latitude" step="0.000001" value="${lat || ''}" placeholder="55.123456">
+                        </div>
+                        <div class="form-group">
+                            <label>Долгота (WGS84)</label>
+                            <input type="number" name="longitude" step="0.000001" value="${lng || ''}" placeholder="37.123456">
+                        </div>
+                    </div>
+                    <div id="coords-msk86-inputs" style="display: none;">
+                        <div class="form-group">
+                            <label>X (МСК86)</label>
+                            <input type="number" name="x_msk86" step="0.01" placeholder="4500000.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Y (МСК86)</label>
+                            <input type="number" name="y_msk86" step="0.01" placeholder="6100000.00">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Собственник *</label>
+                        <select name="owner_id" required id="modal-owner-select"></select>
+                    </div>
+                    <div class="form-group" style="display: none;">
+                        <label>Вид *</label>
+                        <select name="type_id" required id="modal-type-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Тип *</label>
+                        <select name="kind_id" required id="modal-kind-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Состояние *</label>
+                        <select name="status_id" required id="modal-status-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Дата установки</label>
+                        <input type="date" name="installation_date">
+                    </div>
+                    <div class="form-group">
+                        <label>Примечания</label>
+                        <textarea name="notes" rows="3"></textarea>
+                    </div>
+                </form>
+            `;
         } else if (type === 'directions') {
             formHtml = `
                 <form id="add-object-form">
                     <input type="hidden" name="object_type_code" value="channel">
                     <div class="form-group">
                         <label>Номер *</label>
-                        <input type="text" name="number" required>
+                        <input type="text" name="number" required readonly style="background: var(--bg-tertiary);">
                     </div>
                     <div class="form-group">
                         <label>Начальный колодец *</label>
@@ -1638,7 +2409,7 @@ const App = {
                     </div>
                     <div class="form-group">
                         <label>Диаметр (мм)</label>
-                        <input type="number" name="diameter_mm">
+                        <input type="number" name="diameter_mm" value="110">
                     </div>
                     <div class="form-group">
                         <label>Примечания</label>
@@ -1651,7 +2422,7 @@ const App = {
                 <form id="add-object-form">
                     <div class="form-group">
                         <label>Номер</label>
-                        <input type="text" name="number">
+                        <input type="text" name="number" value="(авто)" disabled style="background: var(--bg-tertiary);">
                     </div>
                     <div class="form-group">
                         <label>Название *</label>
@@ -1678,7 +2449,8 @@ const App = {
                 <form id="add-object-form">
                     <div class="form-group">
                         <label>Номер</label>
-                        <input type="text" name="number">
+                        <input type="text" id="modal-cable-number" value="КАБ-<код>-<id>" disabled style="background: var(--bg-tertiary);">
+                        <p class="text-muted">Номер формируется автоматически по собственнику и ID</p>
                     </div>
                     <div class="form-group">
                         <label>Вид объекта *</label>
@@ -1728,19 +2500,9 @@ const App = {
                     <!-- Блок для кабелей в канализации (маршрут) -->
                     <div id="cable-route-block" style="display: none;">
                         <div class="form-group">
-                            <label>Колодцы маршрута</label>
-                            <select multiple id="cable-route-wells" style="height: 100px; width: 100%;">
-                            </select>
-                            <p class="text-muted">Удерживайте Ctrl для выбора нескольких</p>
-                        </div>
-                        <div class="form-group">
                             <label>Каналы маршрута</label>
                             <select multiple id="cable-route-channels" style="height: 100px; width: 100%;">
                             </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Длина заявленная (м)</label>
-                            <input type="number" name="length_declared" step="0.01" placeholder="Введите длину вручную">
                         </div>
                     </div>
                     
@@ -1812,6 +2574,7 @@ const App = {
             if (objectType === 'unified_cables') {
                 promises.push(API.references.all('cable_types'));
                 promises.push(API.unifiedCables.objectTypes());
+                promises.push(API.references.all('contracts'));
             }
 
             const results = await Promise.all(promises);
@@ -1823,7 +2586,28 @@ const App = {
             if (owners.success && document.getElementById('modal-owner-select')) {
                 document.getElementById('modal-owner-select').innerHTML = 
                     '<option value="">Выберите...</option>' +
-                    owners.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+                    owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}">${o.name}</option>`).join('');
+            }
+
+            // Обновление префикса номера по выбранному собственнику
+            const ownerSelect = document.getElementById('modal-owner-select');
+            const prefixInput = document.getElementById('modal-number-prefix');
+            const markerNumberInput = document.getElementById('modal-marker-number');
+            const cableNumberInput = document.getElementById('modal-cable-number');
+            if (ownerSelect && (prefixInput || markerNumberInput || cableNumberInput)) {
+                const updatePrefix = () => {
+                    const ownerCode = ownerSelect.selectedOptions?.[0]?.dataset?.code || '';
+                    if (!ownerCode) return;
+                    if (objectType === 'wells') {
+                        if (prefixInput) prefixInput.value = `ККС-${ownerCode}-`;
+                    } else if (objectType === 'markers') {
+                        if (markerNumberInput) markerNumberInput.value = `СТ-${ownerCode}-<id>`;
+                    } else if (objectType === 'unified_cables') {
+                        if (cableNumberInput) cableNumberInput.value = `КАБ-${ownerCode}-<id>`;
+                    }
+                };
+                ownerSelect.onchange = updatePrefix;
+                updatePrefix();
             }
             
             if (types.success && document.getElementById('modal-type-select')) {
@@ -1863,6 +2647,19 @@ const App = {
                     statuses.data.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
             }
 
+            // Контракты (для кабеля при редактировании)
+            const contractSelect = document.getElementById('modal-contract-select');
+            if (objectType === 'unified_cables' && contractSelect) {
+                const contractsResp = results.find(r => r?.data && Array.isArray(r.data) && r.data[0]?.number !== undefined && r.data[0]?.name !== undefined) || null;
+                // Если не удалось эвристикой — берём по индексу (owners/types/kinds/statuses + cable_types + objectTypes + contracts)
+                const idxContracts = 6; // 0..3 base, 4 cable_types, 5 objectTypes, 6 contracts
+                const cResp = results[idxContracts] || contractsResp;
+                if (cResp?.success) {
+                    contractSelect.innerHTML = '<option value="">Не указан</option>' +
+                        cResp.data.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
+                }
+            }
+
             // Для направлений - загружаем колодцы
             if (objectType === 'directions' && results[4]) {
                 const wellsResponse = results[4];
@@ -1876,6 +2673,32 @@ const App = {
                     }
                     if (document.getElementById('modal-end-well-select')) {
                         document.getElementById('modal-end-well-select').innerHTML = wellOptions;
+                    }
+
+                    // Автозаполнение номера направления по выбранным колодцам (start-end)
+                    const startSelect = document.getElementById('modal-start-well-select');
+                    const endSelect = document.getElementById('modal-end-well-select');
+                    const numberInput = document.querySelector('#add-object-form input[name="number"]');
+                    if (numberInput) {
+                        numberInput.readOnly = true;
+                        numberInput.style.background = 'var(--bg-tertiary)';
+                    }
+                    const updateNumber = () => {
+                        if (!numberInput || !startSelect || !endSelect) return;
+                        const startId = startSelect.value;
+                        const endId = endSelect.value;
+                        const startText = startSelect.selectedOptions?.[0]?.textContent?.trim() || '';
+                        const endText = endSelect.selectedOptions?.[0]?.textContent?.trim() || '';
+                        if (startId && endId && startText && endText) {
+                            numberInput.value = `${startText}-${endText}`;
+                        } else {
+                            numberInput.value = '';
+                        }
+                    };
+                    if (startSelect && endSelect && numberInput) {
+                        startSelect.onchange = updateNumber;
+                        endSelect.onchange = updateNumber;
+                        updateNumber();
                     }
                 }
             }
@@ -1948,6 +2771,22 @@ const App = {
         // Удаляем служебное поле
         delete data.object_type_code;
 
+        // Санитизация пользовательской части номера (разрешаем буквы/цифры/дефис/подчёркивание)
+        const sanitizeSuffix = (value) => (value || '').toString().replace(/[^0-9A-Za-zА-Яа-яЁё_-]/g, '');
+
+        // Формирование номера по правилам
+        if (type === 'wells') {
+            const prefix = (data.number_prefix || '').toString();
+            const suffix = sanitizeSuffix(data.number_suffix);
+            if (!suffix) {
+                this.notify('Введите номер (часть после префикса)', 'error');
+                return;
+            }
+            data.number = `${prefix}${suffix}`;
+            delete data.number_prefix;
+            delete data.number_suffix;
+        }
+
         try {
             let response;
             
@@ -1986,10 +2825,8 @@ const App = {
                         data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
                     } else if (objectTypeCode === 'cable_duct') {
                         // Для кабелей в канализации - собираем маршрут
-                        const wellsSelect = document.getElementById('cable-route-wells');
                         const channelsSelect = document.getElementById('cable-route-channels');
                         
-                        data.route_wells = Array.from(wellsSelect?.selectedOptions || []).map(o => parseInt(o.value));
                         data.route_channels = Array.from(channelsSelect?.selectedOptions || []).map(o => parseInt(o.value));
                     }
                     
@@ -2027,7 +2864,7 @@ const App = {
                 <input type="hidden" name="end_well_id" value="${endWell.id}">
                 <div class="form-group">
                     <label>Номер *</label>
-                    <input type="text" name="number" required placeholder="Например: ${startWell.number}-${endWell.number}">
+                    <input type="text" name="number" required readonly style="background: var(--bg-tertiary);" value="${startWell.number}-${endWell.number}">
                 </div>
                 <div class="form-group">
                     <label>Начальный колодец</label>
@@ -2061,6 +2898,182 @@ const App = {
         
         // Загружаем справочники
         await this.loadModalSelects('directions');
+    },
+
+    /**
+     * Открыть добавление кабеля из карты с уже заданными координатами
+     */
+    async showAddCableModalFromMap(objectTypeCode, coordinates) {
+        this.showAddObjectModal('unified_cables');
+
+        // Даём модалке/селектам отрисоваться и загрузиться
+        await new Promise(r => setTimeout(r, 150));
+
+        // Выбираем вид объекта по коду (cable_ground / cable_aerial)
+        const typeSelect = document.getElementById('modal-cable-object-type');
+        if (typeSelect) {
+            const opt = Array.from(typeSelect.options).find(o => o.dataset && o.dataset.code === objectTypeCode);
+            if (opt) {
+                typeSelect.value = opt.value;
+                this.onCableObjectTypeChange();
+            }
+        }
+
+        // Заполняем координаты (WGS84: lon/lat)
+        const coordSystemSelect = document.getElementById('cable-coord-system');
+        if (coordSystemSelect) coordSystemSelect.value = 'wgs84';
+        const container = document.getElementById('cable-coordinates-list');
+        if (container) {
+            container.innerHTML = '';
+            (coordinates || []).forEach(() => this.addCableCoordinate());
+            const rows = container.querySelectorAll('.cable-coord-row');
+            rows.forEach((row, idx) => {
+                const x = row.querySelector('.coord-x');
+                const y = row.querySelector('.coord-y');
+                const pt = (coordinates || [])[idx];
+                if (pt && x && y) {
+                    x.value = pt[0];
+                    y.value = pt[1];
+                }
+            });
+        }
+    },
+
+    /**
+     * Открыть добавление duct-кабеля из карты с уже выбранными каналами маршрута
+     */
+    async showAddDuctCableModalFromMap(channelIds) {
+        this.showAddObjectModal('unified_cables');
+
+        await new Promise(r => setTimeout(r, 200));
+
+        const typeSelect = document.getElementById('modal-cable-object-type');
+        if (typeSelect) {
+            const opt = Array.from(typeSelect.options).find(o => o.dataset && o.dataset.code === 'cable_duct');
+            if (opt) {
+                typeSelect.value = opt.value;
+                this.onCableObjectTypeChange();
+            }
+        }
+
+        // Даём загрузиться опциям маршрута
+        await new Promise(r => setTimeout(r, 200));
+
+        const channelsSelect = document.getElementById('cable-route-channels');
+        if (channelsSelect && Array.isArray(channelIds)) {
+            const set = new Set(channelIds.map(v => parseInt(v)));
+            Array.from(channelsSelect.options).forEach(opt => {
+                const id = parseInt(opt.value);
+                opt.selected = set.has(id);
+            });
+        }
+    },
+
+    async showCablesInWell(wellId) {
+        try {
+            const resp = await API.unifiedCables.byWell(wellId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в колодце', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    async showCablesInDirection(directionId) {
+        try {
+            const resp = await API.unifiedCables.byDirection(directionId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в направлении', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    async showChannelsInDirection(directionId) {
+        try {
+            const resp = await API.channelDirections.get(directionId);
+            const dir = resp.data || resp;
+            const channels = dir.channels || [];
+
+            const content = `
+                <div style="max-height: 60vh; overflow: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Направление</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Номер канала</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Тип</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Состояние</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Диаметр (мм)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${channels.map(ch => `
+                                <tr style="cursor:pointer;" onclick="App.showCablesForChannel(${ch.id})">
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${dir.number || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.channel_number}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.kind_name || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.status_name || '-'}</td>
+                                    <td style="padding:8px; border-bottom:1px solid var(--border-color);">${ch.diameter_mm || '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Клик по каналу покажет кабели, использующие этот канал.</p>
+            `;
+
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            this.showModal('Каналы направления', content, footer);
+        } catch (e) {
+            this.notify('Ошибка загрузки каналов', 'error');
+        }
+    },
+
+    async showCablesForChannel(channelId) {
+        try {
+            const resp = await API.unifiedCables.byChannel(channelId);
+            const cables = resp.data || resp || [];
+            this.showCablesTableModal('Кабели в канале', cables);
+        } catch (e) {
+            this.notify('Ошибка загрузки кабелей', 'error');
+        }
+    },
+
+    showCablesTableModal(title, cables) {
+        const content = `
+            <div style="max-height: 60vh; overflow: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Номер</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Вид объекта</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Тип кабеля</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Кабель из каталога</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Собственник</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Состояние</th>
+                            <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border-color);">Длина расч. (м)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(cables || []).map(c => `
+                            <tr style="cursor:pointer;" onclick="MapManager.highlightCableRouteDirections(${c.id}); App.hideModal();">
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.number || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.object_type_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.cable_type_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.cable_marking || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.owner_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.status_name || '-'}</td>
+                                <td style="padding:8px; border-bottom:1px solid var(--border-color);">${c.length_calculated || 0}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-muted" style="margin-top:8px;">Клик по кабелю подсветит маршрут (направления) на карте.</p>
+        `;
+        const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+        this.showModal(title, content, footer);
     },
 
     /**
@@ -2148,18 +3161,8 @@ const App = {
      */
     async loadCableRouteOptions() {
         try {
-            const [wellsResponse, channelsResponse] = await Promise.all([
-                API.wells.list({ limit: 1000 }),
-                API.cableChannels.list({ limit: 1000 })
-            ]);
-            
-            const wellsSelect = document.getElementById('cable-route-wells');
+            const channelsResponse = await API.cableChannels.list({ limit: 1000 });
             const channelsSelect = document.getElementById('cable-route-channels');
-            
-            if (wellsSelect && wellsResponse.success !== false) {
-                const wells = wellsResponse.data || wellsResponse;
-                wellsSelect.innerHTML = wells.map(w => `<option value="${w.id}">${w.number}</option>`).join('');
-            }
             
             if (channelsSelect && channelsResponse.success !== false) {
                 const channels = channelsResponse.data || channelsResponse;
@@ -2261,8 +3264,17 @@ const App = {
      */
     editCurrentObject() {
         const panel = document.getElementById('object-info-panel');
-        const type = panel.dataset.objectType;
+        const rawType = panel.dataset.objectType;
         const id = panel.dataset.objectId;
+
+        // Приводим типы объектов карты к типам вкладок/модалок приложения
+        const typeMap = {
+            well: 'wells',
+            channel_direction: 'directions',
+            marker_post: 'markers',
+            unified_cable: 'unified_cables',
+        };
+        const type = typeMap[rawType] || rawType;
         
         if (type && id) {
             this.showEditObjectModal(type, id);
@@ -2294,6 +3306,9 @@ const App = {
                 case 'marker_post':
                     response = await API.markerPosts.delete(id);
                     break;
+                case 'unified_cable':
+                    response = await API.unifiedCables.delete(id);
+                    break;
                 default:
                     if (type.endsWith('_cable')) {
                         const cableType = type.replace('_cable', '');
@@ -2317,6 +3332,7 @@ const App = {
      * Показ модального окна добавления инцидента
      */
     showAddIncidentModal() {
+        this.incidentDraftRelatedObjects = [];
         const content = `
             <form id="incident-form">
                 <div class="form-group">
@@ -2341,6 +3357,14 @@ const App = {
                     </select>
                 </div>
                 <div class="form-group">
+                    <label>Статус</label>
+                    <select name="status">
+                        <option value="open" selected>Открыт</option>
+                        <option value="in_progress">В работе</option>
+                        <option value="resolved">Решён</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label>Описание</label>
                     <textarea name="description" rows="4"></textarea>
                 </div>
@@ -2348,6 +3372,12 @@ const App = {
                     <label>Виновник</label>
                     <input type="text" name="culprit">
                 </div>
+                <hr>
+                <h4>Связанные объекты</h4>
+                <div id="incident-related-objects" class="text-muted">Нет объектов</div>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.startIncidentSelectFromCreate()" style="margin-top: 8px;">
+                    <i class="fas fa-crosshairs"></i> Указать объект на карте
+                </button>
             </form>
         `;
 
@@ -2357,6 +3387,16 @@ const App = {
         `;
 
         this.showModal('Создать инцидент', content, footer);
+        this.renderIncidentRelatedObjects();
+    },
+
+    startIncidentSelectFromCreate() {
+        const form = document.getElementById('incident-form');
+        const draft = form ? Object.fromEntries(new FormData(form).entries()) : {};
+        this._incidentCreatePick = { draft, related: [...(this.incidentDraftRelatedObjects || [])] };
+        this.hideModal();
+        this.switchPanel('map');
+        MapManager.startIncidentSelectMode();
     },
 
     /**
@@ -2366,6 +3406,7 @@ const App = {
         const form = document.getElementById('incident-form');
         const formData = new FormData(form);
         const data = Object.fromEntries(formData.entries());
+        data.related_objects = this.incidentDraftRelatedObjects;
 
         try {
             const response = await API.incidents.create(data);
@@ -2379,6 +3420,117 @@ const App = {
         } catch (error) {
             this.notify(error.message || 'Ошибка', 'error');
         }
+    },
+
+    getIncidentObjectTypeName(type) {
+        const names = {
+            well: 'Колодец',
+            channel_direction: 'Направление',
+            cable_channel: 'Канал',
+            unified_cable: 'Кабель',
+            ground_cable: 'Кабель в грунте',
+            aerial_cable: 'Воздушный кабель',
+            duct_cable: 'Кабель в канализации',
+            marker_post: 'Столбик',
+        };
+        return names[type] || type;
+    },
+
+    addIncidentRelatedObjectFromMap(hit) {
+        // Возвращаем курсор
+        try {
+            const c = MapManager.map?.getContainer?.();
+            if (c) c.style.cursor = '';
+        } catch (e) {}
+
+        const t = hit?.objectType;
+        const p = hit?.properties || {};
+        if (!t || !p?.id) return;
+
+        // map objectType -> incident type
+        let type = t;
+        if (t === 'unified_cable') type = 'unified_cable';
+        if (t === 'well') type = 'well';
+        if (t === 'channel_direction') type = 'channel_direction';
+        if (t === 'marker_post') type = 'marker_post';
+
+        const exists = this.incidentDraftRelatedObjects.some(o => o.type === type && String(o.id) === String(p.id));
+        if (!exists) {
+            this.incidentDraftRelatedObjects.push({ type, id: parseInt(p.id), number: p.number || null });
+            this.notify(`Добавлен объект: ${this.getIncidentObjectTypeName(type)} ${p.number || p.id}`, 'success');
+        }
+        this.renderIncidentRelatedObjects();
+
+        // Если выбирали объект из режима создания инцидента — возвращаемся в модалку
+        if (this._incidentCreatePick) {
+            const pick = this._incidentCreatePick;
+            pick.related = [...this.incidentDraftRelatedObjects];
+            this.showAddIncidentModal();
+            const f = document.getElementById('incident-form');
+            if (f) {
+                Object.entries(pick.draft || {}).forEach(([k, v]) => {
+                    const el = f.querySelector(`[name="${k}"]`);
+                    if (el) el.value = v;
+                });
+            }
+            this.incidentDraftRelatedObjects = pick.related || [];
+            this.renderIncidentRelatedObjects();
+            this._incidentCreatePick = null;
+            return;
+        }
+
+        // Если выбирали объект из режима редактирования инцидента — возвращаемся в модалку
+        if (this._incidentEditPick?.id) {
+            const pick = this._incidentEditPick;
+            pick.related = [...this.incidentDraftRelatedObjects];
+            (async () => {
+                try {
+                    const resp = await API.incidents.get(pick.id);
+                    if (!resp?.success) return;
+                    this.showEditIncidentModal(resp.data);
+
+                    // восстанавливаем draft полей формы
+                    const f = document.getElementById('incident-edit-form');
+                    if (f) {
+                        Object.entries(pick.draft || {}).forEach(([k, v]) => {
+                            const el = f.querySelector(`[name="${k}"]`);
+                            if (el) el.value = v;
+                        });
+                    }
+                    this.incidentDraftRelatedObjects = pick.related || [];
+                    this.renderIncidentRelatedObjects();
+                } finally {
+                    this._incidentEditPick = null;
+                }
+            })();
+        }
+    },
+
+    renderIncidentRelatedObjects() {
+        const container = document.getElementById('incident-related-objects');
+        if (!container) return;
+        const list = this.incidentDraftRelatedObjects || [];
+        if (!list.length) {
+            container.innerHTML = '<div class="text-muted">Нет объектов</div>';
+            return;
+        }
+        container.innerHTML = `
+            <div style="display:grid; gap:6px;">
+                ${list.map((o, idx) => `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; border:1px solid var(--border-color); border-radius:6px;">
+                        <span>${this.getIncidentObjectTypeName(o.type)}: ${o.number || ('#' + o.id)}</span>
+                        <button type="button" class="btn btn-sm btn-danger" onclick="App.removeIncidentRelatedObject(${idx})">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    },
+
+    removeIncidentRelatedObject(idx) {
+        this.incidentDraftRelatedObjects.splice(idx, 1);
+        this.renderIncidentRelatedObjects();
     },
 
     /**
@@ -2464,7 +3616,7 @@ const App = {
             'object_types': `
                 <div class="form-group">
                     <label>Код *</label>
-                    <input type="text" name="code" value="${data.code || ''}" required>
+                    <input type="text" name="code" value="${data.code || ''}" required ${data.id ? 'readonly' : ''}>
                 </div>
                 <div class="form-group">
                     <label>Название *</label>
@@ -2631,65 +3783,6 @@ const App = {
                     <textarea name="description" rows="2">${data.description || ''}</textarea>
                 </div>
             `,
-            'display_styles': `
-                <div class="form-group">
-                    <label>Код *</label>
-                    <input type="text" name="code" value="${data.code || ''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Название *</label>
-                    <input type="text" name="name" value="${data.name || ''}" required>
-                </div>
-                <div class="form-group">
-                    <label>Тип стиля *</label>
-                    <select name="style_type" required>
-                        <option value="point" ${data.style_type === 'point' ? 'selected' : ''}>Точка</option>
-                        <option value="line" ${data.style_type === 'line' ? 'selected' : ''}>Линия</option>
-                        <option value="polygon" ${data.style_type === 'polygon' ? 'selected' : ''}>Полигон</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label><input type="checkbox" name="is_default" ${data.is_default ? 'checked' : ''}> По умолчанию</label>
-                </div>
-                <hr>
-                <h4>Стиль маркера</h4>
-                <div class="form-group">
-                    <label>Иконка</label>
-                    <input type="text" name="marker_icon" value="${data.marker_icon || ''}">
-                </div>
-                <div class="form-group">
-                    <label>Размер</label>
-                    <input type="number" name="marker_size" value="${data.marker_size || 24}">
-                </div>
-                <div class="form-group">
-                    <label>Цвет маркера</label>
-                    <input type="color" name="marker_color" value="${data.marker_color || '#3498db'}">
-                </div>
-                <hr>
-                <h4>Стиль линии</h4>
-                <div class="form-group">
-                    <label>Цвет обводки</label>
-                    <input type="color" name="stroke_color" value="${data.stroke_color || '#2980b9'}">
-                </div>
-                <div class="form-group">
-                    <label>Толщина</label>
-                    <input type="number" name="stroke_width" value="${data.stroke_width || 2}">
-                </div>
-                <div class="form-group">
-                    <label>Пунктир (dasharray)</label>
-                    <input type="text" name="stroke_dasharray" value="${data.stroke_dasharray || ''}" placeholder="5,5">
-                </div>
-                <hr>
-                <h4>Стиль заливки</h4>
-                <div class="form-group">
-                    <label>Цвет заливки</label>
-                    <input type="color" name="fill_color" value="${data.fill_color || '#3498db'}">
-                </div>
-                <div class="form-group">
-                    <label>Прозрачность (0-1)</label>
-                    <input type="number" name="fill_opacity" step="0.1" min="0" max="1" value="${data.fill_opacity || 0.5}">
-                </div>
-            `,
         };
         
         return forms[type] || forms['object_types'];
@@ -2737,13 +3830,21 @@ const App = {
 
             const footer = `
                 <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
-                <button class="btn btn-danger" onclick="App.deleteReference(${id})" style="margin-right: auto;">
+                <button class="btn btn-danger" id="btn-delete-ref" onclick="App.deleteReference(${id})" style="margin-right: auto;">
                     <i class="fas fa-trash"></i> Удалить
                 </button>
                 <button class="btn btn-primary" onclick="App.submitReferenceUpdate(${id})">Сохранить</button>
             `;
 
             this.showModal('Редактировать запись', content, footer);
+
+            // Системные виды объектов не удаляем (скрываем кнопку)
+            if (this.currentReference === 'object_types') {
+                const systemCodes = new Set(['well', 'channel', 'marker', 'cable_ground', 'cable_aerial', 'cable_duct']);
+                if (systemCodes.has(data?.code)) {
+                    document.getElementById('btn-delete-ref')?.classList.add('hidden');
+                }
+            }
             
             // Загружаем связанные справочники
             await this.loadReferenceFormSelects();
@@ -2857,6 +3958,9 @@ const App = {
                 this.hideModal();
                 this.notify('Запись обновлена', 'success');
                 this.showReference(this.currentReference);
+                if (this.currentReference === 'object_types') {
+                    this.refreshObjectTypeColors(true).catch(() => {});
+                }
             } else {
                 this.notify(response.message || 'Ошибка', 'error');
             }
@@ -2888,6 +3992,242 @@ const App = {
     /**
      * Показ инцидента в модальном окне
      */
+    async editIncident(id) {
+        try {
+            const resp = await API.incidents.get(id);
+            if (!resp?.success) {
+                this.notify(resp?.message || 'Ошибка загрузки инцидента', 'error');
+                return;
+            }
+            this.showEditIncidentModal(resp.data);
+        } catch (e) {
+            this.notify('Ошибка загрузки инцидента', 'error');
+        }
+    },
+
+    showEditIncidentModal(incident) {
+        this.incidentDraftRelatedObjects = (incident.related_objects || []).map(o => ({
+            type: o.object_type,
+            id: parseInt(o.id),
+            number: o.number || null,
+        }));
+
+        const content = `
+            <form id="incident-edit-form">
+                <div class="form-group">
+                    <label>Номер *</label>
+                    <input type="text" name="number" value="${incident.number || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Заголовок *</label>
+                    <input type="text" name="title" value="${incident.title || ''}" required>
+                </div>
+                <div class="form-group">
+                    <label>Дата инцидента *</label>
+                    <input type="datetime-local" name="incident_date" value="${(incident.incident_date || '').slice(0, 16)}" required>
+                </div>
+                <div class="form-group">
+                    <label>Статус</label>
+                    <select name="status">
+                        <option value="open" ${incident.status === 'open' ? 'selected' : ''}>Открыт</option>
+                        <option value="in_progress" ${incident.status === 'in_progress' ? 'selected' : ''}>В работе</option>
+                        <option value="resolved" ${incident.status === 'resolved' ? 'selected' : ''}>Решён</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Приоритет</label>
+                    <select name="priority">
+                        <option value="low" ${incident.priority === 'low' ? 'selected' : ''}>Низкий</option>
+                        <option value="normal" ${incident.priority === 'normal' ? 'selected' : ''}>Обычный</option>
+                        <option value="high" ${incident.priority === 'high' ? 'selected' : ''}>Высокий</option>
+                        <option value="critical" ${incident.priority === 'critical' ? 'selected' : ''}>Критический</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <textarea name="description" rows="4">${incident.description || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Виновник</label>
+                    <input type="text" name="culprit" value="${incident.culprit || ''}">
+                </div>
+                <div class="form-group">
+                    <label>Решение</label>
+                    <textarea name="resolution" rows="3">${incident.resolution || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Примечания</label>
+                    <textarea name="notes" rows="2">${incident.notes || ''}</textarea>
+                </div>
+                <hr>
+                <h4>Связанные объекты</h4>
+                <div id="incident-related-objects" class="text-muted">Нет объектов</div>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.startIncidentSelectFromEdit(${incident.id})" style="margin-top: 8px;">
+                    <i class="fas fa-crosshairs"></i> Добавить объект с карты
+                </button>
+                <hr>
+                <h4>Фото</h4>
+                <div id="object-photos" data-object-table="incidents" data-object-id="${incident.id}">
+                    <div class="text-muted">Загрузка...</div>
+                </div>
+                <div class="form-group" style="margin-top: 10px;">
+                    <label>Добавить фото</label>
+                    <input type="file" id="object-photo-file" accept="image/*">
+                    <input type="text" id="object-photo-description" placeholder="Описание (необязательно)" style="margin-top: 8px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="App.uploadObjectPhoto()" style="margin-top: 8px;">
+                        <i class="fas fa-upload"></i> Загрузить
+                    </button>
+                </div>
+                <hr>
+                <h4>Документы</h4>
+                <div id="incident-documents" data-incident-id="${incident.id}">
+                    <div class="text-muted">Загрузка...</div>
+                </div>
+                <div class="form-group" style="margin-top: 10px;">
+                    <label>Добавить документ</label>
+                    <input type="file" id="incident-doc-file">
+                    <input type="text" id="incident-doc-description" placeholder="Описание (необязательно)" style="margin-top: 8px;">
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="App.uploadIncidentDocument(${incident.id})" style="margin-top: 8px;">
+                        <i class="fas fa-upload"></i> Загрузить
+                    </button>
+                </div>
+            </form>
+        `;
+
+        const footer = `
+            <button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>
+            <button class="btn btn-danger" onclick="App.deleteIncident(${incident.id})" style="margin-left:auto;">
+                <i class="fas fa-trash"></i> Удалить
+            </button>
+            <button class="btn btn-primary" onclick="App.submitIncidentUpdate(${incident.id})">
+                <i class="fas fa-save"></i> Сохранить
+            </button>
+        `;
+
+        this.showModal(`Редактировать инцидент: ${incident.number}`, content, footer);
+        this.renderIncidentRelatedObjects();
+        this.loadObjectPhotos('incidents', incident.id).catch(() => {});
+        this.loadIncidentDocuments(incident.id).catch(() => {});
+    },
+
+    startIncidentSelectFromEdit(incidentId) {
+        const form = document.getElementById('incident-edit-form');
+        const draft = form ? Object.fromEntries(new FormData(form).entries()) : {};
+        this._incidentEditPick = {
+            id: incidentId,
+            draft,
+            related: [...(this.incidentDraftRelatedObjects || [])],
+        };
+
+        this.hideModal();
+        this.switchPanel('map');
+        MapManager.startIncidentSelectMode();
+    },
+
+    async submitIncidentUpdate(id) {
+        const form = document.getElementById('incident-edit-form');
+        if (!form) return;
+        const formData = new FormData(form);
+        const data = Object.fromEntries(formData.entries());
+        data.related_objects = this.incidentDraftRelatedObjects;
+
+        try {
+            const resp = await API.incidents.update(id, data);
+            if (resp?.success) {
+                this.hideModal();
+                this.notify('Инцидент обновлён', 'success');
+                this.loadIncidents();
+            } else {
+                this.notify(resp?.message || 'Ошибка', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка', 'error');
+        }
+    },
+
+    async deleteIncident(id) {
+        if (!confirm('Удалить инцидент?')) return;
+        try {
+            const resp = await API.incidents.delete(id);
+            if (resp?.success) {
+                this.hideModal();
+                this.notify('Инцидент удалён', 'success');
+                this.loadIncidents();
+            } else {
+                this.notify(resp?.message || 'Ошибка', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка', 'error');
+        }
+    },
+
+    async loadIncidentDocuments(incidentId) {
+        const container = document.getElementById('incident-documents');
+        if (!container) return;
+        container.innerHTML = `<div class="text-muted">Загрузка...</div>`;
+        const resp = await API.incidents.documents(incidentId);
+        if (!resp?.success) {
+            container.innerHTML = `<div class="text-muted">Не удалось загрузить документы</div>`;
+            return;
+        }
+        const docs = resp.data || [];
+        if (!docs.length) {
+            container.innerHTML = `<div class="text-muted">Документов нет</div>`;
+            return;
+        }
+        container.innerHTML = `
+            <div style="display:grid; gap:8px;">
+                ${docs.map(d => `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px; border:1px solid var(--border-color); border-radius:6px;">
+                        <a href="${d.url}" target="_blank" rel="noopener">${d.original_filename || d.filename}</a>
+                        <button type="button" class="btn btn-sm btn-danger" onclick="App.deleteIncidentDocument(${d.id}, ${incidentId})">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    },
+
+    async uploadIncidentDocument(incidentId) {
+        const fileInput = document.getElementById('incident-doc-file');
+        const desc = document.getElementById('incident-doc-description')?.value || '';
+        const file = fileInput?.files?.[0];
+        if (!file) {
+            this.notify('Выберите файл', 'warning');
+            return;
+        }
+        try {
+            const resp = await API.incidents.uploadDocument(incidentId, file, desc);
+            if (resp?.success) {
+                fileInput.value = '';
+                const d = document.getElementById('incident-doc-description');
+                if (d) d.value = '';
+                this.notify('Документ загружен', 'success');
+                await this.loadIncidentDocuments(incidentId);
+            } else {
+                this.notify(resp?.message || 'Ошибка', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка', 'error');
+        }
+    },
+
+    async deleteIncidentDocument(docId, incidentId) {
+        if (!confirm('Удалить документ?')) return;
+        try {
+            const resp = await API.incidents.deleteDocument(docId);
+            if (resp?.success) {
+                this.notify('Документ удалён', 'success');
+                await this.loadIncidentDocuments(incidentId);
+            } else {
+                this.notify(resp?.message || 'Ошибка', 'error');
+            }
+        } catch (e) {
+            this.notify('Ошибка', 'error');
+        }
+    },
+
     showIncidentModal(incident) {
         const content = `
             <div style="display: grid; gap: 12px;">
@@ -2901,7 +4241,7 @@ const App = {
                 ${incident.related_objects?.length ? `
                     <div><strong>Связанные объекты:</strong>
                         <ul>
-                            ${incident.related_objects.map(o => `<li>${o.object_type}: ${o.number}</li>`).join('')}
+                            ${incident.related_objects.map(o => `<li>${this.getIncidentObjectTypeName(o.object_type)}: ${o.number}</li>`).join('')}
                         </ul>
                     </div>
                 ` : ''}
@@ -2917,6 +4257,12 @@ const App = {
 
         const footer = `
             <button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>
+            <button class="btn btn-danger" onclick="App.deleteIncident(${incident.id})" style="margin-left:auto;">
+                <i class="fas fa-trash"></i> Удалить
+            </button>
+            <button class="btn btn-primary" onclick="App.editIncident(${incident.id})">
+                <i class="fas fa-edit"></i> Редактировать
+            </button>
         `;
 
         this.showModal(`Инцидент: ${incident.number}`, content, footer);

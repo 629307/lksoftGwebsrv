@@ -14,7 +14,7 @@ return [
     // Пути
     'base_url' => '',
     'upload_path' => __DIR__ . '/../uploads',
-    'max_upload_size' => 10 * 1024 * 1024, // 10MB
+    'max_upload_size' => 50 * 1024 * 1024, // 50MB
     'allowed_extensions' => ['jpg', 'jpeg', 'png', 'gif', 'webp'],
     
     // Сессии

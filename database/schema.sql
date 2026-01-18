@@ -143,39 +143,7 @@ CREATE INDEX idx_contracts_number ON contracts(number);
 
 COMMENT ON TABLE contracts IS 'Контракты на обслуживание';
 
--- 1.8 Стили отображения
-CREATE TABLE IF NOT EXISTS display_styles (
-    id SERIAL PRIMARY KEY,
-    code VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    style_type VARCHAR(50) NOT NULL, -- 'point', 'line', 'polygon'
-    is_default BOOLEAN DEFAULT FALSE,
-    -- Стиль для точек
-    marker_icon VARCHAR(255),
-    marker_size INTEGER DEFAULT 24,
-    marker_color VARCHAR(20),
-    marker_opacity DECIMAL(3,2) DEFAULT 1.0,
-    -- Стиль для линий
-    stroke_color VARCHAR(20),
-    stroke_width INTEGER DEFAULT 2,
-    stroke_opacity DECIMAL(3,2) DEFAULT 1.0,
-    stroke_dasharray VARCHAR(50),
-    -- Стиль для полигонов
-    fill_color VARCHAR(20),
-    fill_opacity DECIMAL(3,2) DEFAULT 0.5,
-    -- Привязки
-    object_type_id INTEGER REFERENCES object_types(id) ON DELETE SET NULL,
-    object_kind_id INTEGER REFERENCES object_kinds(id) ON DELETE SET NULL,
-    object_status_id INTEGER REFERENCES object_status(id) ON DELETE SET NULL,
-    owner_id INTEGER REFERENCES owners(id) ON DELETE SET NULL,
-    -- Метаданные
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    is_system BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
-COMMENT ON TABLE display_styles IS 'Стили отображения объектов на карте';
+-- 1.8 Стили отображения (удалено, используем object_types + object_status)
 
 -- ============================================================
 -- РАЗДЕЛ 2: ОСНОВНЫЕ ТАБЛИЦЫ ОБЪЕКТОВ
@@ -467,6 +435,34 @@ CREATE TABLE IF NOT EXISTS incident_marker_posts (
     PRIMARY KEY (incident_id, marker_post_id)
 );
 
+-- Связь инцидентов с унифицированными кабелями (таблица cables)
+CREATE TABLE IF NOT EXISTS incident_cables (
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    cable_id INTEGER NOT NULL REFERENCES cables(id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, cable_id)
+);
+
+-- Связь инцидентов с каналами (cable_channels)
+CREATE TABLE IF NOT EXISTS incident_cable_channels (
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    cable_channel_id INTEGER NOT NULL REFERENCES cable_channels(id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, cable_channel_id)
+);
+
+-- Документы инцидентов
+CREATE TABLE IF NOT EXISTS incident_documents (
+    id SERIAL PRIMARY KEY,
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    filename VARCHAR(255) NOT NULL,
+    original_filename VARCHAR(255),
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    description TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- ============================================================
 -- РАЗДЕЛ 4: ГРУППЫ ОБЪЕКТОВ
 -- ============================================================
@@ -622,7 +618,6 @@ CREATE TRIGGER trg_object_kinds_updated_at BEFORE UPDATE ON object_kinds FOR EAC
 CREATE TRIGGER trg_object_status_updated_at BEFORE UPDATE ON object_status FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_owners_updated_at BEFORE UPDATE ON owners FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_contracts_updated_at BEFORE UPDATE ON contracts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_display_styles_updated_at BEFORE UPDATE ON display_styles FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_wells_updated_at BEFORE UPDATE ON wells FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_channel_directions_updated_at BEFORE UPDATE ON channel_directions FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER trg_cable_channels_updated_at BEFORE UPDATE ON cable_channels FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -832,15 +827,6 @@ INSERT INTO object_status (code, name, color, description, sort_order) VALUES
 ('repair', 'На ремонте', '#f39c12', 'Объект на ремонте', 4),
 ('planned', 'Планируемый', '#3498db', 'Планируемый объект', 5),
 ('decommissioned', 'Выведен', '#7f8c8d', 'Объект выведен из эксплуатации', 6)
-ON CONFLICT (code) DO NOTHING;
-
--- Стили отображения по умолчанию
-INSERT INTO display_styles (code, name, style_type, is_default, marker_color, stroke_color, fill_color, is_system) VALUES
-('default_point', 'Точка по умолчанию', 'point', true, '#3498db', NULL, NULL, true),
-('default_line', 'Линия по умолчанию', 'line', true, NULL, '#2980b9', NULL, true),
-('status_active', 'Активный статус', 'point', false, '#27ae60', '#27ae60', NULL, true),
-('status_damaged', 'Повреждённый статус', 'point', false, '#e74c3c', '#e74c3c', NULL, true),
-('status_repair', 'На ремонте статус', 'point', false, '#f39c12', '#f39c12', NULL, true)
 ON CONFLICT (code) DO NOTHING;
 
 -- Тестовый собственник

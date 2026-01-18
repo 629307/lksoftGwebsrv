@@ -33,6 +33,14 @@ class Request
                 $headers[$header] = $value;
             }
         }
+        // В PHP заголовок Content-Type обычно доступен как CONTENT_TYPE (без HTTP_ префикса).
+        // Без этого JSON body не будет распарсен, что приводит к ошибкам валидации.
+        if (isset($_SERVER['CONTENT_TYPE'])) {
+            $headers['CONTENT-TYPE'] = $_SERVER['CONTENT_TYPE'];
+        }
+        if (isset($_SERVER['CONTENT_LENGTH'])) {
+            $headers['CONTENT-LENGTH'] = $_SERVER['CONTENT_LENGTH'];
+        }
         return $headers;
     }
 

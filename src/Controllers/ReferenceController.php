@@ -10,6 +10,11 @@ use App\Core\Auth;
 
 class ReferenceController extends BaseController
 {
+    private function systemObjectTypeCodes(): array
+    {
+        return ['well', 'channel', 'marker', 'cable_ground', 'cable_aerial', 'cable_duct'];
+    }
+
     // Конфигурация справочников
     private array $references = [
         'object_types' => [
@@ -46,13 +51,6 @@ class ReferenceController extends BaseController
             'table' => 'cable_catalog',
             'fields' => ['cable_type_id', 'fiber_count', 'marking', 'description'],
             'search' => ['marking'],
-        ],
-        'display_styles' => [
-            'table' => 'display_styles',
-            'fields' => ['code', 'name', 'style_type', 'is_default', 'marker_icon', 'marker_size', 'marker_color', 
-                        'marker_opacity', 'stroke_color', 'stroke_width', 'stroke_opacity', 'stroke_dasharray',
-                        'fill_color', 'fill_opacity', 'object_type_id', 'object_kind_id', 'object_status_id', 'owner_id'],
-            'search' => ['code', 'name'],
         ],
     ];
 
@@ -100,11 +98,23 @@ class ReferenceController extends BaseController
         
         $sql = "SELECT * FROM {$config['table']} ORDER BY ";
         
-        // Сортировка по sort_order если есть, иначе по name
+        // Сортировка по sort_order если есть, иначе по наиболее подходящему полю.
+        // В некоторых справочниках (например, cable_catalog) поля 'name' нет.
         if (in_array('sort_order', $config['fields'])) {
-            $sql .= "sort_order, name";
-        } else {
+            $sql .= "sort_order";
+            if (in_array('name', $config['fields'])) {
+                $sql .= ", name";
+            } else {
+                $sql .= ", id";
+            }
+        } elseif (in_array('name', $config['fields'])) {
             $sql .= "name";
+        } elseif (in_array('number', $config['fields'])) {
+            $sql .= "number";
+        } elseif (in_array('marking', $config['fields'])) {
+            $sql .= "marking";
+        } else {
+            $sql .= "id";
         }
         
         $data = $this->db->fetchAll($sql);
@@ -191,7 +201,6 @@ class ReferenceController extends BaseController
             'contracts' => ['number', 'name'],
             'cable_types' => ['code', 'name'],
             'cable_catalog' => ['cable_type_id', 'marking'],
-            'display_styles' => ['code', 'name', 'style_type'],
         ];
         
         return $required[$type] ?? ['name'];
@@ -217,6 +226,11 @@ class ReferenceController extends BaseController
         }
 
         $data = $this->request->only($config['fields']);
+
+        // Для видов объектов запрещаем изменение code (чтобы не ломать логику слоёв/карты)
+        if ($type === 'object_types' && array_key_exists('code', $data)) {
+            unset($data['code']);
+        }
         
         // Преобразование булевых значений
         if (array_key_exists('is_default', $data)) {
@@ -272,6 +286,10 @@ class ReferenceController extends BaseController
         if (isset($item['is_system']) && $item['is_system']) {
             Response::error('Нельзя удалить системную запись', 400);
         }
+        // Системные виды объектов (well/channel/marker/cable_*) не удаляем, но редактирование разрешено
+        if ($type === 'object_types' && isset($item['code']) && in_array($item['code'], $this->systemObjectTypeCodes(), true)) {
+            Response::error('Нельзя удалить системный вид объекта', 400);
+        }
 
         try {
             $this->db->delete($config['table'], 'id = :id', ['id' => $recordId]);
@@ -324,7 +342,6 @@ class ReferenceController extends BaseController
             'contracts' => 'Контракты',
             'cable_types' => 'Типы кабелей',
             'cable_catalog' => 'Каталог кабелей',
-            'display_styles' => 'Стили отображения',
         ];
         return $names[$type] ?? $type;
     }

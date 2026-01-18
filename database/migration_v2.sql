@@ -52,12 +52,51 @@ CREATE TRIGGER trg_cable_catalog_updated_at BEFORE UPDATE ON cable_catalog FOR E
 -- 3. Виды объектов для кабелей (если не существуют)
 -- ============================================================
 INSERT INTO object_types (code, name, description, icon, color) VALUES
-('cable_ground', 'Кабель в грунте', 'Кабель проложенный в грунте', 'line', '#27ae60'),
-('cable_aerial', 'Воздушный кабель', 'Кабель воздушными переходами', 'line', '#f39c12'),
-('cable_duct', 'Кабель в канализации', 'Кабель в кабельной канализации', 'line', '#1abc9c')
+('well', 'Колодец', 'Колодец кабельной канализации', 'circle', '#fa00fa'),
+('channel', 'Канал', 'Направление канала кабельной канализации', 'line', '#fa00fa'),
+('marker', 'Столбик', 'Указательный столбик', 'marker', '#e67e22'),
+('cable_ground', 'Кабель в грунте', 'Кабель проложенный в грунте', 'line', '#551b1b'),
+('cable_aerial', 'Воздушный кабель', 'Кабель воздушными переходами', 'line', '#009dff'),
+('cable_duct', 'Кабель в канализации', 'Кабель в кабельной канализации', 'line', '#00bd26')
 ON CONFLICT (code) DO UPDATE SET 
     name = EXCLUDED.name,
-    description = EXCLUDED.description;
+    description = EXCLUDED.description,
+    icon = EXCLUDED.icon,
+    color = EXCLUDED.color;
+
+-- ============================================================
+-- 9. Инциденты: связи с новыми объектами + документы
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS incident_cables (
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    cable_id INTEGER NOT NULL REFERENCES cables(id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, cable_id)
+);
+
+CREATE TABLE IF NOT EXISTS incident_cable_channels (
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    cable_channel_id INTEGER NOT NULL REFERENCES cable_channels(id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, cable_channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS incident_documents (
+    id SERIAL PRIMARY KEY,
+    incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    filename VARCHAR(255) NOT NULL,
+    original_filename VARCHAR(255),
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    description TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 10. Удаление устаревшего справочника стилей отображения
+-- ============================================================
+DROP TABLE IF EXISTS display_styles CASCADE;
 
 -- ============================================================
 -- 4. Универсальная таблица кабелей

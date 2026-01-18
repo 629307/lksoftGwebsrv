@@ -490,6 +490,54 @@ a:hover {
     gap: 16px;
 }
 
+/* Highlight bar (top center) */
+.highlight-bar {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+}
+
+/* Well number labels */
+.well-number-label {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.well-number-label-text {
+    font-weight: 700;
+    font-size: 12px;
+    transform: translate(-50%, -26px); /* над колодцем, без наезда на символ */
+}
+
+/* По умолчанию — без теней у объектов/подсказок */
+.leaflet-tooltip,
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+    box-shadow: none !important;
+}
+
+/* Подсветка маршрута кабеля — с тенью */
+.cable-highlight-path {
+    filter: drop-shadow(0 0 6px rgba(0,0,0,0.65));
+}
+
+/* Cable list totals */
+.cables-totals {
+    display: inline-flex;
+    gap: 12px;
+    align-items: center;
+    margin-left: auto;
+    padding: 0 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
 /* Object Info Panel */
 .info-panel {
     position: absolute;
@@ -881,7 +929,7 @@ tr:hover {
 /* Notifications */
 #notifications {
     position: fixed;
-    top: 70px;
+    bottom: 20px;
     right: 20px;
     z-index: 10001;
     display: flex;
@@ -955,6 +1003,13 @@ tr:hover {
     background: var(--bg-tertiary);
 }
 
+/* Курсор "рука" на интерактивных объектах карты */
+.leaflet-interactive,
+.leaflet-marker-icon,
+.leaflet-div-icon {
+    cursor: pointer;
+}
+
 .leaflet-popup-content-wrapper {
     background: var(--bg-card);
     color: var(--text-primary);
@@ -1004,7 +1059,7 @@ tr:hover {
 .map-toolbar {
     position: absolute;
     top: 10px;
-    right: 10px;
+    left: 60px; /* рядом с кнопками зума */
     z-index: 500;
     display: flex;
     gap: 8px;
@@ -1072,7 +1127,7 @@ tr:hover {
     
     .map-toolbar {
         top: 5px;
-        right: 5px;
+        left: 55px;
         padding: 5px;
     }
     
@@ -1081,4 +1136,32 @@ tr:hover {
         padding: 8px 12px;
         font-size: 12px;
     }
+}
+
+/* Переключатель темы карты (Leaflet control) */
+.leaflet-control.theme-toggle {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 6px;
+    margin-top: 10px;
+}
+.theme-toggle-inner {
+    display: flex;
+    gap: 6px;
+}
+.theme-btn {
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.theme-btn.active {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: #fff;
 }

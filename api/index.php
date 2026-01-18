@@ -109,6 +109,7 @@ use App\Controllers\CableController;
 use App\Controllers\UnifiedCableController;
 use App\Controllers\MarkerPostController;
 use App\Controllers\IncidentController;
+use App\Controllers\IncidentDocumentController;
 use App\Controllers\GroupController;
 use App\Controllers\ImportController;
 use App\Controllers\PhotoController;
@@ -206,7 +207,12 @@ $router->delete('/api/cables/{type}/{id}', [CableController::class, 'destroy'], 
 // Унифицированные кабели (новая таблица)
 $router->get('/api/unified-cables/object-types', [UnifiedCableController::class, 'objectTypes'], ['auth']);
 $router->get('/api/unified-cables/geojson', [UnifiedCableController::class, 'geojson'], ['auth']);
+$router->get('/api/unified-cables/stats', [UnifiedCableController::class, 'stats'], ['auth']);
 $router->get('/api/unified-cables', [UnifiedCableController::class, 'index'], ['auth']);
+$router->get('/api/unified-cables/by-well/{id}', [UnifiedCableController::class, 'byWell'], ['auth']);
+$router->get('/api/unified-cables/by-direction/{id}', [UnifiedCableController::class, 'byDirection'], ['auth']);
+$router->get('/api/unified-cables/by-channel/{id}', [UnifiedCableController::class, 'byChannel'], ['auth']);
+$router->get('/api/unified-cables/{id}/route-directions-geojson', [UnifiedCableController::class, 'routeDirectionsGeojson'], ['auth']);
 $router->get('/api/unified-cables/{id}', [UnifiedCableController::class, 'show'], ['auth']);
 $router->get('/api/unified-cables/{id}/recalculate-length', [UnifiedCableController::class, 'recalculateLength'], ['auth']);
 $router->post('/api/unified-cables', [UnifiedCableController::class, 'store'], ['auth']);
@@ -223,11 +229,14 @@ $router->delete('/api/marker-posts/{id}', [MarkerPostController::class, 'destroy
 
 // Инциденты
 $router->get('/api/incidents', [IncidentController::class, 'index'], ['auth']);
+$router->delete('/api/incidents/documents/{id}', [IncidentDocumentController::class, 'destroy'], ['auth']);
 $router->get('/api/incidents/{id}', [IncidentController::class, 'show'], ['auth']);
 $router->post('/api/incidents', [IncidentController::class, 'store'], ['auth']);
 $router->put('/api/incidents/{id}', [IncidentController::class, 'update'], ['auth']);
 $router->delete('/api/incidents/{id}', [IncidentController::class, 'destroy'], ['auth']);
 $router->post('/api/incidents/{id}/history', [IncidentController::class, 'addHistoryEntry'], ['auth']);
+$router->get('/api/incidents/{id}/documents', [IncidentDocumentController::class, 'byIncident'], ['auth']);
+$router->post('/api/incidents/{id}/documents', [IncidentDocumentController::class, 'upload'], ['auth']);
 
 // Группы
 $router->get('/api/groups', [GroupController::class, 'index'], ['auth']);

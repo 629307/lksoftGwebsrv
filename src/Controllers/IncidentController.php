@@ -114,6 +114,19 @@ class IncidentController extends BaseController
         );
         $incident['photos'] = $photos;
 
+        // Документы
+        $docs = $this->db->fetchAll(
+            "SELECT id, filename, original_filename, description, created_at
+             FROM incident_documents
+             WHERE incident_id = :id
+             ORDER BY created_at DESC",
+            ['id' => (int) $id]
+        );
+        foreach ($docs as &$d) {
+            $d['url'] = '/uploads/incident_documents/' . $d['filename'];
+        }
+        $incident['documents'] = $docs;
+
         Response::success($incident);
     }
 
@@ -255,6 +268,15 @@ class IncidentController extends BaseController
             Response::error('Инцидент не найден', 404);
         }
 
+        // Документы (удаляем файлы)
+        $docs = $this->db->fetchAll("SELECT * FROM incident_documents WHERE incident_id = :id", ['id' => $incidentId]);
+        foreach ($docs as $d) {
+            if (!empty($d['file_path']) && file_exists($d['file_path'])) {
+                unlink($d['file_path']);
+            }
+        }
+        $this->db->delete('incident_documents', 'incident_id = :id', ['id' => $incidentId]);
+
         $this->db->delete('object_photos', "object_table = 'incidents' AND object_id = :id", ['id' => $incidentId]);
         $this->unlinkAllObjects($incidentId);
         $this->db->delete('incident_history', 'incident_id = :id', ['id' => $incidentId]);
@@ -324,6 +346,29 @@ class IncidentController extends BaseController
         );
         $result = array_merge($result, $directions);
 
+        // Каналы (cable_channels)
+        $channels = $this->db->fetchAll(
+            "SELECT cc.id,
+                    CONCAT('Канал ', cc.channel_number, ' (', cd.number, ')') as number,
+                    'cable_channel' as object_type
+             FROM incident_cable_channels icc
+             JOIN cable_channels cc ON icc.cable_channel_id = cc.id
+             JOIN channel_directions cd ON cc.direction_id = cd.id
+             WHERE icc.incident_id = :id",
+            ['id' => $incidentId]
+        );
+        $result = array_merge($result, $channels);
+
+        // Унифицированные кабели (таблица cables)
+        $cables = $this->db->fetchAll(
+            "SELECT c.id, c.number, 'unified_cable' as object_type
+             FROM incident_cables ic
+             JOIN cables c ON ic.cable_id = c.id
+             WHERE ic.incident_id = :id",
+            ['id' => $incidentId]
+        );
+        $result = array_merge($result, $cables);
+
         // Кабели в грунте
         $groundCables = $this->db->fetchAll(
             "SELECT gc.id, gc.number, 'ground_cable' as object_type FROM incident_ground_cables igc
@@ -367,6 +412,8 @@ class IncidentController extends BaseController
         $tables = [
             'well' => ['incident_wells', 'well_id'],
             'channel_direction' => ['incident_channel_directions', 'channel_direction_id'],
+            'cable_channel' => ['incident_cable_channels', 'cable_channel_id'],
+            'unified_cable' => ['incident_cables', 'cable_id'],
             'ground_cable' => ['incident_ground_cables', 'ground_cable_id'],
             'aerial_cable' => ['incident_aerial_cables', 'aerial_cable_id'],
             'duct_cable' => ['incident_duct_cables', 'duct_cable_id'],
@@ -390,7 +437,7 @@ class IncidentController extends BaseController
     private function unlinkAllObjects(int $incidentId): void
     {
         $tables = [
-            'incident_wells', 'incident_channel_directions', 'incident_ground_cables',
+            'incident_wells', 'incident_channel_directions', 'incident_cable_channels', 'incident_cables', 'incident_ground_cables',
             'incident_aerial_cables', 'incident_duct_cables', 'incident_marker_posts'
         ];
 

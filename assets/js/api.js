@@ -63,14 +63,26 @@ const API = {
 
         try {
             const response = await fetch(url, config);
-            const data = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+
+            let data = null;
+            if (contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                // например, nginx 413 отдаёт HTML
+                const text = await response.text();
+                data = { success: false, message: text ? 'Ошибка ответа сервера' : 'Ошибка запроса' };
+            }
 
             if (!response.ok) {
                 if (response.status === 401) {
                     this.clearToken();
                     window.location.reload();
                 }
-                throw new Error(data.message || 'Ошибка запроса');
+                if (response.status === 413) {
+                    throw new Error('Файл слишком большой (413). Уменьшите размер или увеличьте лимит на сервере.');
+                }
+                throw new Error(data?.message || `Ошибка запроса (${response.status})`);
             }
 
             return data;
@@ -337,6 +349,10 @@ const API = {
             return API.get('/unified-cables', params);
         },
 
+        stats(params = {}) {
+            return API.get('/unified-cables/stats', params);
+        },
+
         geojson(params = {}) {
             return API.get('/unified-cables/geojson', params);
         },
@@ -363,6 +379,22 @@ const API = {
 
         recalculateLength(id) {
             return API.get(`/unified-cables/${id}/recalculate-length`);
+        },
+
+        byWell(wellId) {
+            return API.get(`/unified-cables/by-well/${wellId}`);
+        },
+
+        byDirection(directionId) {
+            return API.get(`/unified-cables/by-direction/${directionId}`);
+        },
+
+        byChannel(channelId) {
+            return API.get(`/unified-cables/by-channel/${channelId}`);
+        },
+
+        routeDirectionsGeojson(id) {
+            return API.get(`/unified-cables/${id}/route-directions-geojson`);
         },
     },
 
@@ -423,6 +455,21 @@ const API = {
 
         addHistory(id, data) {
             return API.post(`/incidents/${id}/history`, data);
+        },
+
+        documents(id) {
+            return API.get(`/incidents/${id}/documents`);
+        },
+
+        uploadDocument(id, file, description = '') {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('description', description);
+            return API.upload(`/incidents/${id}/documents`, formData);
+        },
+
+        deleteDocument(docId) {
+            return API.delete(`/incidents/documents/${docId}`);
         },
     },
 
@@ -543,12 +590,12 @@ const API = {
             return API.get('/reports/objects', params);
         },
 
-        contracts() {
-            return API.get('/reports/contracts');
+        contracts(params = {}) {
+            return API.get('/reports/contracts', params);
         },
 
-        owners() {
-            return API.get('/reports/owners');
+        owners(params = {}) {
+            return API.get('/reports/owners', params);
         },
 
         incidents(params = {}) {

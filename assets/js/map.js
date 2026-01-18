@@ -13,14 +13,35 @@ const MapManager = {
     addDirectionMode: false,
     selectedWellsForDirection: [],
 
+    // Режим добавления кабеля (ломаная)
+    addCableMode: false,
+    addCableTypeCode: null, // cable_ground | cable_aerial
+    selectedCablePoints: [],
+
+    // Режим добавления кабеля в канализации (выбор каналов)
+    addDuctCableMode: false,
+    selectedDuctCableChannels: [],
+
+    // Подсветка маршрута (направления) выбранного кабеля
+    highlightLayer: null,
+    lastClickHits: [],
+    hoverHits: [],
+    incidentSelectMode: false,
+
+    // Подписи колодцев
+    wellLabelsEnabled: true,
+    wellLabelsLayer: null,
+    wellLabelsMinZoom: 15,
+    initialViewLocked: true,
+
     // Цвета для слоёв
     colors: {
-        wells: '#3498db',
-        channels: '#9b59b6',
+        wells: '#fa00fa',
+        channels: '#fa00fa',
         markers: '#e67e22',
-        groundCables: '#27ae60',
-        aerialCables: '#f39c12',
-        ductCables: '#1abc9c',
+        groundCables: '#551b1b',
+        aerialCables: '#009dff',
+        ductCables: '#00bd26',
     },
 
     // Цвета статусов
@@ -33,18 +54,37 @@ const MapManager = {
         decommissioned: '#6b7280',
     },
 
+    getTypeDisplayName(objectType) {
+        const typeNames = {
+            well: 'Колодец',
+            channel_direction: 'Направление',
+            marker_post: 'Столбик',
+            ground_cable: 'Кабель в грунте',
+            aerial_cable: 'Воздушный кабель',
+            duct_cable: 'Кабель в канализации',
+            unified_cable: 'Кабель',
+        };
+        return typeNames[objectType] || 'Объект';
+    },
+
+    setHighlightBarVisible(visible) {
+        const el = document.getElementById('highlight-bar');
+        if (!el) return;
+        el.classList.toggle('hidden', !visible);
+    },
+
     /**
      * Инициализация карты
      */
     init() {
-        // Создаём карту без начального центра - будет установлен после загрузки объектов
+        // Создаём карту с заданным центром/зумом по умолчанию
         this.map = L.map('map', {
-            center: [55.751244, 37.618423], // Временный центр
-            zoom: 10,
+            center: [66.10231, 76.68617],
+            zoom: 14,
             zoomControl: true,
         });
 
-        // Добавляем базовый слой OpenStreetMap
+        // Базовый слой OpenStreetMap (светлая тема по умолчанию)
         this.baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 19,
@@ -52,21 +92,37 @@ const MapManager = {
 
         // Инициализируем пустые слои
         this.layers = {
-            wells: L.layerGroup().addTo(this.map),
-            channels: L.layerGroup().addTo(this.map),
-            markers: L.layerGroup().addTo(this.map),
-            groundCables: L.layerGroup().addTo(this.map),
-            aerialCables: L.layerGroup().addTo(this.map),
-            ductCables: L.layerGroup().addTo(this.map),
+            wells: L.featureGroup().addTo(this.map),
+            channels: L.featureGroup().addTo(this.map),
+            markers: L.featureGroup().addTo(this.map),
+            groundCables: L.featureGroup().addTo(this.map),
+            aerialCables: L.featureGroup().addTo(this.map),
+            ductCables: L.featureGroup().addTo(this.map),
         };
 
+        // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
+        this.wellLabelsLayer = L.featureGroup().addTo(this.map);
+
         // Отслеживание координат курсора
-        this.map.on('mousemove', (e) => this.updateCursorCoordinates(e));
+        this.map.on('mousemove', (e) => {
+            this.updateCursorCoordinates(e);
+            this.updateHoverSnap(e.latlng);
+        });
 
         // Клик по карте
         this.map.on('click', (e) => this.onMapClick(e));
 
+        // Авто-скрытие подписей колодцев по зуму
+        this.map.on('zoomend', () => this.updateWellLabelsVisibility());
+        this.updateWellLabelsVisibility();
+
         console.log('Карта инициализирована');
+    },
+
+    startIncidentSelectMode() {
+        this.incidentSelectMode = true;
+        if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+        App.notify('Кликните на объекте на карте для привязки к инциденту', 'info');
     },
 
     /**
@@ -94,10 +150,7 @@ const MapManager = {
         const loaded = results.filter(r => r.status === 'fulfilled').length;
         console.log(`Загружено слоёв: ${loaded}/${results.length}`);
         
-        // Подгоняем карту под объекты с небольшой задержкой для гарантии отрисовки
-        setTimeout(() => {
-            this.fitToAllObjects();
-        }, 100);
+        // Не подгоняем автоматически (фиксированный стартовый зум/центр по ТЗ)
     },
 
     /**
@@ -122,6 +175,7 @@ const MapManager = {
             }
             
             this.layers.wells.clearLayers();
+            if (this.wellLabelsLayer) this.wellLabelsLayer.clearLayers();
             
             // Фильтруем features с невалидной геометрией
             const validFeatures = response.features.filter(f => f && f.geometry && f.geometry.type);
@@ -130,7 +184,8 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
-                        const color = feature.properties.status_color || this.colors.wells;
+                        // Цвет символа колодца — из справочника "Виды объектов" (object_types.well.color)
+                        const color = this.colors.wells;
                         return L.circleMarker(latlng, {
                             radius: 8,
                             fillColor: color,
@@ -141,6 +196,15 @@ const MapManager = {
                         });
                     },
                     onEachFeature: (feature, layer) => {
+                        const coords = layer.getLatLng();
+                        layer._igsMeta = {
+                            objectType: 'well',
+                            properties: {
+                                ...feature.properties,
+                                _lat: coords?.lat,
+                                _lng: coords?.lng,
+                            }
+                        };
                         layer.on('click', (e) => {
                             // Проверяем режим добавления направления
                             if (this.addDirectionMode) {
@@ -154,8 +218,25 @@ const MapManager = {
                                 });
                                 return;
                             }
-                            this.showObjectInfo('well', feature.properties);
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng || layer.getLatLng());
                         });
+
+                        // Подпись номера над колодцем (отдельный слой)
+                        if (this.wellLabelsEnabled && this.wellLabelsLayer && feature?.properties?.number) {
+                            // Цвет текста подписи — из справочника "Состояние" (object_status.color)
+                            const labelColor = feature.properties.status_color || '#ffffff';
+                            const label = L.marker(layer.getLatLng(), {
+                                interactive: false,
+                                keyboard: false,
+                                icon: L.divIcon({
+                                    className: 'well-number-label',
+                                    html: `<div class="well-number-label-text" style="color:${labelColor}">${feature.properties.number}</div>`,
+                                    iconAnchor: [0, 0],
+                                }),
+                            });
+                            label.addTo(this.wellLabelsLayer);
+                        }
                         
                         // Popup при наведении
                         layer.bindTooltip(`
@@ -165,9 +246,36 @@ const MapManager = {
                         `, { permanent: false, direction: 'top' });
                     },
                 }).addTo(this.layers.wells);
+                // Обновляем видимость слоя подписей после перерисовки
+                this.updateWellLabelsVisibility();
             }
         } catch (error) {
             console.error('Ошибка загрузки колодцев:', error);
+        }
+    },
+
+    updateWellLabelsVisibility() {
+        if (!this.map || !this.wellLabelsLayer) return;
+        const shouldShow = this.wellLabelsEnabled && this.map.getZoom() >= this.wellLabelsMinZoom;
+        const hasLayer = this.map.hasLayer(this.wellLabelsLayer);
+        if (shouldShow && !hasLayer) this.map.addLayer(this.wellLabelsLayer);
+        if (!shouldShow && hasLayer) this.map.removeLayer(this.wellLabelsLayer);
+    },
+
+    setWellLabelsEnabled(enabled) {
+        this.wellLabelsEnabled = !!enabled;
+        // При включении — перерисуем подписи (иначе слой может быть пуст после скрытия)
+        if (this.wellLabelsEnabled) {
+            this.loadWells();
+        }
+        this.updateWellLabelsVisibility();
+    },
+
+    toggleWellLabels() {
+        this.setWellLabelsEnabled(!this.wellLabelsEnabled);
+        // Перерисовываем подписи при включении
+        if (this.wellLabelsEnabled) {
+            this.loadWells();
         }
     },
 
@@ -198,12 +306,21 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: feature.properties.type_color || this.colors.channels,
+                        color: this.colors.channels,
                         weight: 3,
                         opacity: 0.8,
                     }),
                     onEachFeature: (feature, layer) => {
-                        layer.on('click', () => this.showObjectInfo('channel_direction', feature.properties));
+                        layer._igsMeta = { objectType: 'channel_direction', properties: feature.properties };
+                        layer.on('click', async (e) => {
+                            if (this.addDuctCableMode) {
+                                L.DomEvent.stopPropagation(e);
+                                await this.handleDirectionClickForDuctCable(feature.properties?.id);
+                                return;
+                            }
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng);
+                        });
                         
                         layer.bindTooltip(`
                             <strong>Направление: ${feature.properties.number}</strong><br>
@@ -256,7 +373,11 @@ const MapManager = {
                         });
                     },
                     onEachFeature: (feature, layer) => {
-                        layer.on('click', () => this.showObjectInfo('marker_post', feature.properties));
+                        layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
+                        layer.on('click', (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng || layer.getLatLng());
+                        });
                         
                         layer.bindTooltip(`
                             <strong>Столбик: ${feature.properties.number || '-'}</strong><br>
@@ -275,7 +396,7 @@ const MapManager = {
      */
     async loadCables(type) {
         try {
-            const response = await API.cables.geojson(type, this.filters);
+            const response = await API.unifiedCables.geojson(this.filters);
             
             // Проверяем на ошибку API
             if (response.success === false) {
@@ -293,20 +414,28 @@ const MapManager = {
             this.layers[layerName].clearLayers();
             
             const color = this.colors[layerName];
+            const codeMap = { ground: 'cable_ground', aerial: 'cable_aerial', duct: 'cable_duct' };
+            const targetCode = codeMap[type];
             
             // Фильтруем features с невалидной геометрией
-            const validFeatures = response.features.filter(f => f && f.geometry && f.geometry.type);
+            const validFeatures = response.features
+                .filter(f => f && f.geometry && f.geometry.type)
+                .filter(f => !targetCode || f.properties?.object_type_code === targetCode);
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: feature.properties.status_color || color,
+                        color: feature.properties.object_type_color || feature.properties.status_color || color,
                         weight: 2,
                         opacity: 0.8,
                         dashArray: type === 'aerial' ? '5, 5' : null,
                     }),
                     onEachFeature: (feature, layer) => {
-                        layer.on('click', () => this.showObjectInfo(type + '_cable', feature.properties));
+                        layer._igsMeta = { objectType: 'unified_cable', properties: feature.properties };
+                        layer.on('click', (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng);
+                        });
                         
                         const typeName = {
                             ground: 'в грунте',
@@ -324,6 +453,160 @@ const MapManager = {
             }
         } catch (error) {
             console.error(`Ошибка загрузки кабелей ${type}:`, error);
+        }
+    },
+
+    handleObjectsClick(latlng) {
+        const hits = this.getObjectsAtLatLng(latlng);
+        this.lastClickHits = hits;
+
+        // Выбор объекта для инцидента
+        if (this.incidentSelectMode) {
+            if (hits.length <= 1) {
+                const h = hits[0];
+                if (h) {
+                    this.incidentSelectMode = false;
+                    App.addIncidentRelatedObjectFromMap(h);
+                }
+                return;
+            }
+
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(hits || []).map((h, idx) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectIncidentObjectFromHits(${idx})">
+                            ${h.title}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите объект для привязки к инциденту.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            App.showModal('Выберите объект', content, footer);
+            return;
+        }
+
+        if (hits.length <= 1) {
+            const h = hits[0];
+            if (h) this.showObjectInfo(h.objectType, h.properties);
+            return;
+        }
+
+        const content = `
+            <div style="max-height: 60vh; overflow:auto;">
+                ${(hits || []).map((h, idx) => `
+                    <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectObjectFromHits(${idx})">
+                        ${h.title}
+                    </button>
+                `).join('')}
+            </div>
+            <p class="text-muted" style="margin-top:8px;">Выберите объект для просмотра информации.</p>
+        `;
+        const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+        App.showModal('Выберите объект', content, footer);
+    },
+
+    selectObjectFromHits(idx) {
+        const h = (this.lastClickHits || [])[idx];
+        if (!h) return;
+        App.hideModal();
+        this.showObjectInfo(h.objectType, h.properties);
+    },
+
+    selectIncidentObjectFromHits(idx) {
+        const h = (this.lastClickHits || [])[idx];
+        if (!h) return;
+        this.incidentSelectMode = false;
+        App.hideModal();
+        App.addIncidentRelatedObjectFromMap(h);
+    },
+
+    getObjectsAtLatLng(latlng) {
+        if (!this.map) return [];
+        const clickPt = this.map.latLngToLayerPoint(latlng);
+        const hits = [];
+
+        const distToSeg = (p, a, b) => {
+            const vx = b.x - a.x, vy = b.y - a.y;
+            const wx = p.x - a.x, wy = p.y - a.y;
+            const c1 = vx * wx + vy * wy;
+            if (c1 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
+            const c2 = vx * vx + vy * vy;
+            if (c2 <= c1) return Math.hypot(p.x - b.x, p.y - b.y);
+            const t = c1 / c2;
+            const px = a.x + t * vx, py = a.y + t * vy;
+            return Math.hypot(p.x - px, p.y - py);
+        };
+
+        const testLayer = (layer) => {
+            const meta = layer?._igsMeta;
+            if (!meta || !meta.properties) return;
+            const props = meta.properties;
+
+            // Point-like
+            if (typeof layer.getLatLng === 'function') {
+                const pt = this.map.latLngToLayerPoint(layer.getLatLng());
+                const d = Math.hypot(clickPt.x - pt.x, clickPt.y - pt.y);
+                const thr = 18;
+                if (d <= thr) {
+                    hits.push({
+                        objectType: meta.objectType,
+                        properties: props,
+                        title: `${this.getTypeDisplayName(meta.objectType)}: ${props.number || props.id}`
+                    });
+                }
+                return;
+            }
+
+            // Polyline-like
+            if (typeof layer.getLatLngs === 'function') {
+                const latlngs = layer.getLatLngs().flat(Infinity).filter(ll => ll && ll.lat !== undefined);
+                if (latlngs.length < 2) return;
+                const pts = latlngs.map(ll => this.map.latLngToLayerPoint(ll));
+                let minD = Infinity;
+                for (let i = 0; i < pts.length - 1; i++) {
+                    minD = Math.min(minD, distToSeg(clickPt, pts[i], pts[i + 1]));
+                }
+                if (minD <= 12) {
+                    hits.push({
+                        objectType: meta.objectType,
+                        properties: props,
+                        title: `${this.getTypeDisplayName(meta.objectType)}: ${props.number || props.id}`
+                    });
+                }
+            }
+        };
+
+        const traverse = (layer) => {
+            if (!layer) return;
+            if (typeof layer.getLayers === 'function') {
+                layer.getLayers().forEach(traverse);
+                return;
+            }
+            testLayer(layer);
+        };
+        Object.values(this.layers || {}).forEach(group => traverse(group));
+
+        // Убираем дубликаты по (type,id)
+        const uniq = new Map();
+        hits.forEach(h => {
+            const key = `${h.objectType}:${h.properties?.id}`;
+            if (!uniq.has(key)) uniq.set(key, h);
+        });
+        return Array.from(uniq.values());
+    },
+
+    updateHoverSnap(latlng) {
+        if (!this.map) return;
+        // Не мешаем режимам добавления
+        if (this.addDirectionMode || this.addingObject || this.addCableMode || this.addDuctCableMode) return;
+
+        const hits = this.getObjectsAtLatLng(latlng);
+        const container = this.map.getContainer();
+        if (hits.length > 0) {
+            container.style.cursor = 'pointer';
+        } else if (container.style.cursor === 'pointer') {
+            container.style.cursor = '';
         }
     },
 
@@ -365,17 +648,7 @@ const MapManager = {
         const infoTitle = document.getElementById('info-title');
         const infoContent = document.getElementById('info-content');
         
-        // Определяем название типа объекта
-        const typeNames = {
-            well: 'Колодец',
-            channel_direction: 'Направление канала',
-            marker_post: 'Указательный столбик',
-            ground_cable: 'Кабель в грунте',
-            aerial_cable: 'Воздушный кабель',
-            duct_cable: 'Кабель в канализации',
-        };
-
-        infoTitle.textContent = `${typeNames[objectType] || 'Объект'}: ${properties.number || properties.id}`;
+        infoTitle.textContent = `${this.getTypeDisplayName(objectType)}: ${properties.number || properties.id}`;
         
         // Формируем содержимое
         let html = '';
@@ -387,6 +660,10 @@ const MapManager = {
             status_name: 'Состояние',
             owner_name: 'Собственник',
             fiber_count: 'Кол-во волокон',
+            cable_type_name: 'Тип кабеля',
+            object_type_name: 'Вид объекта',
+            marking: 'Кабель (из каталога)',
+            length_calculated: 'Длина расч. (м)',
             length_m: 'Длина (м)',
             start_well: 'Начало',
             end_well: 'Конец',
@@ -402,13 +679,69 @@ const MapManager = {
             }
         }
 
+        // Доп. действия для карты
+        if (objectType === 'well') {
+            html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInWell(${properties.id})">
+                    Показать кабели в колодце
+                </button>
+            </div>`;
+        }
+        if (objectType === 'channel_direction') {
+            html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInDirection(${properties.id})">
+                    Показать кабели в направлении
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="App.showChannelsInDirection(${properties.id})">
+                    Показать каналы направления
+                </button>
+            </div>`;
+        }
+
         infoContent.innerHTML = html;
         
         // Сохраняем данные для редактирования
         infoPanel.dataset.objectType = objectType;
         infoPanel.dataset.objectId = properties.id;
+        infoPanel.dataset.lat = properties?._lat ?? '';
+        infoPanel.dataset.lng = properties?._lng ?? '';
+
+        // Кнопка "Скопировать координаты" доступна только для колодца
+        const copyBtn = document.getElementById('btn-copy-coords');
+        if (copyBtn) {
+            const canCopy = objectType === 'well' && properties?._lat !== undefined && properties?._lng !== undefined;
+            copyBtn.classList.toggle('hidden', !canCopy);
+        }
         
         infoPanel.classList.remove('hidden');
+    },
+
+    clearHighlight() {
+        if (this.highlightLayer) {
+            this.map.removeLayer(this.highlightLayer);
+            this.highlightLayer = null;
+        }
+        this.setHighlightBarVisible(false);
+    },
+
+    async highlightCableRouteDirections(cableId) {
+        try {
+            this.clearHighlight();
+            const resp = await API.unifiedCables.routeDirectionsGeojson(cableId);
+            if (resp && resp.type === 'FeatureCollection') {
+                this.highlightLayer = L.geoJSON(resp, {
+                    style: () => ({ color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' })
+                }).addTo(this.map);
+                this.setHighlightBarVisible(true);
+                const bounds = this.highlightLayer.getBounds();
+                if (bounds && bounds.isValid()) {
+                    this.fitToBounds(bounds, 17);
+                }
+            }
+        } catch (e) {
+            console.error('Ошибка подсветки маршрута кабеля:', e);
+            App.notify('Ошибка подсветки маршрута', 'error');
+        }
     },
 
     /**
@@ -435,10 +768,204 @@ const MapManager = {
      * Клик по карте (для добавления объектов)
      */
     onMapClick(e) {
+        // Если включён режим добавления кабеля (ломаная линия)
+        if (this.addCableMode) {
+            this.handleAddCableClick(e.latlng);
+            return;
+        }
         // Если включён режим добавления объекта
         if (this.addingObject) {
             this.handleAddObjectClick(e.latlng);
         }
+    },
+
+    /**
+     * Старт режима добавления кабеля (ломаная линия)
+     */
+    startAddCableMode(typeCode) {
+        this.addCableMode = true;
+        this.addCableTypeCode = typeCode;
+        this.selectedCablePoints = [];
+        this.map.getContainer().style.cursor = 'crosshair';
+
+        const statusEl = document.getElementById('add-mode-status');
+        const textEl = document.getElementById('add-mode-text');
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        statusEl.classList.remove('hidden');
+        if (finishBtn) finishBtn.classList.remove('hidden');
+        textEl.textContent = 'Кликните точки ломаной (минимум 2), затем нажмите «Создать»';
+
+        App.notify('Режим добавления кабеля: укажите точки ломаной', 'info');
+    },
+
+    /**
+     * Отмена режима добавления кабеля
+     */
+    cancelAddCableMode() {
+        if (!this.addCableMode) return;
+        this.addCableMode = false;
+        this.addCableTypeCode = null;
+        this.selectedCablePoints = [];
+        this.map.getContainer().style.cursor = '';
+
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        if (finishBtn) finishBtn.classList.add('hidden');
+
+        // Чистим временные слои
+        if (this.tempCableLine) {
+            this.map.removeLayer(this.tempCableLine);
+            this.tempCableLine = null;
+        }
+        if (this.tempCableMarkers) {
+            this.tempCableMarkers.forEach(m => this.map.removeLayer(m));
+            this.tempCableMarkers = [];
+        }
+
+        // Скрываем статус, если не активны другие режимы
+        if (!this.addDirectionMode && !this.addingObject) {
+            document.getElementById('add-mode-status').classList.add('hidden');
+        }
+    },
+
+    startAddDuctCableMode() {
+        this.addDuctCableMode = true;
+        this.selectedDuctCableChannels = [];
+        this.map.getContainer().style.cursor = 'crosshair';
+
+        const statusEl = document.getElementById('add-mode-status');
+        const textEl = document.getElementById('add-mode-text');
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        statusEl.classList.remove('hidden');
+        if (finishBtn) finishBtn.classList.remove('hidden');
+        textEl.textContent = 'Кликните на направлениях и выберите каналы. Затем нажмите «Создать»';
+
+        App.notify('Режим добавления кабеля в канализации: выберите каналы', 'info');
+    },
+
+    cancelAddDuctCableMode() {
+        if (!this.addDuctCableMode) return;
+        this.addDuctCableMode = false;
+        this.selectedDuctCableChannels = [];
+        this.map.getContainer().style.cursor = '';
+
+        const finishBtn = document.getElementById('btn-finish-add-mode');
+        if (finishBtn) finishBtn.classList.add('hidden');
+
+        if (!this.addDirectionMode && !this.addingObject && !this.addCableMode) {
+            document.getElementById('add-mode-status').classList.add('hidden');
+        }
+    },
+
+    async handleDirectionClickForDuctCable(directionId) {
+        if (!directionId) return;
+        try {
+            const resp = await API.channelDirections.get(directionId);
+            if (!resp || resp.success === false) {
+                App.notify(resp?.message || 'Ошибка загрузки направления', 'error');
+                return;
+            }
+            const dir = resp.data || resp;
+            const channels = dir.channels || [];
+
+            const content = `
+                <form id="duct-cable-channels-form">
+                    <p><strong>${dir.number || 'Направление'}</strong></p>
+                    <div style="max-height: 220px; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: 6px;">
+                        ${channels.length ? channels.map(ch => `
+                            <label style="display:block; margin-bottom:6px;">
+                                <input type="checkbox" name="channel_ids" value="${ch.id}">
+                                Канал ${ch.channel_number}${ch.kind_name ? ` (${ch.kind_name})` : ''}
+                            </label>
+                        `).join('') : '<p class="text-muted">В направлении нет каналов</p>'}
+                    </div>
+                </form>
+            `;
+
+            const footer = `
+                <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="MapManager.addSelectedDuctChannelsFromModal()">Добавить</button>
+            `;
+
+            App.showModal('Выбор каналов', content, footer);
+        } catch (e) {
+            console.error('Ошибка выбора каналов:', e);
+            App.notify('Ошибка загрузки направления', 'error');
+        }
+    },
+
+    addSelectedDuctChannelsFromModal() {
+        const form = document.getElementById('duct-cable-channels-form');
+        if (!form) return;
+        const ids = Array.from(form.querySelectorAll('input[name="channel_ids"]:checked')).map(i => parseInt(i.value));
+        ids.forEach(id => {
+            if (!this.selectedDuctCableChannels.includes(id)) this.selectedDuctCableChannels.push(id);
+        });
+
+        App.hideModal();
+        const textEl = document.getElementById('add-mode-text');
+        if (textEl) textEl.textContent = `Выбрано каналов: ${this.selectedDuctCableChannels.length}. Нажмите «Создать»`;
+        App.notify(`Выбрано каналов: ${this.selectedDuctCableChannels.length}`, 'success');
+    },
+
+    finishAddCableMode() {
+        // Если активен режим duct — создаём duct кабель
+        if (this.addDuctCableMode) {
+            if (this.selectedDuctCableChannels.length < 1) {
+                App.notify('Выберите минимум 1 канал', 'warning');
+                return;
+            }
+            const selected = [...this.selectedDuctCableChannels];
+            this.cancelAddDuctCableMode();
+            App.showAddDuctCableModalFromMap(selected);
+            return;
+        }
+
+        // Иначе — обычный режим ломаной (грунт/воздух)
+        if (!this.addCableMode) return;
+        if (this.selectedCablePoints.length < 2) {
+            App.notify('Нужно указать минимум 2 точки', 'warning');
+            return;
+        }
+
+        const typeCode = this.addCableTypeCode;
+        const coords = [...this.selectedCablePoints];
+
+        this.cancelAddCableMode();
+
+        App.showAddCableModalFromMap(typeCode, coords);
+    },
+
+    /**
+     * Клик по карте в режиме добавления кабеля
+     */
+    handleAddCableClick(latlng) {
+        if (!this.addCableMode) return;
+
+        // Сохраняем как WGS84 lon/lat для формы
+        this.selectedCablePoints.push([parseFloat(latlng.lng.toFixed(6)), parseFloat(latlng.lat.toFixed(6))]);
+
+        // Маркер точки
+        if (!this.tempCableMarkers) this.tempCableMarkers = [];
+        const marker = L.circleMarker([latlng.lat, latlng.lng], {
+            radius: 6,
+            fillColor: '#3b82f6',
+            color: '#fff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9,
+        }).addTo(this.map);
+        this.tempCableMarkers.push(marker);
+
+        // Линия
+        const latLngs = this.selectedCablePoints.map(p => [p[1], p[0]]);
+        if (!this.tempCableLine) {
+            this.tempCableLine = L.polyline(latLngs, { color: '#3b82f6', weight: 3, opacity: 0.9 }).addTo(this.map);
+        } else {
+            this.tempCableLine.setLatLngs(latLngs);
+        }
+
+        const textEl = document.getElementById('add-mode-text');
+        if (textEl) textEl.textContent = `Точек: ${this.selectedCablePoints.length}. Нажмите «Создать» когда готово`;
     },
 
     /**
@@ -572,7 +1099,7 @@ const MapManager = {
             
             if (layerCount > 0) {
                 try {
-                    const bounds = layer.getBounds();
+                    const bounds = typeof layer.getBounds === 'function' ? layer.getBounds() : null;
                     if (bounds && bounds.isValid()) {
                         allBounds.push(bounds);
                         console.log(`Bounds для ${layerName}:`, bounds.toBBoxString());

@@ -90,7 +90,8 @@ class GroupController extends BaseController
             Response::error('Ошибка валидации', 422, $errors);
         }
 
-        $data = $this->request->only(['number', 'name', 'description', 'group_type']);
+        // number формируется автоматически (например, по ID)
+        $data = $this->request->only(['name', 'description', 'group_type']);
         
         $user = Auth::user();
         $data['created_by'] = $user['id'];
@@ -99,6 +100,9 @@ class GroupController extends BaseController
             $this->db->beginTransaction();
 
             $id = $this->db->insert('object_groups', $data);
+
+            // Автонумерация: если номер не задан, используем id
+            $this->db->update('object_groups', ['number' => (string) $id], 'id = :id', ['id' => $id]);
 
             // Добавляем объекты
             $objects = $this->request->input('objects', []);
@@ -131,7 +135,8 @@ class GroupController extends BaseController
             Response::error('Группа не найдена', 404);
         }
 
-        $data = $this->request->only(['number', 'name', 'description', 'group_type']);
+        // number не редактируется
+        $data = $this->request->only(['name', 'description', 'group_type']);
         $data = array_filter($data, fn($v) => $v !== null);
 
         try {

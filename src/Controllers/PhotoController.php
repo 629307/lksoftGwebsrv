@@ -12,7 +12,7 @@ class PhotoController extends BaseController
 {
     private array $allowedTables = [
         'wells', 'channel_directions', 'cable_channels', 'marker_posts',
-        'ground_cables', 'aerial_cables', 'duct_cables', 'incidents', 'incident_history'
+        'ground_cables', 'aerial_cables', 'duct_cables', 'cables', 'incidents', 'incident_history'
     ];
 
     /**
@@ -55,10 +55,16 @@ class PhotoController extends BaseController
         }
 
         // Создаём миниатюру
-        $thumbnailPath = $this->createThumbnail($fileInfo['file_path']);
+        $thumbnailPath = null;
+        try {
+            $thumbnailPath = $this->createThumbnail($fileInfo['file_path']);
+        } catch (\Throwable $e) {
+            // GD может быть не установлен на сервере — миниатюра необязательна
+            $thumbnailPath = null;
+        }
 
         // Получаем размеры изображения
-        $imageInfo = getimagesize($fileInfo['file_path']);
+        $imageInfo = @getimagesize($fileInfo['file_path']);
         $width = $imageInfo[0] ?? null;
         $height = $imageInfo[1] ?? null;
 
@@ -227,7 +233,12 @@ class PhotoController extends BaseController
             return null;
         }
 
-        $imageInfo = getimagesize($sourcePath);
+        // GD extension может быть отсутствовать
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagecopyresampled')) {
+            return null;
+        }
+
+        $imageInfo = @getimagesize($sourcePath);
         if (!$imageInfo) {
             return null;
         }
@@ -244,15 +255,19 @@ class PhotoController extends BaseController
         // Создаём изображение
         switch ($mime) {
             case 'image/jpeg':
+                if (!function_exists('imagecreatefromjpeg')) return null;
                 $source = imagecreatefromjpeg($sourcePath);
                 break;
             case 'image/png':
+                if (!function_exists('imagecreatefrompng')) return null;
                 $source = imagecreatefrompng($sourcePath);
                 break;
             case 'image/gif':
+                if (!function_exists('imagecreatefromgif')) return null;
                 $source = imagecreatefromgif($sourcePath);
                 break;
             case 'image/webp':
+                if (!function_exists('imagecreatefromwebp')) return null;
                 $source = imagecreatefromwebp($sourcePath);
                 break;
             default:

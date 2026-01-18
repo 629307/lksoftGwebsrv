@@ -27,13 +27,21 @@ class UnifiedCableController extends BaseController
             'object_type_id' => 'c.object_type_id',
             'cable_type_id' => 'c.cable_type_id',
             'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
             '_search' => ['c.number', 'c.notes', 'cc.marking'],
         ]);
 
         $where = $filters['where'];
         $params = $filters['params'];
 
-        $total = $this->getTotal('cables', $where, $params, 'c');
+        // total с JOIN'ами, чтобы работал поиск по cc.marking
+        $totalSql = "SELECT COUNT(*) as cnt
+                     FROM cables c
+                     LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id";
+        if ($where) {
+            $totalSql .= " WHERE {$where}";
+        }
+        $total = (int) ($this->db->fetch($totalSql, $params)['cnt'] ?? 0);
 
         $sql = "SELECT c.id, c.number, 
                        c.cable_catalog_id, cc.marking as cable_marking, cc.fiber_count,
@@ -65,6 +73,40 @@ class UnifiedCableController extends BaseController
     }
 
     /**
+     * GET /api/unified-cables/stats
+     * Агрегации по текущему фильтру (кол-во и сумма длины)
+     */
+    public function stats(): void
+    {
+        $filters = $this->buildFilters([
+            'owner_id' => 'c.owner_id',
+            'object_type_id' => 'c.object_type_id',
+            'cable_type_id' => 'c.cable_type_id',
+            'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
+            '_search' => ['c.number', 'c.notes', 'cc.marking'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+
+        $sql = "SELECT COUNT(*) as cnt,
+                       COALESCE(SUM(c.length_calculated), 0) as length_sum
+                FROM cables c
+                LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id";
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+
+        $row = $this->db->fetch($sql, $params) ?: ['cnt' => 0, 'length_sum' => 0];
+
+        Response::success([
+            'count' => (int) ($row['cnt'] ?? 0),
+            'length_sum' => (float) ($row['length_sum'] ?? 0),
+        ]);
+    }
+
+    /**
      * GET /api/unified-cables/geojson
      * GeoJSON кабелей для карты (только для кабелей с геометрией)
      */
@@ -79,22 +121,33 @@ class UnifiedCableController extends BaseController
         $where = $filters['where'];
         $params = $filters['params'];
 
-        // Только кабели с геометрией (в грунте и воздушные)
-        $geomCondition = "c.geom_wgs84 IS NOT NULL";
+        // Кабели с геометрией: грунт/воздух — из geom_wgs84, канализация — собираем из направлений маршрута
+        $geomCondition = "(c.geom_wgs84 IS NOT NULL OR ot.code = 'cable_duct')";
         if ($where) {
             $where = "{$geomCondition} AND ({$where})";
         } else {
             $where = $geomCondition;
         }
 
-        $sql = "SELECT c.id, c.number, 
-                       ST_AsGeoJSON(c.geom_wgs84)::json as geometry,
+        $sql = "SELECT c.id, c.number, c.length_calculated,
+                       CASE 
+                           WHEN ot.code = 'cable_duct' THEN (
+                               SELECT ST_AsGeoJSON(ST_Collect(cd.geom_wgs84))::json
+                               FROM cable_route_channels crc
+                               JOIN cable_channels cc2 ON crc.cable_channel_id = cc2.id
+                               JOIN channel_directions cd ON cc2.direction_id = cd.id
+                               WHERE crc.cable_id = c.id AND cd.geom_wgs84 IS NOT NULL
+                           )
+                           ELSE ST_AsGeoJSON(c.geom_wgs84)::json
+                       END as geometry,
                        c.owner_id, o.name as owner_name,
                        ot.code as object_type_code, ot.name as object_type_name, ot.color as object_type_color,
+                       ct.name as cable_type_name,
                        os.name as status_name, os.color as status_color,
                        cc.fiber_count, cc.marking
                 FROM cables c
                 LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+                LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
                 LEFT JOIN owners o ON c.owner_id = o.id
                 LEFT JOIN object_types ot ON c.object_type_id = ot.id
                 LEFT JOIN object_status os ON c.status_id = os.id
@@ -220,6 +273,21 @@ class UnifiedCableController extends BaseController
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
 
+        // number генерируется автоматически после вставки, но параметр нужен для SQL с :number
+        if (!array_key_exists('number', $data)) {
+            $data['number'] = null;
+        }
+
+        // Для безопасности: если в БД number NOT NULL/UNIQUE, подставляем временное значение
+        $ownerCodeForNumber = '';
+        if (!empty($data['owner_id'])) {
+            $ownerTmp = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => (int) $data['owner_id']]);
+            $ownerCodeForNumber = $ownerTmp['code'] ?? '';
+        }
+        if ($ownerCodeForNumber && empty($data['number'])) {
+            $data['number'] = "КАБ-{$ownerCodeForNumber}-TMP-" . date('YmdHis') . '-' . random_int(100, 999);
+        }
+
         // Убедиться, что все необязательные поля присутствуют (даже если null)
         $optionalFields = ['contract_id', 'length_declared', 'installation_date', 'notes'];
         foreach ($optionalFields as $field) {
@@ -244,7 +312,15 @@ class UnifiedCableController extends BaseController
                 }
 
                 $coordinateSystem = $this->request->input('coordinate_system', 'wgs84');
-                $coordsStr = implode(', ', array_map(fn($p) => "{$p[0]} {$p[1]}", $coordinates));
+                // Проверяем корректность координат и формируем строку
+                $cleanCoords = [];
+                foreach ($coordinates as $p) {
+                    if (!is_array($p) || count($p) < 2 || !is_numeric($p[0]) || !is_numeric($p[1])) {
+                        Response::error('Некорректные координаты кабеля', 422);
+                    }
+                    $cleanCoords[] = [(float) $p[0], (float) $p[1]];
+                }
+                $coordsStr = implode(', ', array_map(fn($p) => "{$p[0]} {$p[1]}", $cleanCoords));
 
                 if ($coordinateSystem === 'wgs84') {
                     $sql = "INSERT INTO cables (number, geom_wgs84, geom_msk86, cable_catalog_id, cable_type_id, 
@@ -279,16 +355,6 @@ class UnifiedCableController extends BaseController
                 // Кабель в канализации - без геометрии, но с маршрутом
                 $id = $this->db->insert('cables', $data);
                 
-                // Добавляем колодцы маршрута
-                $routeWells = $this->request->input('route_wells', []);
-                foreach ($routeWells as $order => $wellId) {
-                    $this->db->insert('cable_route_wells', [
-                        'cable_id' => $id,
-                        'well_id' => $wellId,
-                        'route_order' => $order
-                    ]);
-                }
-                
                 // Добавляем каналы маршрута
                 $routeChannels = $this->request->input('route_channels', []);
                 foreach ($routeChannels as $order => $channelId) {
@@ -298,9 +364,45 @@ class UnifiedCableController extends BaseController
                         'route_order' => $order
                     ]);
                 }
+
+                // Автоматически добавляем колодцы маршрута по направлениям выбранных каналов
+                $routeWells = [];
+                if (!empty($routeChannels)) {
+                    $rows = $this->db->fetchAll(
+                        "SELECT cd.start_well_id, cd.end_well_id
+                         FROM cable_channels cc
+                         JOIN channel_directions cd ON cc.direction_id = cd.id
+                         WHERE cc.id IN (" . implode(',', array_map('intval', $routeChannels)) . ")"
+                    );
+                    foreach ($rows as $r) {
+                        foreach ([(int) $r['start_well_id'], (int) $r['end_well_id']] as $wid) {
+                            if ($wid > 0 && !in_array($wid, $routeWells, true)) {
+                                $routeWells[] = $wid;
+                            }
+                        }
+                    }
+                }
+                foreach ($routeWells as $order => $wellId) {
+                    $this->db->insert('cable_route_wells', [
+                        'cable_id' => $id,
+                        'well_id' => $wellId,
+                        'route_order' => $order
+                    ]);
+                }
                 
                 // Рассчитываем длину на основе направлений
                 $this->updateDuctCableLength($id);
+            }
+
+            // Формируем номер: КАБ-<код_собств>-<id>
+            $ownerCode = '';
+            if (!empty($data['owner_id'])) {
+                $owner = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => (int) $data['owner_id']]);
+                $ownerCode = $owner['code'] ?? '';
+            }
+            if ($ownerCode) {
+                $number = "КАБ-{$ownerCode}-{$id}";
+                $this->db->update('cables', ['number' => $number], 'id = :id', ['id' => $id]);
             }
 
             $this->db->commit();
@@ -340,7 +442,8 @@ class UnifiedCableController extends BaseController
         }
 
         $data = $this->request->only([
-            'number', 'cable_catalog_id', 'cable_type_id', 'owner_id',
+            // number не редактируется
+            'cable_catalog_id', 'cable_type_id', 'owner_id',
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);
@@ -383,17 +486,6 @@ class UnifiedCableController extends BaseController
             // Для кабелей в канализации - обновляем маршрут
             if ($oldCable['object_type_code'] === 'cable_duct') {
                 $routeWells = $this->request->input('route_wells');
-                if ($routeWells !== null) {
-                    $this->db->delete('cable_route_wells', 'cable_id = :id', ['id' => $cableId]);
-                    foreach ($routeWells as $order => $wellId) {
-                        $this->db->insert('cable_route_wells', [
-                            'cable_id' => $cableId,
-                            'well_id' => $wellId,
-                            'route_order' => $order
-                        ]);
-                    }
-                }
-
                 $routeChannels = $this->request->input('route_channels');
                 if ($routeChannels !== null) {
                     $this->db->delete('cable_route_channels', 'cable_id = :id', ['id' => $cableId]);
@@ -401,6 +493,32 @@ class UnifiedCableController extends BaseController
                         $this->db->insert('cable_route_channels', [
                             'cable_id' => $cableId,
                             'cable_channel_id' => $channelId,
+                            'route_order' => $order
+                        ]);
+                    }
+
+                    // Пересобираем колодцы маршрута автоматически из направлений выбранных каналов
+                    $this->db->delete('cable_route_wells', 'cable_id = :id', ['id' => $cableId]);
+                    $routeWellsAuto = [];
+                    if (!empty($routeChannels)) {
+                        $rows = $this->db->fetchAll(
+                            "SELECT cd.start_well_id, cd.end_well_id
+                             FROM cable_channels cc
+                             JOIN channel_directions cd ON cc.direction_id = cd.id
+                             WHERE cc.id IN (" . implode(',', array_map('intval', $routeChannels)) . ")"
+                        );
+                        foreach ($rows as $r) {
+                            foreach ([(int) $r['start_well_id'], (int) $r['end_well_id']] as $wid) {
+                                if ($wid > 0 && !in_array($wid, $routeWellsAuto, true)) {
+                                    $routeWellsAuto[] = $wid;
+                                }
+                            }
+                        }
+                    }
+                    foreach ($routeWellsAuto as $order => $wellId) {
+                        $this->db->insert('cable_route_wells', [
+                            'cable_id' => $cableId,
+                            'well_id' => $wellId,
                             'route_order' => $order
                         ]);
                     }
@@ -518,17 +636,150 @@ class UnifiedCableController extends BaseController
      */
     private function updateDuctCableLength(int $cableId): void
     {
-        // Суммируем длины всех направлений, к которым привязаны каналы кабеля
+        // Длина кабеля в канализации: сумма длин направлений + 3 * количество уникальных колодцев маршрута
         $this->db->query(
             "UPDATE cables SET length_calculated = (
-                SELECT COALESCE(SUM(DISTINCT cd.length_m), 0)
-                FROM cable_route_channels crc
-                JOIN cable_channels cc ON crc.cable_channel_id = cc.id
-                JOIN channel_directions cd ON cc.direction_id = cd.id
-                WHERE crc.cable_id = :cable_id
+                (SELECT COALESCE(SUM(DISTINCT cd.length_m), 0)
+                 FROM cable_route_channels crc
+                 JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+                 JOIN channel_directions cd ON cc.direction_id = cd.id
+                 WHERE crc.cable_id = :cable_id)
+                +
+                (SELECT 3 * COALESCE(COUNT(DISTINCT crw.well_id), 0)
+                 FROM cable_route_wells crw
+                 WHERE crw.cable_id = :cable_id)
             )
             WHERE id = :cable_id",
             ['cable_id' => $cableId]
         );
+    }
+
+    /**
+     * GET /api/unified-cables/by-well/{id}
+     * Список кабелей, где колодец входит в маршрут
+     */
+    public function byWell(string $id): void
+    {
+        $wellId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_wells crw
+             JOIN cables c ON crw.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE crw.well_id = :id
+             ORDER BY c.number",
+            ['id' => $wellId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/by-direction/{id}
+     * Список кабелей, где в маршруте есть каналы данного направления
+     */
+    public function byDirection(string $id): void
+    {
+        $directionId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_channels crc
+             JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+             JOIN cables c ON crc.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE ch.direction_id = :id
+             ORDER BY c.number",
+            ['id' => $directionId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/by-channel/{id}
+     * Список кабелей, где в маршруте есть данный канал
+     */
+    public function byChannel(string $id): void
+    {
+        $channelId = (int) $id;
+        $rows = $this->db->fetchAll(
+            "SELECT DISTINCT c.id, c.number,
+                    ct.name as cable_type_name,
+                    ot.code as object_type_code, ot.name as object_type_name,
+                    cc.marking as cable_marking,
+                    o.name as owner_name,
+                    os.name as status_name,
+                    c.length_calculated
+             FROM cable_route_channels crc
+             JOIN cables c ON crc.cable_id = c.id
+             LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+             LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+             LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN object_types ot ON c.object_type_id = ot.id
+             LEFT JOIN object_status os ON c.status_id = os.id
+             WHERE crc.cable_channel_id = :id
+             ORDER BY c.number",
+            ['id' => $channelId]
+        );
+        Response::success($rows);
+    }
+
+    /**
+     * GET /api/unified-cables/{id}/route-directions-geojson
+     * GeoJSON направлений, которые входят в маршрут кабеля (через route_channels)
+     */
+    public function routeDirectionsGeojson(string $id): void
+    {
+        $cableId = (int) $id;
+        try {
+            $rows = $this->db->fetchAll(
+                "SELECT cd.id, cd.number,
+                        ST_AsGeoJSON(cd.geom_wgs84) as geometry
+                 FROM cable_route_channels crc
+                 JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+                 JOIN channel_directions cd ON ch.direction_id = cd.id
+                 WHERE crc.cable_id = :id AND cd.geom_wgs84 IS NOT NULL",
+                ['id' => $cableId]
+            );
+        } catch (\PDOException $e) {
+            // Безопасно возвращаем пустой слой вместо 500
+            Response::geojson([], ['layer' => 'route_directions', 'count' => 0]);
+            return;
+        }
+
+        $features = [];
+        $seen = [];
+        foreach ($rows as $row) {
+            $dirId = (int) ($row['id'] ?? 0);
+            if ($dirId && isset($seen[$dirId])) {
+                continue;
+            }
+            if ($dirId) {
+                $seen[$dirId] = true;
+            }
+            $geometry = is_string($row['geometry']) ? json_decode($row['geometry'], true) : $row['geometry'];
+            unset($row['geometry']);
+            if (empty($geometry) || !isset($geometry['type'])) continue;
+            $features[] = ['type' => 'Feature', 'geometry' => $geometry, 'properties' => $row];
+        }
+        Response::geojson($features, ['layer' => 'route_directions', 'count' => count($features)]);
     }
 }

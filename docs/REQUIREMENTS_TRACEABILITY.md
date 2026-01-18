@@ -63,10 +63,8 @@
 | object_status (состояния) | `database/schema.sql` | Строки 102-115 |
 | owners (собственники) | `database/schema.sql` | Строки 117-135 |
 | contracts (контракты) | `database/schema.sql` | Строки 137-155 |
-| display_styles (стили) | `database/schema.sql` | Строки 157-195 |
 | Уникальные ключи | `database/schema.sql` | Ограничения `UNIQUE` в каждой таблице |
 | FK ON DELETE RESTRICT | `database/schema.sql` | Внешние ключи с `ON DELETE RESTRICT` |
-| Стили по типу/объекту | `database/schema.sql` | Колонки `object_type_id`, `object_kind_id` в display_styles |
 | CRUD справочников | `src/Controllers/ReferenceController.php` | Методы `index()`, `store()`, `update()`, `destroy()` |
 
 ---

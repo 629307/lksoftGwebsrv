@@ -194,7 +194,6 @@ lksoftGwebsrv/
 - `incidents`, `incident_history` — инциденты
 - `object_groups` — группы объектов
 - `object_photos` — фотографии
-- `display_styles` — стили отображения
 
 ---
 
@@ -241,7 +240,7 @@ Authorization: Bearer <token>
 
 Получение списка записей справочника.
 
-Типы: `object_types`, `object_kinds`, `object_status`, `owners`, `contracts`, `display_styles`
+Типы: `object_types`, `object_kinds`, `object_status`, `owners`, `contracts`
 
 #### POST /api/references/{type}
 
