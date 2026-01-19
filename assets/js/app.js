@@ -489,11 +489,16 @@ const App = {
         if (statusId) filters.status_id = statusId;
         if (contractId) filters.contract_id = contractId;
 
-        // При выборе контракта принудительно включаем слой "Кабели в канализации"
+        // При выборе контракта принудительно включаем слои кабелей
         if (contractId) {
-            const ductCb = document.getElementById('layer-duct-cables');
-            if (ductCb) ductCb.checked = true;
-            MapManager.toggleLayer('ductCables', true);
+            const setLayer = (checkboxId, layerName) => {
+                const cb = document.getElementById(checkboxId);
+                if (cb) cb.checked = true;
+                MapManager.toggleLayer(layerName, true);
+            };
+            setLayer('layer-ground-cables', 'groundCables');
+            setLayer('layer-aerial-cables', 'aerialCables');
+            setLayer('layer-duct-cables', 'ductCables');
         }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров

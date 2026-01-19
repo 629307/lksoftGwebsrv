@@ -59,7 +59,22 @@ class Database
     public function query(string $sql, array $params = []): \PDOStatement
     {
         $stmt = $this->connection->prepare($sql);
-        $stmt->execute($params);
+
+        // Явное биндинг-типов для PostgreSQL (bool/int/null)
+        foreach ($params as $key => $value) {
+            $param = is_string($key) ? (str_starts_with($key, ':') ? $key : ':' . $key) : $key + 1;
+            if (is_int($value)) {
+                $stmt->bindValue($param, $value, PDO::PARAM_INT);
+            } elseif (is_bool($value)) {
+                $stmt->bindValue($param, $value, PDO::PARAM_BOOL);
+            } elseif ($value === null) {
+                $stmt->bindValue($param, null, PDO::PARAM_NULL);
+            } else {
+                $stmt->bindValue($param, (string) $value, PDO::PARAM_STR);
+            }
+        }
+
+        $stmt->execute();
         return $stmt;
     }
 

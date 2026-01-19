@@ -249,13 +249,13 @@ abstract class BaseController
             return $default;
         }
 
-        $lower = mb_strtolower($v);
+        $lower = function_exists('mb_strtolower') ? mb_strtolower($v) : strtolower($v);
         return match ($lower) {
             ';', 'semicolon', 'точка-с-запятой', 'точка с запятой' => ';',
             ',', 'comma', 'запятая' => ',',
             '|', 'pipe', 'вертикальная черта' => '|',
             '\t', 'tab', 'таб', 'табуляция' => "\t",
-            default => (mb_strlen($v) === 1 ? $v : $default),
+            default => ((function_exists('mb_strlen') ? mb_strlen($v) : strlen($v)) === 1 ? $v : $default),
         };
     }
 }
