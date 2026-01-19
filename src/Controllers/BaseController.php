@@ -237,4 +237,25 @@ abstract class BaseController
         $coords = array_map(fn($p) => "{$p[0]} {$p[1]}", $points);
         return "ST_SetSRID(ST_GeomFromText('LINESTRING(" . implode(', ', $coords) . ")'), {$srid})";
     }
+
+    /**
+     * Нормализация разделителя CSV из query-параметра.
+     * Поддержка: ; , tab \t |
+     */
+    protected function normalizeCsvDelimiter(?string $value, string $default = ';'): string
+    {
+        $v = trim((string) ($value ?? ''));
+        if ($v === '') {
+            return $default;
+        }
+
+        $lower = mb_strtolower($v);
+        return match ($lower) {
+            ';', 'semicolon', 'точка-с-запятой', 'точка с запятой' => ';',
+            ',', 'comma', 'запятая' => ',',
+            '|', 'pipe', 'вертикальная черта' => '|',
+            '\t', 'tab', 'таб', 'табуляция' => "\t",
+            default => (mb_strlen($v) === 1 ? $v : $default),
+        };
+    }
 }

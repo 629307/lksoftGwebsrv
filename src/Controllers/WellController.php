@@ -419,6 +419,7 @@ class WellController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
 
         $sql = "SELECT w.number, 
                        ST_X(w.geom_wgs84) as longitude, ST_Y(w.geom_wgs84) as latitude,
@@ -450,11 +451,11 @@ class WellController extends BaseController
         // Заголовки
         fputcsv($output, ['Номер', 'Долгота', 'Широта', 'X (МСК86)', 'Y (МСК86)', 
                          'Собственник', 'Вид', 'Тип', 'Состояние', 'Глубина', 'Материал', 
-                         'Дата установки', 'Примечания'], ';');
+                         'Дата установки', 'Примечания'], $delimiter);
         
         // Данные
         foreach ($data as $row) {
-            fputcsv($output, array_values($row), ';');
+            fputcsv($output, array_values($row), $delimiter);
         }
         
         fclose($output);

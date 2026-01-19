@@ -301,6 +301,7 @@ class ReportController extends BaseController
         $data = [];
         $filename = '';
         $headers = [];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
 
         switch ($type) {
             case 'objects':
@@ -365,9 +366,9 @@ class ReportController extends BaseController
         $output = fopen('php://output', 'w');
         fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
         
-        fputcsv($output, $headers, ';');
+        fputcsv($output, $headers, $delimiter);
         foreach ($data as $row) {
-            fputcsv($output, $row, ';');
+            fputcsv($output, $row, $delimiter);
         }
         
         fclose($output);

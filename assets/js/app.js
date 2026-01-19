@@ -1793,8 +1793,8 @@ const App = {
             container.innerHTML = `
                 <div class="panel-header">
                     <h3>${this.getReportTitle(type)}</h3>
-                    <button class="btn btn-secondary" onclick="API.reports.export('${type}')">
-                        <i class="fas fa-download"></i> Экспорт CSV
+                    <button class="btn btn-secondary" onclick="App.showReportExportModal('${type}')">
+                        <i class="fas fa-download"></i> Выгрузить отчет
                     </button>
                 </div>
                 ${html}
@@ -1855,8 +1855,8 @@ const App = {
                 container.innerHTML = `
                     <div class="panel-header">
                         <h3>${this.getReportTitle('objects')}</h3>
-                        <button class="btn btn-secondary" onclick="API.reports.export('objects')">
-                            <i class="fas fa-download"></i> Экспорт CSV
+                        <button class="btn btn-secondary" onclick="App.showReportExportModal('objects')">
+                            <i class="fas fa-download"></i> Выгрузить отчет
                         </button>
                     </div>
                     ${this.renderObjectsReport(resp.data)}
@@ -1955,8 +1955,8 @@ const App = {
                 container.innerHTML = `
                     <div class="panel-header">
                         <h3>${this.getReportTitle('contracts')}</h3>
-                        <button class="btn btn-secondary" onclick="API.reports.export('contracts')">
-                            <i class="fas fa-download"></i> Экспорт CSV
+                        <button class="btn btn-secondary" onclick="App.showReportExportModal('contracts')">
+                            <i class="fas fa-download"></i> Выгрузить отчет
                         </button>
                     </div>
                     ${this.renderContractsReport(resp.data)}
@@ -2848,10 +2848,54 @@ const App = {
     },
 
     /**
-     * Экспорт объектов
+     * Выгрузка объектов (CSV) с выбором разделителя
      */
     exportObjects() {
-        window.open(`/api/wells/export?token=${API.getToken()}`, '_blank');
+        this.showObjectsExportModal();
+    },
+
+    showCsvDelimiterModal(title, onConfirm) {
+        this._pendingCsvExport = onConfirm;
+        const content = `
+            <div class="form-group">
+                <label>Разделитель столбцов</label>
+                <select id="csv-export-delimiter">
+                    <option value=";">Точка с запятой ( ; )</option>
+                    <option value=",">Запятая ( , )</option>
+                    <option value="tab">Табуляция (TAB)</option>
+                    <option value="|">Вертикальная черта ( | )</option>
+                </select>
+                <p class="text-muted" style="margin-top:8px;">Файл будет скачан в формате CSV с выбранным разделителем.</p>
+            </div>
+        `;
+        const footer = `
+            <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+            <button class="btn btn-primary" onclick="App.confirmCsvDelimiter()">Выгрузить</button>
+        `;
+        this.showModal(title, content, footer);
+    },
+
+    async confirmCsvDelimiter() {
+        const sel = document.getElementById('csv-export-delimiter');
+        const delimiter = sel?.value || ';';
+        const fn = this._pendingCsvExport;
+        this._pendingCsvExport = null;
+        this.hideModal();
+        if (typeof fn !== 'function') return;
+        try {
+            await fn(delimiter);
+            this.notify('Файл выгружен', 'success');
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка выгрузки', 'error');
+        }
+    },
+
+    showReportExportModal(type) {
+        this.showCsvDelimiterModal('Выгрузить отчет', (delimiter) => API.reports.export(type, delimiter));
+    },
+
+    showObjectsExportModal() {
+        this.showCsvDelimiterModal('Выгрузить', (delimiter) => API.download('/wells/export', { delimiter }));
     },
 
     /**
