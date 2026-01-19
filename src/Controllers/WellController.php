@@ -495,7 +495,7 @@ class WellController extends BaseController
             'preview' => $previewRows,
             'fields' => [
                 // основные
-                'number', 'owner_id', 'type_id', 'kind_id', 'status_id',
+                'number',
                 // координаты (в зависимости от выбранной СК)
                 'longitude', 'latitude', 'x_msk86', 'y_msk86',
                 // опциональные
@@ -525,6 +525,20 @@ class WellController extends BaseController
             Response::error('Некорректное сопоставление колонок', 422);
         }
 
+        // Значения по умолчанию (выбираются пользователем в шапке)
+        $defaultOwnerId = (int) $this->request->input('default_owner_id', 0);
+        $defaultKindId = (int) $this->request->input('default_kind_id', 0);
+        $defaultStatusId = (int) $this->request->input('default_status_id', 0);
+        $numbers = $this->request->input('numbers', []);
+        if (!is_array($numbers)) $numbers = [];
+
+        // type_id для колодцев определяем по системному коду object_types.code='well'
+        $wellTypeRow = $this->db->fetch("SELECT id FROM object_types WHERE code = 'well' LIMIT 1");
+        $wellTypeId = (int) ($wellTypeRow['id'] ?? 0);
+        if ($wellTypeId <= 0) {
+            Response::error('Не удалось определить вид объекта "well" (object_types)', 500);
+        }
+
         $lines = preg_split("/\r\n|\n|\r/", $text);
         $lines = array_values(array_filter(array_map('trim', $lines), fn($l) => $l !== ''));
 
@@ -545,7 +559,7 @@ class WellController extends BaseController
             if ($v === '') return null;
             if (is_numeric($v)) return (int) $v;
 
-            $key = mb_strtolower($v);
+            $key = function_exists('mb_strtolower') ? mb_strtolower($v) : strtolower($v);
             $cache = null;
             $table = null;
             $sql = null;
@@ -601,24 +615,39 @@ class WellController extends BaseController
                     }
 
                     // Минимальные обязательные поля
-                    $number = (string) ($data['number'] ?? '');
-                    $number = trim($number);
+                    $overrideNumber = null;
+                    if (isset($numbers[(string) $lineNo]) && is_string($numbers[(string) $lineNo])) {
+                        $overrideNumber = trim((string) $numbers[(string) $lineNo]);
+                    }
+
+                    $number = $overrideNumber !== null ? $overrideNumber : trim((string) ($data['number'] ?? ''));
                     if ($number === '') {
                         throw new \RuntimeException('Не указан номер (number)');
                     }
-                    if (mb_strlen($number) > 50) {
+                    $len = function_exists('mb_strlen') ? mb_strlen($number) : strlen($number);
+                    if ($len > 50) {
                         throw new \RuntimeException('Номер слишком длинный (max 50)');
                     }
 
-                    // Справочники
-                    foreach (['owner_id', 'type_id', 'kind_id', 'status_id'] as $f) {
-                        $raw = (string) ($data[$f] ?? '');
-                        $resolved = $resolve($f, $raw);
-                        if (!$resolved) {
-                            throw new \RuntimeException("Не удалось определить {$f}");
-                        }
-                        $data[$f] = (int) $resolved;
-                    }
+                    // Справочники (type_id фиксированный для колодцев)
+                    $data['type_id'] = $wellTypeId;
+
+                    // owner/kind/status: либо из колонок, либо из значений по умолчанию (шапка)
+                    $ownerRaw = array_key_exists('owner_id', $data) ? (string) ($data['owner_id'] ?? '') : '';
+                    $kindRaw = array_key_exists('kind_id', $data) ? (string) ($data['kind_id'] ?? '') : '';
+                    $statusRaw = array_key_exists('status_id', $data) ? (string) ($data['status_id'] ?? '') : '';
+
+                    $resolvedOwner = $ownerRaw !== '' ? $resolve('owner_id', $ownerRaw) : ($defaultOwnerId > 0 ? $defaultOwnerId : null);
+                    $resolvedKind = $kindRaw !== '' ? $resolve('kind_id', $kindRaw) : ($defaultKindId > 0 ? $defaultKindId : null);
+                    $resolvedStatus = $statusRaw !== '' ? $resolve('status_id', $statusRaw) : ($defaultStatusId > 0 ? $defaultStatusId : null);
+
+                    if (!$resolvedOwner) throw new \RuntimeException('Не удалось определить owner_id');
+                    if (!$resolvedKind) throw new \RuntimeException('Не удалось определить kind_id');
+                    if (!$resolvedStatus) throw new \RuntimeException('Не удалось определить status_id');
+
+                    $data['owner_id'] = (int) $resolvedOwner;
+                    $data['kind_id'] = (int) $resolvedKind;
+                    $data['status_id'] = (int) $resolvedStatus;
 
                     // Координаты
                     $lon = $data['longitude'] ?? null;
@@ -674,7 +703,7 @@ class WellController extends BaseController
                             'lon' => (float) $lon,
                             'lat' => (float) $lat,
                             'owner_id' => $data['owner_id'],
-                            'type_id' => $data['type_id'],
+                            'type_id' => $wellTypeId,
                             'kind_id' => $data['kind_id'],
                             'status_id' => $data['status_id'],
                             'depth' => $data['depth'] ?? null,
@@ -701,7 +730,7 @@ class WellController extends BaseController
                             'x' => (float) $x,
                             'y' => (float) $y,
                             'owner_id' => $data['owner_id'],
-                            'type_id' => $data['type_id'],
+                            'type_id' => $wellTypeId,
                             'kind_id' => $data['kind_id'],
                             'status_id' => $data['status_id'],
                             'depth' => $data['depth'] ?? null,

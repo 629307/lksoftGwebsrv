@@ -315,8 +315,8 @@ const API = {
             return API.post('/wells/import-text/preview', { text, delimiter });
         },
 
-        importText(text, delimiter, mapping, coordinate_system = 'wgs84') {
-            return API.post('/wells/import-text', { text, delimiter, mapping, coordinate_system });
+        importText(text, delimiter, mapping, coordinate_system = 'wgs84', options = {}) {
+            return API.post('/wells/import-text', { text, delimiter, mapping, coordinate_system, ...options });
         },
     },
 

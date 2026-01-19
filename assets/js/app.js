@@ -3614,6 +3614,18 @@ const App = {
                             <option value="|">|</option>
                         </select>
                     </div>
+                    <div class="form-group" style="min-width: 260px;">
+                        <label>Собственник *</label>
+                        <select id="well-import-owner"></select>
+                    </div>
+                    <div class="form-group" style="min-width: 240px;">
+                        <label>Тип *</label>
+                        <select id="well-import-kind"></select>
+                    </div>
+                    <div class="form-group" style="min-width: 240px;">
+                        <label>Состояние *</label>
+                        <select id="well-import-status"></select>
+                    </div>
                     <div class="form-group" style="flex: 1;">
                         <button class="btn btn-secondary" type="button" onclick="App.previewWellTextImport()">
                             <i class="fas fa-eye"></i> Предпросмотр
@@ -3642,16 +3654,84 @@ const App = {
 
         this.showModal('Загрузить: колодцы', content, footer);
 
+        // Загружаем справочники (owner/kind/status) как в форме "Добавить колодец"
+        this.loadWellImportSelects().catch(() => {});
+
         // Автопредпросмотр с задержкой
         setTimeout(() => {
             const ta = document.getElementById('well-import-text');
             const del = document.getElementById('well-import-delimiter');
             const cs = document.getElementById('well-import-coord-system');
+            const owner = document.getElementById('well-import-owner');
+            const kind = document.getElementById('well-import-kind');
+            const status = document.getElementById('well-import-status');
             const handler = () => this.scheduleWellImportPreview();
             ta?.addEventListener('input', handler);
             del?.addEventListener('change', handler);
             cs?.addEventListener('change', handler);
+            owner?.addEventListener('change', () => {
+                this.updateWellImportNumberPrefixes();
+                handler();
+            });
+            kind?.addEventListener('change', handler);
+            status?.addEventListener('change', handler);
         }, 0);
+    },
+
+    async loadWellImportSelects() {
+        const ownerSelect = document.getElementById('well-import-owner');
+        const kindSelect = document.getElementById('well-import-kind');
+        const statusSelect = document.getElementById('well-import-status');
+        if (!ownerSelect || !kindSelect || !statusSelect) return;
+
+        ownerSelect.innerHTML = '<option value="">Загрузка...</option>';
+        kindSelect.innerHTML = '<option value="">Загрузка...</option>';
+        statusSelect.innerHTML = '<option value="">Загрузка...</option>';
+
+        try {
+            const [owners, types, kinds, statuses] = await Promise.all([
+                API.references.all('owners'),
+                API.references.all('object_types'),
+                API.references.all('object_kinds'),
+                API.references.all('object_status'),
+            ]);
+
+            const ownersData = owners?.data || [];
+            ownerSelect.innerHTML = '<option value="">Выберите...</option>' +
+                ownersData.map(o => `<option value="${o.id}" data-code="${o.code || ''}">${o.name}</option>`).join('');
+
+            // type_id для колодцев определяется системным кодом "well"
+            const typesData = types?.data || [];
+            const wellType = typesData.find(t => t.code === 'well');
+            this._wellImportTypeId = wellType?.id || null;
+
+            const kindsData = kinds?.data || [];
+            const filteredKinds = this._wellImportTypeId
+                ? kindsData.filter(k => String(k.object_type_id) === String(this._wellImportTypeId))
+                : kindsData;
+
+            kindSelect.innerHTML = '<option value="">Выберите...</option>' +
+                filteredKinds.map(k => `<option value="${k.id}">${k.name}</option>`).join('');
+
+            const statusData = statuses?.data || [];
+            statusSelect.innerHTML = '<option value="">Выберите...</option>' +
+                statusData.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+
+            this.updateWellImportNumberPrefixes();
+        } catch (e) {
+            ownerSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+            kindSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+            statusSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+        }
+    },
+
+    updateWellImportNumberPrefixes() {
+        const ownerSelect = document.getElementById('well-import-owner');
+        const ownerCode = ownerSelect?.selectedOptions?.[0]?.dataset?.code || '';
+        const prefix = ownerCode ? `ККС-${ownerCode}-` : 'ККС-';
+        document.querySelectorAll('input[data-well-import-number-prefix="1"]').forEach((el) => {
+            el.value = prefix;
+        });
     },
 
     /**
@@ -3693,6 +3773,7 @@ const App = {
 
             this._wellImportMaxCols = maxCols;
             this._wellImportFields = fields;
+            this._wellImportTotalLines = total;
 
             previewEl.classList.remove('hidden');
             previewEl.innerHTML = `
@@ -3704,12 +3785,19 @@ const App = {
                     <table style="width: 100%; border-collapse: collapse;">
                         <thead>
                             <tr>
+                                <th style="text-align:left; padding:6px 8px; border-bottom:1px solid var(--border-color);">Номер</th>
                                 ${Array.from({ length: maxCols }).map((_, i) => `<th style="text-align:left; padding:6px 8px; border-bottom:1px solid var(--border-color);">#${i + 1}</th>`).join('')}
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.map(r => `
+                            ${rows.map((r, idx) => `
                                 <tr>
+                                    <td style="padding:6px 8px; border-bottom:1px solid var(--border-color);">
+                                        <div style="display:flex; gap: 6px; align-items:center;">
+                                            <input type="text" class="well-import-number-prefix" data-well-import-number-prefix="1" id="well-import-number-prefix-${idx}" readonly style="width: 150px; background: var(--bg-tertiary);">
+                                            <input type="text" id="well-import-number-suffix-${idx}" placeholder="Суффикс" style="width: 140px;">
+                                        </div>
+                                    </td>
                                     ${Array.from({ length: maxCols }).map((_, i) => `<td style="padding:6px 8px; border-bottom:1px solid var(--border-color);">${this.escapeHtml(r?.[i] ?? '')}</td>`).join('')}
                                 </tr>
                             `).join('')}
@@ -3717,6 +3805,9 @@ const App = {
                     </table>
                 </div>
             `;
+
+            // выставляем префиксы по выбранному собственнику
+            this.updateWellImportNumberPrefixes();
 
             mappingEl.classList.remove('hidden');
             mappingEl.innerHTML = `
@@ -3762,9 +3853,17 @@ const App = {
         const delimiter = document.getElementById('well-import-delimiter')?.value || ';';
         const coordSystem = document.getElementById('well-import-coord-system')?.value || 'wgs84';
         const resultEl = document.getElementById('well-import-result');
+        const ownerId = document.getElementById('well-import-owner')?.value || '';
+        const kindId = document.getElementById('well-import-kind')?.value || '';
+        const statusId = document.getElementById('well-import-status')?.value || '';
 
         if (!text.trim()) {
             this.notify('Вставьте данные для загрузки', 'warning');
+            return;
+        }
+
+        if (!ownerId || !kindId || !statusId) {
+            this.notify('Выберите Собственник, Тип и Состояние', 'warning');
             return;
         }
 
@@ -3776,8 +3875,26 @@ const App = {
             return;
         }
 
+        // Собираем номера (по введённым суффиксам) для строк предпросмотра
+        const numbers = {};
+        const maxRows = Math.min(this._wellImportTotalLines || 0, 20); // в предпросмотре показываем до 20
+        for (let i = 0; i < maxRows; i++) {
+            const prefix = document.getElementById(`well-import-number-prefix-${i}`)?.value || '';
+            const suffix = document.getElementById(`well-import-number-suffix-${i}`)?.value || '';
+            const full = (prefix + (suffix || '')).trim();
+            if (suffix && full) {
+                // lineNo = i+1
+                numbers[String(i + 1)] = full;
+            }
+        }
+
         try {
-            const resp = await API.wells.importText(text, delimiter, mapping, coordSystem);
+            const resp = await API.wells.importText(text, delimiter, mapping, coordSystem, {
+                default_owner_id: parseInt(ownerId),
+                default_kind_id: parseInt(kindId),
+                default_status_id: parseInt(statusId),
+                numbers,
+            });
             if (!resp?.success) {
                 this.notify(resp?.message || 'Ошибка загрузки', 'error');
                 return;
