@@ -1227,3 +1227,8 @@ tr:hover {
     background: var(--bg-tertiary);
     border-radius: 10px;
 }
+
+/* Map selected object shadow */
+.igs-selected-shadow {
+    filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.75));
+}

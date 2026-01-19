@@ -117,6 +117,7 @@ class UnifiedCableController extends BaseController
             'owner_id' => 'c.owner_id',
             'object_type_id' => 'c.object_type_id',
             'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
         ]);
 
         $where = $filters['where'];

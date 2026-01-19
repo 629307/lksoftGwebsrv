@@ -448,6 +448,13 @@ const App = {
         if (ownerId) filters.owner_id = ownerId;
         if (statusId) filters.status_id = statusId;
         if (contractId) filters.contract_id = contractId;
+
+        // При выборе контракта принудительно включаем слой "Кабели в канализации"
+        if (contractId) {
+            const ductCb = document.getElementById('layer-duct-cables');
+            if (ductCb) ductCb.checked = true;
+            MapManager.toggleLayer('ductCables', true);
+        }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров
         if (groupId) {
@@ -469,7 +476,22 @@ const App = {
         document.getElementById('filter-owner').value = '';
         document.getElementById('filter-status').value = '';
         document.getElementById('filter-contract').value = '';
-        
+
+        // Слои по умолчанию:
+        // активные: Колодцы, Направления каналов, Столбики
+        // неактивные: Кабели в грунте, Воздушные кабели, Кабели в канализации
+        const setLayer = (checkboxId, layerName, checked) => {
+            const cb = document.getElementById(checkboxId);
+            if (cb) cb.checked = checked;
+            MapManager.toggleLayer(layerName, checked);
+        };
+        setLayer('layer-wells', 'wells', true);
+        setLayer('layer-channels', 'channels', true);
+        setLayer('layer-markers', 'markers', true);
+        setLayer('layer-ground-cables', 'groundCables', false);
+        setLayer('layer-aerial-cables', 'aerialCables', false);
+        setLayer('layer-duct-cables', 'ductCables', false);
+
         MapManager.clearFilters();
         this.notify('Фильтры сброшены', 'info');
     },

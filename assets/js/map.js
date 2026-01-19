@@ -24,6 +24,7 @@ const MapManager = {
 
     // Подсветка маршрута (направления) выбранного кабеля
     highlightLayer: null,
+    selectedLayer: null,
     lastClickHits: [],
     hoverHits: [],
     incidentSelectMode: false,
@@ -644,6 +645,9 @@ const MapManager = {
      * Показ информации об объекте
      */
     showObjectInfo(objectType, properties) {
+        // Подсветка выбранного объекта (тень)
+        this.highlightSelectedObject(objectType, properties?.id);
+
         const infoPanel = document.getElementById('object-info-panel');
         const infoTitle = document.getElementById('info-title');
         const infoContent = document.getElementById('info-content');
@@ -716,6 +720,65 @@ const MapManager = {
         infoPanel.classList.remove('hidden');
     },
 
+    findLayerByMeta(objectType, objectId) {
+        if (!this.layers || objectId === undefined || objectId === null) return null;
+        let found = null;
+        const targetId = String(objectId);
+
+        const testLayer = (layer) => {
+            if (found) return;
+            const meta = layer?._igsMeta;
+            if (!meta || !meta.properties) return;
+            if (meta.objectType !== objectType) return;
+            const id = meta.properties?.id;
+            if (id === undefined || id === null) return;
+            if (String(id) === targetId) {
+                found = layer;
+            }
+        };
+
+        const traverse = (layer) => {
+            if (!layer || found) return;
+            if (typeof layer.getLayers === 'function') {
+                layer.getLayers().forEach(traverse);
+                return;
+            }
+            testLayer(layer);
+        };
+
+        Object.values(this.layers).forEach(group => traverse(group));
+        return found;
+    },
+
+    applySelectedShadow(layer, enabled) {
+        const el = layer?._path || layer?._icon;
+        if (!el) return;
+        if (enabled) {
+            el.classList.add('igs-selected-shadow');
+        } else {
+            el.classList.remove('igs-selected-shadow');
+        }
+    },
+
+    setSelectedLayer(layer) {
+        if (this.selectedLayer) {
+            this.applySelectedShadow(this.selectedLayer, false);
+        }
+        this.selectedLayer = layer || null;
+        if (this.selectedLayer) {
+            this.applySelectedShadow(this.selectedLayer, true);
+        }
+    },
+
+    highlightSelectedObject(objectType, objectId) {
+        const layer = this.findLayerByMeta(objectType, objectId);
+        this.setSelectedLayer(layer);
+    },
+
+    clearSelectedObject() {
+        this.setSelectedLayer(null);
+    },
+
     clearHighlight() {
         if (this.highlightLayer) {
             this.map.removeLayer(this.highlightLayer);
@@ -749,6 +812,7 @@ const MapManager = {
      */
     hideObjectInfo() {
         document.getElementById('object-info-panel').classList.add('hidden');
+        this.clearSelectedObject();
     },
 
     /**
