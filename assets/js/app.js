@@ -103,7 +103,7 @@ const App = {
 
         // Переключение системы координат
         document.getElementById('btn-wgs84').addEventListener('click', () => this.setCoordinateSystem('wgs84'));
-        document.getElementById('btn-msk86').addEventListener('click', () => this.setCoordinateSystem('msk86'));
+        document.getElementById('btn-msk86')?.addEventListener('click', () => this.setCoordinateSystem('msk86'));
 
         // Слои карты
         document.querySelectorAll('.layer-item input').forEach(input => {
@@ -366,7 +366,7 @@ const App = {
     setCoordinateSystem(system) {
         MapManager.setCoordinateSystem(system);
         document.getElementById('btn-wgs84').classList.toggle('active', system === 'wgs84');
-        document.getElementById('btn-msk86').classList.toggle('active', system === 'msk86');
+        document.getElementById('btn-msk86')?.classList.toggle('active', system === 'msk86');
     },
 
     /**

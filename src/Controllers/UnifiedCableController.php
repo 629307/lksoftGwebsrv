@@ -274,6 +274,14 @@ class UnifiedCableController extends BaseController
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
 
+        // Контракт может быть пустым (NULL)
+        if (array_key_exists('contract_id', $data)) {
+            $v = $data['contract_id'];
+            if ($v === '' || $v === '0' || $v === 0) {
+                $data['contract_id'] = null;
+            }
+        }
+
         // number генерируется автоматически после вставки, но параметр нужен для SQL с :number
         if (!array_key_exists('number', $data)) {
             $data['number'] = null;
@@ -447,7 +455,21 @@ class UnifiedCableController extends BaseController
             'cable_catalog_id', 'cable_type_id', 'owner_id',
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
-        $data = array_filter($data, fn($v) => $v !== null);
+
+        // Контракт может быть очищен до NULL (в UI: "не указан")
+        if (array_key_exists('contract_id', $data)) {
+            $v = $data['contract_id'];
+            if ($v === '' || $v === '0' || $v === 0) {
+                $data['contract_id'] = null;
+            }
+        }
+
+        // Фильтруем null значения, но сохраняем contract_id если он явно передан (чтобы можно было очистить)
+        foreach (array_keys($data) as $k) {
+            if ($data[$k] === null && $k !== 'contract_id') {
+                unset($data[$k]);
+            }
+        }
 
         $user = Auth::user();
         $data['updated_by'] = $user['id'];
