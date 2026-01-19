@@ -307,47 +307,158 @@ class ReportController extends BaseController
             case 'objects':
                 $filename = 'report_objects_' . date('Y-m-d') . '.csv';
                 $headers = ['Тип объекта', 'Количество', 'Общая длина (м)'];
-                
-                $data[] = ['Колодцы', $this->db->fetch("SELECT COUNT(*) as c FROM wells")['c'], '-'];
-                $data[] = ['Направления каналов', $this->db->fetch("SELECT COUNT(*) as c FROM channel_directions")['c'], '-'];
-                $data[] = ['Каналы', $this->db->fetch("SELECT COUNT(*) as c FROM cable_channels")['c'], '-'];
-                $data[] = ['Столбики', $this->db->fetch("SELECT COUNT(*) as c FROM marker_posts")['c'], '-'];
-                
-                $gc = $this->db->fetch("SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM ground_cables");
+
+                // Учитываем фильтр по собственнику из UI (единственный фильтр на экране)
+                $ownerId = (int) $this->request->query('owner_id', 0);
+                $p = $ownerId > 0 ? ['oid' => $ownerId] : [];
+                $w = $ownerId > 0 ? " WHERE owner_id = :oid" : "";
+
+                $data[] = ['Колодцы', $this->db->fetch("SELECT COUNT(*) as c FROM wells{$w}", $p)['c'], '-'];
+                $data[] = ['Направления каналов', $this->db->fetch("SELECT COUNT(*) as c FROM channel_directions{$w}", $p)['c'], '-'];
+                $data[] = ['Каналы', $this->db->fetch(
+                    $ownerId > 0
+                        ? "SELECT COUNT(*) as c FROM cable_channels cc JOIN channel_directions cd ON cc.direction_id = cd.id WHERE cd.owner_id = :oid"
+                        : "SELECT COUNT(*) as c FROM cable_channels",
+                    $p
+                )['c'], '-'];
+                $data[] = ['Столбики', $this->db->fetch("SELECT COUNT(*) as c FROM marker_posts{$w}", $p)['c'], '-'];
+
+                // По старым таблицам кабелей (как в отчёте на экране)
+                $gc = $this->db->fetch(
+                    "SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM ground_cables" . ($ownerId > 0 ? " WHERE owner_id = :oid" : ""),
+                    $p
+                );
                 $data[] = ['Кабели в грунте', $gc['c'], $gc['l']];
-                
-                $ac = $this->db->fetch("SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM aerial_cables");
+
+                $ac = $this->db->fetch(
+                    "SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM aerial_cables" . ($ownerId > 0 ? " WHERE owner_id = :oid" : ""),
+                    $p
+                );
                 $data[] = ['Воздушные кабели', $ac['c'], $ac['l']];
-                
-                $dc = $this->db->fetch("SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM duct_cables");
+
+                $dc = $this->db->fetch(
+                    "SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM duct_cables" . ($ownerId > 0 ? " WHERE owner_id = :oid" : ""),
+                    $p
+                );
                 $data[] = ['Кабели в канализации', $dc['c'], $dc['l']];
                 break;
 
             case 'contracts':
-                $filename = 'report_contracts_' . date('Y-m-d') . '.csv';
-                $headers = ['Номер', 'Наименование', 'Собственник', 'Начало', 'Окончание', 'Статус', 'Сумма'];
-                
-                $contracts = $this->db->fetchAll(
-                    "SELECT c.number, c.name, o.name as owner, c.start_date, c.end_date, c.status, c.amount
-                     FROM contracts c LEFT JOIN owners o ON c.owner_id = o.id ORDER BY c.start_date DESC"
-                );
-                foreach ($contracts as $c) {
-                    $data[] = array_values($c);
+                $contractId = (int) $this->request->query('contract_id', 0);
+
+                // Если контракт не выбран — выгружаем список контрактов
+                if ($contractId <= 0) {
+                    $filename = 'report_contracts_' . date('Y-m-d') . '.csv';
+                    $headers = ['Номер', 'Наименование', 'Собственник', 'Начало', 'Окончание', 'Статус', 'Сумма'];
+                    $contracts = $this->db->fetchAll(
+                        "SELECT c.number, c.name, o.name as owner, c.start_date, c.end_date, c.status, c.amount
+                         FROM contracts c LEFT JOIN owners o ON c.owner_id = o.id ORDER BY c.start_date DESC"
+                    );
+                    foreach ($contracts as $c) {
+                        $data[] = array_values($c);
+                    }
+                    break;
                 }
+
+                // Контракт выбран — выгружаем всё, что на экране (контракт + 2 таблицы кабелей + статистика)
+                $filename = 'report_contract_' . $contractId . '_' . date('Y-m-d') . '.csv';
+
+                $contract = $this->db->fetch(
+                    "SELECT c.*, o.name as owner_name
+                     FROM contracts c
+                     LEFT JOIN owners o ON c.owner_id = o.id
+                     WHERE c.id = :id",
+                    ['id' => $contractId]
+                );
+                if (!$contract) {
+                    Response::error('Контракт не найден', 404);
+                }
+
+                $contractedCables = $this->db->fetchAll(
+                    "SELECT cb.number,
+                            ot.name as object_type_name,
+                            ct.name as cable_type_name,
+                            cc.marking,
+                            o.name as owner_name,
+                            cb.length_calculated
+                     FROM cables cb
+                     LEFT JOIN object_types ot ON cb.object_type_id = ot.id
+                     LEFT JOIN cable_types ct ON cb.cable_type_id = ct.id
+                     LEFT JOIN cable_catalog cc ON cb.cable_catalog_id = cc.id
+                     LEFT JOIN owners o ON cb.owner_id = o.id
+                     WHERE cb.contract_id = :cid
+                     ORDER BY cb.number",
+                    ['cid' => $contractId]
+                );
+                $contractedCount = count($contractedCables);
+                $contractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $contractedCables));
+                $amount = (float) ($contract['amount'] ?? 0);
+                $costPerMeter = $contractedLength > 0 ? round($amount / $contractedLength, 4) : null;
+
+                $ownerId = (int) ($contract['owner_id'] ?? 0);
+                $uncontractedCables = [];
+                if ($ownerId > 0) {
+                    $uncontractedCables = $this->db->fetchAll(
+                        "SELECT cb.number,
+                                ot.name as object_type_name,
+                                ct.name as cable_type_name,
+                                cc.marking,
+                                o.name as owner_name,
+                                cb.length_calculated
+                         FROM cables cb
+                         LEFT JOIN object_types ot ON cb.object_type_id = ot.id
+                         LEFT JOIN cable_types ct ON cb.cable_type_id = ct.id
+                         LEFT JOIN cable_catalog cc ON cb.cable_catalog_id = cc.id
+                         LEFT JOIN owners o ON cb.owner_id = o.id
+                         WHERE cb.owner_id = :oid AND cb.contract_id IS NULL
+                         ORDER BY cb.number",
+                        ['oid' => $ownerId]
+                    );
+                }
+                $uncontractedCount = count($uncontractedCables);
+                $uncontractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
+
+                // Для "мультисекционного" CSV используем пустой $headers и сами пишем строки ниже
+                $headers = [];
+                $data = [
+                    ['__SECTION__', 'Контракт'],
+                    ['Номер', $contract['number'] ?? ''],
+                    ['Наименование', $contract['name'] ?? ''],
+                    ['Собственник', $contract['owner_name'] ?? ''],
+                    ['Начало', $contract['start_date'] ?? ''],
+                    ['Окончание', $contract['end_date'] ?? ''],
+                    ['Статус', $contract['status'] ?? ''],
+                    ['Сумма', $contract['amount'] ?? ''],
+                    ['__SECTION__', 'Кабеля контракта (статистика)'],
+                    ['Количество', $contractedCount],
+                    ['Общая протяженность (м)', round($contractedLength, 2)],
+                    ['Стоимость за 1 метр', $costPerMeter === null ? '' : $costPerMeter],
+                    ['__SECTION__', 'Кабеля контракта'],
+                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м)'],
+                    ...array_map(fn($c) => array_values($c), $contractedCables),
+                    ['__SECTION__', 'Не законтрактованные кабеля собственника (статистика)'],
+                    ['Количество', $uncontractedCount],
+                    ['Общая протяженность (м)', round($uncontractedLength, 2)],
+                    ['__SECTION__', 'Не законтрактованные кабеля собственника'],
+                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м)'],
+                    ...array_map(fn($c) => array_values($c), $uncontractedCables),
+                ];
                 break;
 
             case 'owners':
                 $filename = 'report_owners_' . date('Y-m-d') . '.csv';
-                $headers = ['Собственник', 'ИНН', 'Колодцы', 'Направления', 'Столбики', 'Кабели в грунте', 'Воздушные', 'В канализации'];
-                
+                // Выгружаем по тем же данным, что возвращает /api/reports/owners
+                $headers = ['Собственник', 'ИНН', 'Колодцы', 'Направления', 'Направления (м)', 'Столбики', 'Кабели', 'Кабели (м)', 'Контракты'];
+
                 $owners = $this->db->fetchAll(
                     "SELECT o.name, o.inn,
-                            (SELECT COUNT(*) FROM wells WHERE owner_id = o.id),
-                            (SELECT COUNT(*) FROM channel_directions WHERE owner_id = o.id),
-                            (SELECT COUNT(*) FROM marker_posts WHERE owner_id = o.id),
-                            (SELECT COUNT(*) FROM ground_cables WHERE owner_id = o.id),
-                            (SELECT COUNT(*) FROM aerial_cables WHERE owner_id = o.id),
-                            (SELECT COUNT(*) FROM duct_cables WHERE owner_id = o.id)
+                            (SELECT COUNT(*) FROM wells WHERE owner_id = o.id) as wells,
+                            (SELECT COUNT(*) FROM channel_directions WHERE owner_id = o.id) as channel_directions,
+                            (SELECT COALESCE(SUM(length_m), 0) FROM channel_directions WHERE owner_id = o.id) as channel_directions_length_m,
+                            (SELECT COUNT(*) FROM marker_posts WHERE owner_id = o.id) as marker_posts,
+                            (SELECT COUNT(*) FROM cables WHERE owner_id = o.id) as cables,
+                            (SELECT COALESCE(SUM(length_calculated), 0) FROM cables WHERE owner_id = o.id) as cables_length_m,
+                            (SELECT COUNT(*) FROM contracts WHERE owner_id = o.id) as contracts
                      FROM owners o ORDER BY o.name"
                 );
                 foreach ($owners as $o) {
@@ -366,8 +477,16 @@ class ReportController extends BaseController
         $output = fopen('php://output', 'w');
         fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
         
-        fputcsv($output, $headers, $delimiter);
+        if (!empty($headers)) {
+            fputcsv($output, $headers, $delimiter);
+        }
         foreach ($data as $row) {
+            // Для мультисекционного экспорта контрактов: пропускаем технические маркеры и вставляем пустую строку
+            if (is_array($row) && isset($row[0]) && $row[0] === '__SECTION__') {
+                fputcsv($output, [], $delimiter);
+                fputcsv($output, [(string) ($row[1] ?? '')], $delimiter);
+                continue;
+            }
             fputcsv($output, $row, $delimiter);
         }
         

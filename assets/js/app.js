@@ -1966,12 +1966,16 @@ const App = {
                     break;
             }
 
+            const exportBtn = (type === 'incidents')
+                ? ''
+                : `<button class="btn btn-secondary" onclick="App.showReportExportModal('${type}')">
+                        <i class="fas fa-download"></i> Выгрузить отчет
+                   </button>`;
+
             container.innerHTML = `
                 <div class="panel-header">
                     <h3>${this.getReportTitle(type)}</h3>
-                    <button class="btn btn-secondary" onclick="App.showReportExportModal('${type}')">
-                        <i class="fas fa-download"></i> Выгрузить отчет
-                    </button>
+                    ${exportBtn}
                 </div>
                 ${html}
             `;
@@ -3182,7 +3186,26 @@ const App = {
     },
 
     showReportExportModal(type) {
-        this.showCsvDelimiterModal('Выгрузить отчет', (delimiter) => API.reports.export(type, delimiter));
+        // В отчёте по инцидентам кнопки выгрузки нет по ТЗ
+        if (type === 'incidents') {
+            this.notify('Выгрузка для отчёта по инцидентам отключена', 'info');
+            return;
+        }
+
+        this.showCsvDelimiterModal('Выгрузить отчет', (delimiter) => {
+            const params = {};
+
+            if (type === 'objects') {
+                const ownerId = document.getElementById('report-objects-owner')?.value || '';
+                if (ownerId) params.owner_id = ownerId;
+            }
+            if (type === 'contracts') {
+                const contractId = document.getElementById('report-contracts-contract')?.value || '';
+                if (contractId) params.contract_id = contractId;
+            }
+
+            return API.reports.export(type, params, delimiter);
+        });
     },
 
     showObjectsExportModal() {

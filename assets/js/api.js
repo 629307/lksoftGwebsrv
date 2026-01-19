@@ -672,8 +672,8 @@ const API = {
             return API.get('/reports/incidents', params);
         },
 
-        export(type, delimiter = ';') {
-            return API.download(`/reports/export/${type}`, { delimiter });
+        export(type, params = {}, delimiter = ';') {
+            return API.download(`/reports/export/${type}`, { ...params, delimiter });
         },
     },
 };
