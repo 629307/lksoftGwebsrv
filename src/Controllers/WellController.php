@@ -38,6 +38,7 @@ class WellController extends BaseController
                        ST_X(w.geom_msk86) as x_msk86, ST_Y(w.geom_msk86) as y_msk86,
                        w.owner_id, w.type_id, w.kind_id, w.status_id,
                        w.depth, w.material, w.installation_date, w.notes,
+                       (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'wells' AND op.object_id = w.id) as photo_count,
                        o.name as owner_name, o.short_name as owner_short,
                        ot.name as type_name, ot.icon as type_icon, ot.color as type_color,
                        ok.name as kind_name,

@@ -36,6 +36,7 @@ class MarkerPostController extends BaseController
                        ST_X(mp.geom_msk86) as x_msk86, ST_Y(mp.geom_msk86) as y_msk86,
                        mp.owner_id, mp.type_id, mp.kind_id, mp.status_id,
                        mp.height_m, mp.material, mp.installation_date, mp.notes,
+                       (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'marker_posts' AND op.object_id = mp.id) as photo_count,
                        o.name as owner_name,
                        ot.name as type_name, ot.color as type_color,
                        ok.name as kind_name,

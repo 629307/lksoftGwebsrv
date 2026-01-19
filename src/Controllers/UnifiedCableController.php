@@ -49,6 +49,7 @@ class UnifiedCableController extends BaseController
                        c.owner_id, o.name as owner_name,
                        c.object_type_id, ot.code as object_type_code, ot.name as object_type_name,
                        c.status_id, os.name as status_name,
+                       (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'cables' AND op.object_id = c.id) as photo_count,
                        c.length_calculated, c.length_declared,
                        c.installation_date, c.notes,
                        c.created_at, c.updated_at

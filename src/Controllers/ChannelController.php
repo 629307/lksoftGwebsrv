@@ -42,6 +42,7 @@ class ChannelController extends BaseController
                        ST_Length(cd.geom_wgs84::geography) as calculated_length,
                        cd.owner_id, cd.type_id, cd.start_well_id, cd.end_well_id,
                        cd.length_m, cd.notes,
+                       (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'channel_directions' AND op.object_id = cd.id) as photo_count,
                        o.name as owner_name,
                        ot.name as type_name,
                        sw.number as start_well_number,
@@ -429,6 +430,7 @@ class ChannelController extends BaseController
 
         $sql = "SELECT cc.id, cc.channel_number, cc.direction_id, cc.kind_id, cc.status_id,
                        cc.diameter_mm, cc.material, cc.notes,
+                       (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'cable_channels' AND op.object_id = cc.id) as photo_count,
                        cd.number as direction_number,
                        ok.name as kind_name,
                        os.name as status_name, os.color as status_color,

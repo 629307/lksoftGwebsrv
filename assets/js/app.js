@@ -668,6 +668,11 @@ const App = {
             <tr data-id="${row.id}">
                 ${columns.map(col => `<td>${row[col] || '-'}</td>`).join('')}
                 <td>
+                    ${Number(row.photo_count || 0) > 0 ? `
+                        <button class="btn btn-sm btn-secondary" onclick="App.showAttachedPhotos(${row.id})" title="Посмотреть прикреплённые фото">
+                            <i class="fas fa-images"></i>
+                        </button>
+                    ` : ''}
                     <button class="btn btn-sm btn-secondary" onclick="App.viewObject(${row.id})" title="Показать на карте">
                         <i class="fas fa-eye"></i>
                     </button>
@@ -677,6 +682,93 @@ const App = {
                 </td>
             </tr>
         `).join('');
+    },
+
+    getPhotosObjectTable(tab) {
+        const map = {
+            wells: 'wells',
+            directions: 'channel_directions',
+            channels: 'cable_channels',
+            markers: 'marker_posts',
+            unified_cables: 'cables',
+        };
+        return map[tab] || null;
+    },
+
+    async showAttachedPhotos(objectId) {
+        const table = this.getPhotosObjectTable(this.currentTab);
+        if (!table) {
+            this.notify('Для этого типа объектов фотографии недоступны', 'warning');
+            return;
+        }
+        try {
+            const resp = await API.photos.byObject(table, objectId);
+            if (!resp?.success) {
+                this.notify(resp?.message || 'Ошибка загрузки фото', 'error');
+                return;
+            }
+            const photos = resp.data || [];
+            if (!photos.length) {
+                this.notify('Фотографии не найдены', 'info');
+                return;
+            }
+            this._photoGallery = {
+                table,
+                objectId,
+                photos,
+                title: 'Прикреплённые фотографии',
+            };
+            this.showPhotoGallery();
+        } catch (e) {
+            this.notify('Ошибка загрузки фото', 'error');
+        }
+    },
+
+    showPhotoGallery() {
+        const ctx = this._photoGallery;
+        if (!ctx || !ctx.photos?.length) return;
+
+        const content = `
+            <div class="photo-gallery-grid">
+                ${ctx.photos.map((p, idx) => `
+                    <div class="photo-thumb" onclick="App.openGalleryPhoto(${idx})" title="Открыть">
+                        <img src="${p.thumbnail_url || p.url}" alt="${this.escapeHtml(p.original_filename || p.filename || 'Фото')}">
+                        <div class="photo-thumb-meta">
+                            <div class="photo-thumb-name">${this.escapeHtml(p.original_filename || p.filename || 'Фото')}</div>
+                            ${p.description ? `<div class="photo-thumb-desc">${this.escapeHtml(p.description)}</div>` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        const footer = `
+            <button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>
+        `;
+        this.showModal(ctx.title || 'Фотографии', content, footer);
+    },
+
+    openGalleryPhoto(index) {
+        const ctx = this._photoGallery;
+        const p = ctx?.photos?.[index];
+        if (!p) return;
+        ctx.activeIndex = index;
+
+        const filename = this.escapeHtml(p.original_filename || p.filename || 'photo');
+        const img = `
+            <div class="photo-viewer">
+                <img src="${p.url}" alt="${filename}">
+                ${p.description ? `<div class="text-muted" style="margin-top:10px;">${this.escapeHtml(p.description)}</div>` : ''}
+            </div>
+        `;
+        const footer = `
+            <a class="btn btn-secondary" href="${p.url}" download="${filename}" target="_blank" rel="noopener">
+                <i class="fas fa-download"></i> Скачать
+            </a>
+            <button class="btn btn-secondary" onclick="App.showPhotoGallery()">Назад</button>
+            <button class="btn btn-primary" onclick="App.hideModal()">Закрыть</button>
+        `;
+        this.showModal(filename, img, footer);
     },
 
     /**
