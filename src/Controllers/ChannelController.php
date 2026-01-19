@@ -421,6 +421,7 @@ class ChannelController extends BaseController
             'direction_id' => 'cc.direction_id',
             'kind_id' => 'cc.kind_id',
             'status_id' => 'cc.status_id',
+            '_search' => ['cc.channel_number::text', 'cc.notes', 'cd.number'],
         ]);
 
         $where = $filters['where'];
@@ -451,6 +452,110 @@ class ChannelController extends BaseController
         $data = $this->db->fetchAll($sql, $params);
 
         Response::paginated($data, $total, $pagination['page'], $pagination['limit']);
+    }
+
+    /**
+     * GET /api/channel-directions/export
+     * Экспорт направлений в CSV
+     */
+    public function exportDirections(): void
+    {
+        $filters = $this->buildFilters([
+            'owner_id' => 'cd.owner_id',
+            'type_id' => 'cd.type_id',
+            'start_well_id' => 'cd.start_well_id',
+            'end_well_id' => 'cd.end_well_id',
+            '_search' => ['cd.number', 'cd.notes'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
+
+        $sql = "SELECT cd.number,
+                       sw.number as start_well,
+                       ew.number as end_well,
+                       o.name as owner,
+                       ot.name as type,
+                       cd.length_m,
+                       ST_Length(cd.geom_wgs84::geography) as calculated_length,
+                       (SELECT COUNT(*) FROM cable_channels WHERE direction_id = cd.id) as channel_count,
+                       cd.notes
+                FROM channel_directions cd
+                LEFT JOIN owners o ON cd.owner_id = o.id
+                LEFT JOIN object_types ot ON cd.type_id = ot.id
+                LEFT JOIN wells sw ON cd.start_well_id = sw.id
+                LEFT JOIN wells ew ON cd.end_well_id = ew.id";
+
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+        $sql .= " ORDER BY cd.number";
+
+        $data = $this->db->fetchAll($sql, $params);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="channel_directions_' . date('Y-m-d') . '.csv"');
+
+        $output = fopen('php://output', 'w');
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        fputcsv($output, ['Номер', 'Начальный колодец', 'Конечный колодец', 'Собственник', 'Вид', 'Длина (м)', 'Длина расч. (м)', 'Каналов', 'Примечания'], $delimiter);
+        foreach ($data as $row) {
+            fputcsv($output, array_values($row), $delimiter);
+        }
+        fclose($output);
+        exit;
+    }
+
+    /**
+     * GET /api/cable-channels/export
+     * Экспорт каналов в CSV
+     */
+    public function exportChannels(): void
+    {
+        $filters = $this->buildFilters([
+            'direction_id' => 'cc.direction_id',
+            'kind_id' => 'cc.kind_id',
+            'status_id' => 'cc.status_id',
+            '_search' => ['cc.channel_number::text', 'cc.notes', 'cd.number'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
+
+        $sql = "SELECT cd.number as direction_number,
+                       cc.channel_number,
+                       ok.name as kind,
+                       os.name as status,
+                       cc.diameter_mm,
+                       cc.material,
+                       cc.notes
+                FROM cable_channels cc
+                LEFT JOIN channel_directions cd ON cc.direction_id = cd.id
+                LEFT JOIN object_kinds ok ON cc.kind_id = ok.id
+                LEFT JOIN object_status os ON cc.status_id = os.id";
+
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+        $sql .= " ORDER BY cd.number, cc.channel_number";
+
+        $data = $this->db->fetchAll($sql, $params);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="cable_channels_' . date('Y-m-d') . '.csv"');
+
+        $output = fopen('php://output', 'w');
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        fputcsv($output, ['Направление', '№ канала', 'Тип', 'Состояние', 'Диаметр (мм)', 'Материал', 'Примечания'], $delimiter);
+        foreach ($data as $row) {
+            fputcsv($output, array_values($row), $delimiter);
+        }
+        fclose($output);
+        exit;
     }
 
     /**

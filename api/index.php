@@ -184,6 +184,7 @@ $router->delete('/api/wells/{id}', [WellController::class, 'destroy'], ['auth'])
 // Направления каналов
 $router->get('/api/channel-directions', [ChannelController::class, 'index'], ['auth']);
 $router->get('/api/channel-directions/geojson', [ChannelController::class, 'geojson'], ['auth']);
+$router->get('/api/channel-directions/export', [ChannelController::class, 'exportDirections'], ['auth']);
 $router->get('/api/channel-directions/{id}', [ChannelController::class, 'show'], ['auth']);
 $router->post('/api/channel-directions', [ChannelController::class, 'store'], ['auth']);
 $router->put('/api/channel-directions/{id}', [ChannelController::class, 'update'], ['auth']);
@@ -192,6 +193,7 @@ $router->post('/api/channel-directions/{id}/channels', [ChannelController::class
 
 // Каналы (дочерние объекты направлений)
 $router->get('/api/cable-channels', [ChannelController::class, 'listChannels'], ['auth']);
+$router->get('/api/cable-channels/export', [ChannelController::class, 'exportChannels'], ['auth']);
 $router->get('/api/cable-channels/{id}', [ChannelController::class, 'showChannel'], ['auth']);
 $router->put('/api/cable-channels/{id}', [ChannelController::class, 'updateChannel'], ['auth']);
 $router->delete('/api/cable-channels/{id}', [ChannelController::class, 'deleteChannel'], ['auth']);
@@ -210,6 +212,7 @@ $router->delete('/api/cables/{type}/{id}', [CableController::class, 'destroy'], 
 $router->get('/api/unified-cables/object-types', [UnifiedCableController::class, 'objectTypes'], ['auth']);
 $router->get('/api/unified-cables/geojson', [UnifiedCableController::class, 'geojson'], ['auth']);
 $router->get('/api/unified-cables/stats', [UnifiedCableController::class, 'stats'], ['auth']);
+$router->get('/api/unified-cables/export', [UnifiedCableController::class, 'export'], ['auth']);
 $router->get('/api/unified-cables', [UnifiedCableController::class, 'index'], ['auth']);
 $router->get('/api/unified-cables/by-well/{id}', [UnifiedCableController::class, 'byWell'], ['auth']);
 $router->get('/api/unified-cables/by-direction/{id}', [UnifiedCableController::class, 'byDirection'], ['auth']);
@@ -224,6 +227,7 @@ $router->delete('/api/unified-cables/{id}', [UnifiedCableController::class, 'des
 // Столбики
 $router->get('/api/marker-posts', [MarkerPostController::class, 'index'], ['auth']);
 $router->get('/api/marker-posts/geojson', [MarkerPostController::class, 'geojson'], ['auth']);
+$router->get('/api/marker-posts/export', [MarkerPostController::class, 'export'], ['auth']);
 $router->get('/api/marker-posts/{id}', [MarkerPostController::class, 'show'], ['auth']);
 $router->post('/api/marker-posts', [MarkerPostController::class, 'store'], ['auth']);
 $router->put('/api/marker-posts/{id}', [MarkerPostController::class, 'update'], ['auth']);
@@ -242,6 +246,7 @@ $router->post('/api/incidents/{id}/documents', [IncidentDocumentController::clas
 
 // Группы
 $router->get('/api/groups', [GroupController::class, 'index'], ['auth']);
+$router->get('/api/groups/export', [GroupController::class, 'export'], ['auth']);
 $router->get('/api/groups/{id}', [GroupController::class, 'show'], ['auth']);
 $router->get('/api/groups/{id}/geojson', [GroupController::class, 'geojson'], ['auth']);
 $router->post('/api/groups', [GroupController::class, 'store'], ['auth']);

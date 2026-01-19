@@ -54,6 +54,55 @@ class GroupController extends BaseController
     }
 
     /**
+     * GET /api/groups/export
+     * Экспорт групп в CSV
+     */
+    public function export(): void
+    {
+        $filters = $this->buildFilters([
+            'group_type' => 'g.group_type',
+            '_search' => ['g.number', 'g.name', 'g.description'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
+
+        $sql = "SELECT g.number, g.name, g.description, g.group_type,
+                       u.login as created_by_login,
+                       g.created_at,
+                       (SELECT COUNT(*) FROM group_wells WHERE group_id = g.id) +
+                       (SELECT COUNT(*) FROM group_channel_directions WHERE group_id = g.id) +
+                       (SELECT COUNT(*) FROM group_ground_cables WHERE group_id = g.id) +
+                       (SELECT COUNT(*) FROM group_aerial_cables WHERE group_id = g.id) +
+                       (SELECT COUNT(*) FROM group_duct_cables WHERE group_id = g.id) +
+                       (SELECT COUNT(*) FROM group_marker_posts WHERE group_id = g.id) as object_count
+                FROM object_groups g
+                LEFT JOIN users u ON g.created_by = u.id";
+
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+        $sql .= " ORDER BY g.name";
+
+        $data = $this->db->fetchAll($sql, $params);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename=\"groups_' . date('Y-m-d') . '.csv\"');
+
+        $output = fopen('php://output', 'w');
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        fputcsv($output, ['Номер', 'Название', 'Описание', 'Тип группы', 'Создал', 'Создано', 'Объектов'], $delimiter);
+        foreach ($data as $row) {
+            fputcsv($output, array_values($row), $delimiter);
+        }
+
+        fclose($output);
+        exit;
+    }
+
+    /**
      * GET /api/groups/{id}
      */
     public function show(string $id): void

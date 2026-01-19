@@ -413,9 +413,11 @@ class WellController extends BaseController
     public function export(): void
     {
         $filters = $this->buildFilters([
-            'owner_id' => 'owner_id',
-            'type_id' => 'type_id',
-            'status_id' => 'status_id',
+            'owner_id' => 'w.owner_id',
+            'type_id' => 'w.type_id',
+            'kind_id' => 'w.kind_id',
+            'status_id' => 'w.status_id',
+            '_search' => ['w.number', 'w.notes'],
         ]);
 
         $where = $filters['where'];

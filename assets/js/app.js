@@ -3186,7 +3186,38 @@ const App = {
     },
 
     showObjectsExportModal() {
-        this.showCsvDelimiterModal('Выгрузить', (delimiter) => API.download('/wells/export', { delimiter }));
+        this.showCsvDelimiterModal('Выгрузить', (delimiter) => this.exportCurrentObjects(delimiter));
+    },
+
+    exportCurrentObjects(delimiter) {
+        const search = document.getElementById('search-objects')?.value?.trim() || '';
+        const params = {};
+        if (search) params.search = search;
+        params.delimiter = delimiter;
+
+        switch (this.currentTab) {
+            case 'wells':
+                return API.download('/wells/export', params);
+            case 'directions':
+                return API.download('/channel-directions/export', params);
+            case 'channels':
+                return API.download('/cable-channels/export', params);
+            case 'markers':
+                return API.download('/marker-posts/export', params);
+            case 'unified_cables': {
+                const ot = document.getElementById('cables-filter-object-type')?.value;
+                const owner = document.getElementById('cables-filter-owner')?.value;
+                const contract = document.getElementById('cables-filter-contract')?.value;
+                if (ot) params.object_type_id = ot;
+                if (owner) params.owner_id = owner;
+                if (contract) params.contract_id = contract;
+                return API.download('/unified-cables/export', params);
+            }
+            case 'groups':
+                return API.download('/groups/export', params);
+            default:
+                return API.download('/wells/export', params);
+        }
     },
 
     /**

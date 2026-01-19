@@ -62,6 +62,66 @@ class MarkerPostController extends BaseController
     }
 
     /**
+     * GET /api/marker-posts/export
+     * Экспорт столбиков в CSV
+     */
+    public function export(): void
+    {
+        $filters = $this->buildFilters([
+            'owner_id' => 'mp.owner_id',
+            'type_id' => 'mp.type_id',
+            'kind_id' => 'mp.kind_id',
+            'status_id' => 'mp.status_id',
+            '_search' => ['mp.number', 'mp.notes'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
+
+        $sql = "SELECT mp.number,
+                       ST_X(mp.geom_wgs84) as longitude, ST_Y(mp.geom_wgs84) as latitude,
+                       ST_X(mp.geom_msk86) as x_msk86, ST_Y(mp.geom_msk86) as y_msk86,
+                       o.name as owner,
+                       ot.name as type,
+                       ok.name as kind,
+                       os.name as status,
+                       mp.height_m,
+                       mp.material,
+                       mp.installation_date,
+                       mp.notes
+                FROM marker_posts mp
+                LEFT JOIN owners o ON mp.owner_id = o.id
+                LEFT JOIN object_types ot ON mp.type_id = ot.id
+                LEFT JOIN object_kinds ok ON mp.kind_id = ok.id
+                LEFT JOIN object_status os ON mp.status_id = os.id";
+
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+        $sql .= " ORDER BY mp.number";
+
+        $data = $this->db->fetchAll($sql, $params);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="marker_posts_' . date('Y-m-d') . '.csv"');
+
+        $output = fopen('php://output', 'w');
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        fputcsv($output, [
+            'Номер', 'Долгота', 'Широта', 'X (МСК86)', 'Y (МСК86)',
+            'Собственник', 'Вид', 'Тип', 'Состояние', 'Высота (м)', 'Материал', 'Дата установки', 'Примечания'
+        ], $delimiter);
+
+        foreach ($data as $row) {
+            fputcsv($output, array_values($row), $delimiter);
+        }
+        fclose($output);
+        exit;
+    }
+
+    /**
      * GET /api/marker-posts/geojson
      * GeoJSON столбиков для карты
      */

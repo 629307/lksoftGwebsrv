@@ -74,6 +74,72 @@ class UnifiedCableController extends BaseController
     }
 
     /**
+     * GET /api/unified-cables/export
+     * Экспорт унифицированных кабелей в CSV (с учётом фильтров и поиска)
+     */
+    public function export(): void
+    {
+        $filters = $this->buildFilters([
+            'owner_id' => 'c.owner_id',
+            'object_type_id' => 'c.object_type_id',
+            'cable_type_id' => 'c.cable_type_id',
+            'status_id' => 'c.status_id',
+            'contract_id' => 'c.contract_id',
+            '_search' => ['c.number', 'c.notes', 'cc.marking'],
+        ]);
+
+        $where = $filters['where'];
+        $params = $filters['params'];
+        $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
+
+        $sql = "SELECT c.number,
+                       ot.name as object_type,
+                       ct.name as cable_type,
+                       cc.marking as cable_marking,
+                       cc.fiber_count,
+                       o.name as owner,
+                       con.number as contract_number,
+                       con.name as contract_name,
+                       os.name as status,
+                       c.length_calculated,
+                       c.length_declared,
+                       c.installation_date,
+                       c.notes
+                FROM cables c
+                LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id
+                LEFT JOIN cable_types ct ON c.cable_type_id = ct.id
+                LEFT JOIN owners o ON c.owner_id = o.id
+                LEFT JOIN object_types ot ON c.object_type_id = ot.id
+                LEFT JOIN object_status os ON c.status_id = os.id
+                LEFT JOIN contracts con ON c.contract_id = con.id";
+
+        if ($where) {
+            $sql .= " WHERE {$where}";
+        }
+        $sql .= " ORDER BY c.number";
+
+        $data = $this->db->fetchAll($sql, $params);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="cables_' . date('Y-m-d') . '.csv"');
+
+        $output = fopen('php://output', 'w');
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+
+        fputcsv($output, [
+            'Номер', 'Вид объекта', 'Тип кабеля', 'Маркировка', 'Волокон',
+            'Собственник', 'Контракт №', 'Контракт', 'Состояние',
+            'Длина расч. (м)', 'Длина заявл. (м)', 'Дата установки', 'Примечания'
+        ], $delimiter);
+
+        foreach ($data as $row) {
+            fputcsv($output, array_values($row), $delimiter);
+        }
+        fclose($output);
+        exit;
+    }
+
+    /**
      * GET /api/unified-cables/stats
      * Агрегации по текущему фильтру (кол-во и сумма длины)
      */
