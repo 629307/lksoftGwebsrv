@@ -556,6 +556,10 @@ const API = {
             return API.get('/groups', params);
         },
 
+        byObject(type, objectId) {
+            return API.get('/groups/by-object', { type, object_id: objectId });
+        },
+
         get(id) {
             return API.get(`/groups/${id}`);
         },

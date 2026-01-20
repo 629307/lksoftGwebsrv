@@ -89,7 +89,12 @@ const MapManager = {
         };
 
         try {
-            (this.layers?.wells?.getLayers?.() || []).forEach((layer) => {
+            const traverse = (layer) => {
+                if (!layer) return;
+                if (typeof layer.getLayers === 'function') {
+                    (layer.getLayers() || []).forEach(traverse);
+                    return;
+                }
                 const meta = layer?._igsMeta;
                 if (!meta || meta.objectType !== 'well') return;
                 const coords = layer.getLatLng?.();
@@ -99,7 +104,8 @@ const MapManager = {
                 const base = props.type_color || this.colors.wells;
                 const color = this.getPlannedOverrideColor(props, base);
                 addLabel(coords, number, color);
-            });
+            };
+            Object.values(this.layers || {}).forEach(traverse);
         } catch (_) {
             // ignore
         }
@@ -783,6 +789,12 @@ const MapManager = {
             }
         }
 
+        // Группы (подгружаем асинхронно)
+        html += `<div class="info-row">
+            <span class="info-label">Группы:</span>
+            <span class="info-value" id="info-groups">Загрузка...</span>
+        </div>`;
+
         // Доп. действия для карты
         if (objectType === 'well') {
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
@@ -824,6 +836,13 @@ const MapManager = {
         }
         
         infoPanel.classList.remove('hidden');
+
+        // Загружаем группы (после того как panel.dataset заполнен)
+        setTimeout(() => {
+            try {
+                window.App?.loadObjectGroupsIntoInfo?.(objectType, properties.id);
+            } catch (_) {}
+        }, 0);
     },
 
     findLayerByMeta(objectType, objectId) {
@@ -929,9 +948,6 @@ const MapManager = {
         const lng = e.latlng.lng.toFixed(6);
         
         document.getElementById('coords-wgs84').textContent = `WGS84: ${lat}, ${lng}`;
-        
-        // Для МСК86 нужна конвертация на сервере (упрощённо показываем заглушку)
-        document.getElementById('coords-msk86').textContent = `МСК86: -`;
     },
 
     /**
@@ -1451,16 +1467,9 @@ const MapManager = {
      * Переключение системы координат
      */
     setCoordinateSystem(system) {
-        this.currentCoordinateSystem = system;
-        
-        if (system === 'msk86') {
-            // Скрываем OpenStreetMap
-            this.map.removeLayer(this.baseLayer);
-            // Можно добавить другой базовый слой для МСК86
-        } else {
-            // Показываем OpenStreetMap
-            this.baseLayer.addTo(this.map);
-        }
+        // В системе используется только WGS84
+        this.currentCoordinateSystem = 'wgs84';
+        this.baseLayer.addTo(this.map);
     },
 
     /**

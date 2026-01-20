@@ -11,6 +11,51 @@ use App\Core\Auth;
 class GroupController extends BaseController
 {
     /**
+     * GET /api/groups/by-object?type=well&object_id=123
+     * Группы, в которые входит объект
+     */
+    public function byObject(): void
+    {
+        $type = (string) $this->request->query('type', '');
+        $objectId = (int) $this->request->query('object_id', 0);
+
+        if ($type === '' || $objectId <= 0) {
+            Response::error('Некорректные параметры', 422);
+        }
+
+        $tables = [
+            'well' => ['group_wells', 'well_id'],
+            'channel_direction' => ['group_channel_directions', 'channel_direction_id'],
+            'cable_channel' => ['group_cable_channels', 'cable_channel_id'],
+            'ground_cable' => ['group_ground_cables', 'ground_cable_id'],
+            'aerial_cable' => ['group_aerial_cables', 'aerial_cable_id'],
+            'duct_cable' => ['group_duct_cables', 'duct_cable_id'],
+            'unified_cable' => ['group_unified_cables', 'unified_cable_id'],
+            'marker_post' => ['group_marker_posts', 'marker_post_id'],
+        ];
+
+        if (!isset($tables[$type])) {
+            Response::success([]);
+        }
+
+        [$table, $column] = $tables[$type];
+
+        try {
+            $rows = $this->db->fetchAll(
+                "SELECT g.id, g.number, g.name
+                 FROM {$table} t
+                 JOIN object_groups g ON t.group_id = g.id
+                 WHERE t.{$column} = :id
+                 ORDER BY g.name",
+                ['id' => $objectId]
+            );
+            Response::success($rows);
+        } catch (\Throwable $e) {
+            // Таблица может отсутствовать (создаётся лениво)
+            Response::success([]);
+        }
+    }
+    /**
      * GET /api/groups
      * Список групп
      */

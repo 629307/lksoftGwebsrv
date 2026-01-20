@@ -125,9 +125,8 @@ const App = {
         document.getElementById('btn-theme-dark').addEventListener('click', () => this.setTheme('dark'));
         document.getElementById('btn-theme-grey').addEventListener('click', () => this.setTheme('grey'));
 
-        // Переключение системы координат
+        // Система координат: только WGS84
         document.getElementById('btn-wgs84').addEventListener('click', () => this.setCoordinateSystem('wgs84'));
-        document.getElementById('btn-msk86')?.addEventListener('click', () => this.setCoordinateSystem('msk86'));
 
         // Слои карты
         document.querySelectorAll('.layer-item input').forEach(input => {
@@ -462,7 +461,6 @@ const App = {
     setCoordinateSystem(system) {
         MapManager.setCoordinateSystem(system);
         document.getElementById('btn-wgs84').classList.toggle('active', system === 'wgs84');
-        document.getElementById('btn-msk86')?.classList.toggle('active', system === 'msk86');
     },
 
     /**
@@ -1164,13 +1162,6 @@ const App = {
                             <label>Номер *</label>
                             <input type="text" name="number" value="${obj.number || ''}" required>
                         </div>
-                        <div class="form-group">
-                            <label>Система координат</label>
-                            <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
-                                <option value="wgs84" selected>WGS84 (широта/долгота)</option>
-                                <option value="msk86">МСК86 Зона 4 (X/Y)</option>
-                            </select>
-                        </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
                                 <label>Широта (WGS84)</label>
@@ -1179,16 +1170,6 @@ const App = {
                             <div class="form-group">
                                 <label>Долгота (WGS84)</label>
                                 <input type="number" name="longitude" step="0.000001" value="${obj.longitude || ''}">
-                            </div>
-                        </div>
-                        <div id="coords-msk86-inputs" style="display: none;">
-                            <div class="form-group">
-                                <label>X (МСК86)</label>
-                                <input type="number" name="x_msk86" step="0.01" value="${obj.x_msk86 || ''}">
-                            </div>
-                            <div class="form-group">
-                                <label>Y (МСК86)</label>
-                                <input type="number" name="y_msk86" step="0.01" value="${obj.y_msk86 || ''}">
                             </div>
                         </div>
                         <div class="form-group">
@@ -1221,13 +1202,6 @@ const App = {
                             <label>Номер</label>
                             <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
-                        <div class="form-group">
-                            <label>Система координат</label>
-                            <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
-                                <option value="wgs84" selected>WGS84 (широта/долгота)</option>
-                                <option value="msk86">МСК86 Зона 4 (X/Y)</option>
-                            </select>
-                        </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
                                 <label>Широта (WGS84)</label>
@@ -1236,16 +1210,6 @@ const App = {
                             <div class="form-group">
                                 <label>Долгота (WGS84)</label>
                                 <input type="number" name="longitude" step="0.000001" value="${obj.longitude || ''}">
-                            </div>
-                        </div>
-                        <div id="coords-msk86-inputs" style="display: none;">
-                            <div class="form-group">
-                                <label>X (МСК86)</label>
-                                <input type="number" name="x_msk86" step="0.01" value="${obj.x_msk86 || ''}">
-                            </div>
-                            <div class="form-group">
-                                <label>Y (МСК86)</label>
-                                <input type="number" name="y_msk86" step="0.01" value="${obj.y_msk86 || ''}">
                             </div>
                         </div>
                         <div class="form-group">
@@ -1413,13 +1377,6 @@ const App = {
 
                         <div id="cable-geometry-block" style="display: none;">
                             <div class="form-group">
-                                <label>Система координат</label>
-                                <select id="cable-coord-system">
-                                    <option value="wgs84">WGS84 (долгота, широта)</option>
-                                    <option value="msk86">МСК86 Зона 4 (X, Y)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
                                 <label>Координаты (точки ломаной)</label>
                                 <div id="cable-coordinates-list"></div>
                                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.addCableCoordinate()">
@@ -1510,6 +1467,22 @@ const App = {
                 );
             }
 
+            // Группы, в которые входит объект (read-only)
+            if (type !== 'groups' && formHtml.includes('</form>')) {
+                formHtml = formHtml.replace(
+                    '</form>',
+                    `
+                        <hr>
+                        <h4>Группы</h4>
+                        <div class="form-group">
+                            <label>Входит в группы</label>
+                            <div id="edit-object-groups" class="text-muted">Загрузка...</div>
+                        </div>
+                    </form>
+                    `
+                );
+            }
+
             const footer = `
                 <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
                 <button class="btn btn-danger" onclick="App.deleteObject('${type}', ${id})" style="margin-right: auto;">
@@ -1526,6 +1499,11 @@ const App = {
             // Подгружаем фотографии (если блок есть)
             if (photoTable) {
                 this.loadObjectPhotos(photoTable, obj.id).catch(() => {});
+            }
+
+            // Подгружаем группы (если блок есть)
+            if (type !== 'groups') {
+                this.loadObjectGroupsIntoEditForm(type, id).catch(() => {});
             }
             
         } catch (error) {
@@ -1737,7 +1715,7 @@ const App = {
                             const coordinates = this.collectCableCoordinates();
                             if (coordinates.length >= 2) {
                                 data.coordinates = coordinates;
-                                data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
+                                data.coordinate_system = 'wgs84';
                             }
                         } else if (objectTypeCode === 'cable_duct') {
                             const channelsSelect = document.getElementById('cable-route-channels');
@@ -2017,6 +1995,61 @@ const App = {
             this.showEditObjectModal('groups', gid);
         } catch (e) {
             this.notify(e?.message || 'Ошибка добавления', 'error');
+        }
+    },
+
+    groupObjectTypeForContext(objectTypeOrTab) {
+        const map = {
+            // map object types
+            well: 'well',
+            channel_direction: 'channel_direction',
+            marker_post: 'marker_post',
+            unified_cable: 'unified_cable',
+            ground_cable: 'ground_cable',
+            aerial_cable: 'aerial_cable',
+            duct_cable: 'duct_cable',
+            cable_channel: 'cable_channel',
+
+            // tabs/modals
+            wells: 'well',
+            directions: 'channel_direction',
+            markers: 'marker_post',
+            unified_cables: 'unified_cable',
+            channels: 'cable_channel',
+        };
+        return map[objectTypeOrTab] || objectTypeOrTab;
+    },
+
+    async loadObjectGroupsIntoInfo(objectType, objectId) {
+        const panel = document.getElementById('object-info-panel');
+        const valueEl = document.getElementById('info-groups');
+        if (!panel || !valueEl) return;
+
+        // если пользователь уже выбрал другой объект — не обновляем
+        if (String(panel.dataset.objectType) !== String(objectType) || String(panel.dataset.objectId) !== String(objectId)) return;
+
+        const type = this.groupObjectTypeForContext(objectType);
+        try {
+            const resp = await API.groups.byObject(type, objectId);
+            const rows = resp?.data || resp || [];
+            const names = (rows || []).map(g => (g.number ? `${g.number} — ${g.name}` : (g.name || g.id))).filter(Boolean);
+            valueEl.textContent = names.length ? names.join(', ') : '-';
+        } catch (e) {
+            valueEl.textContent = '-';
+        }
+    },
+
+    async loadObjectGroupsIntoEditForm(tabType, objectId) {
+        const el = document.getElementById('edit-object-groups');
+        if (!el) return;
+        const type = this.groupObjectTypeForContext(tabType);
+        try {
+            const resp = await API.groups.byObject(type, objectId);
+            const rows = resp?.data || resp || [];
+            const names = (rows || []).map(g => (g.number ? `${g.number} — ${g.name}` : (g.name || g.id))).filter(Boolean);
+            el.textContent = names.length ? names.join(', ') : '-';
+        } catch (e) {
+            el.textContent = '-';
         }
     },
 
@@ -2838,13 +2871,6 @@ const App = {
                         </div>
                         <p class="text-muted">Префикс формируется автоматически по собственнику</p>
                     </div>
-                    <div class="form-group">
-                        <label>Система координат</label>
-                        <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
-                            <option value="wgs84" selected>WGS84 (широта/долгота)</option>
-                            <option value="msk86">МСК86 Зона 4 (X/Y)</option>
-                        </select>
-                    </div>
                     <div id="coords-wgs84-inputs">
                         <div class="form-group">
                             <label>Широта (WGS84)</label>
@@ -2853,16 +2879,6 @@ const App = {
                         <div class="form-group">
                             <label>Долгота (WGS84)</label>
                             <input type="number" name="longitude" step="0.000001" value="${lng || ''}" placeholder="37.123456">
-                        </div>
-                    </div>
-                    <div id="coords-msk86-inputs" style="display: none;">
-                        <div class="form-group">
-                            <label>X (МСК86)</label>
-                            <input type="number" name="x_msk86" step="0.01" placeholder="4500000.00">
-                        </div>
-                        <div class="form-group">
-                            <label>Y (МСК86)</label>
-                            <input type="number" name="y_msk86" step="0.01" placeholder="6100000.00">
                         </div>
                     </div>
                     <div class="form-group">
@@ -2896,13 +2912,6 @@ const App = {
                         <input type="text" id="modal-marker-number" value="СТ-<код>-<id>" disabled style="background: var(--bg-tertiary);">
                         <p class="text-muted">Номер формируется автоматически по собственнику и ID</p>
                     </div>
-                    <div class="form-group">
-                        <label>Система координат</label>
-                        <select id="coord-system-select" onchange="App.toggleCoordinateInputs()">
-                            <option value="wgs84" selected>WGS84 (широта/долгота)</option>
-                            <option value="msk86">МСК86 Зона 4 (X/Y)</option>
-                        </select>
-                    </div>
                     <div id="coords-wgs84-inputs">
                         <div class="form-group">
                             <label>Широта (WGS84)</label>
@@ -2911,16 +2920,6 @@ const App = {
                         <div class="form-group">
                             <label>Долгота (WGS84)</label>
                             <input type="number" name="longitude" step="0.000001" value="${lng || ''}" placeholder="37.123456">
-                        </div>
-                    </div>
-                    <div id="coords-msk86-inputs" style="display: none;">
-                        <div class="form-group">
-                            <label>X (МСК86)</label>
-                            <input type="number" name="x_msk86" step="0.01" placeholder="4500000.00">
-                        </div>
-                        <div class="form-group">
-                            <label>Y (МСК86)</label>
-                            <input type="number" name="y_msk86" step="0.01" placeholder="6100000.00">
                         </div>
                     </div>
                     <div class="form-group">
@@ -3085,13 +3084,6 @@ const App = {
                     <!-- Блок для кабелей в грунте и воздушных (координаты) -->
                     <div id="cable-geometry-block" style="display: none;">
                         <div class="form-group">
-                            <label>Система координат</label>
-                            <select id="cable-coord-system">
-                                <option value="wgs84">WGS84 (долгота, широта)</option>
-                                <option value="msk86">МСК86 Зона 4 (X, Y)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
                             <label>Координаты (точки ломаной)</label>
                             <div id="cable-coordinates-list"></div>
                             <button type="button" class="btn btn-sm btn-secondary" onclick="App.addCableCoordinate()">
@@ -3136,19 +3128,9 @@ const App = {
      * Переключение полей ввода координат
      */
     toggleCoordinateInputs() {
-        const coordSystem = document.getElementById('coord-system-select')?.value;
+        // MSK86 отключён. Оставлено для обратной совместимости.
         const wgs84Inputs = document.getElementById('coords-wgs84-inputs');
-        const msk86Inputs = document.getElementById('coords-msk86-inputs');
-        
-        if (wgs84Inputs && msk86Inputs) {
-            if (coordSystem === 'wgs84') {
-                wgs84Inputs.style.display = 'block';
-                msk86Inputs.style.display = 'none';
-            } else {
-                wgs84Inputs.style.display = 'none';
-                msk86Inputs.style.display = 'block';
-            }
-        }
+        if (wgs84Inputs) wgs84Inputs.style.display = 'block';
     },
 
     /**
@@ -3472,7 +3454,7 @@ const App = {
                             return;
                         }
                         data.coordinates = coordinates;
-                        data.coordinate_system = document.getElementById('cable-coord-system')?.value || 'wgs84';
+                        data.coordinate_system = 'wgs84';
                     } else if (objectTypeCode === 'cable_duct') {
                         // Для кабелей в канализации - собираем маршрут
                         const channelsSelect = document.getElementById('cable-route-channels');
@@ -3672,8 +3654,6 @@ const App = {
         }
 
         // Заполняем координаты (WGS84: lon/lat)
-        const coordSystemSelect = document.getElementById('cable-coord-system');
-        if (coordSystemSelect) coordSystemSelect.value = 'wgs84';
         const container = document.getElementById('cable-coordinates-list');
         if (container) {
             container.innerHTML = '';

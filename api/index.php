@@ -248,6 +248,7 @@ $router->post('/api/incidents/{id}/documents', [IncidentDocumentController::clas
 // Группы
 $router->get('/api/groups', [GroupController::class, 'index'], ['auth']);
 $router->get('/api/groups/export', [GroupController::class, 'export'], ['auth']);
+$router->get('/api/groups/by-object', [GroupController::class, 'byObject'], ['auth']);
 $router->get('/api/groups/{id}', [GroupController::class, 'show'], ['auth']);
 $router->get('/api/groups/{id}/geojson', [GroupController::class, 'geojson'], ['auth']);
 $router->post('/api/groups', [GroupController::class, 'store'], ['auth']);
