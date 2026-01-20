@@ -233,6 +233,20 @@ const App = {
         // Отмена подсветки маршрута кабеля
         document.getElementById('btn-clear-highlight')?.addEventListener('click', () => MapManager.clearHighlight());
 
+        // Esc = отменить подсветку (аналогично кнопке "Отменить подсветку")
+        if (!this._boundEscHighlight) {
+            this._boundEscHighlight = true;
+            document.addEventListener('keydown', (e) => {
+                if (e.key !== 'Escape') return;
+                const bar = document.getElementById('highlight-bar');
+                const visible = bar && !bar.classList.contains('hidden');
+                if (!visible) return;
+                try {
+                    MapManager.clearHighlight();
+                } catch (_) {}
+            });
+        }
+
         // Панель инструментов карты
         document.getElementById('btn-add-direction-map')?.addEventListener('click', () => MapManager.startAddDirectionMode());
         document.getElementById('btn-add-well-map')?.addEventListener('click', () => MapManager.startAddingObject('wells'));
@@ -2522,6 +2536,12 @@ const App = {
         if (type === 'display_styles') {
             this.notify('Справочник удалён', 'warning');
             return;
+        }
+
+        // Для "Виды объектов" запрещаем добавление новых записей
+        const addBtn = document.getElementById('btn-add-ref');
+        if (addBtn) {
+            addBtn.classList.toggle('hidden', !this.canManageReferences() || type === 'object_types');
         }
         
         document.querySelector('.references-grid').classList.add('hidden');
