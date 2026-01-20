@@ -346,7 +346,8 @@ class ChannelController extends BaseController
             Response::error('Направление не найдено', 404);
         }
 
-        $data = $this->request->only(['number', 'owner_id', 'type_id', 'length_m', 'notes']);
+        // length_m рассчитывается автоматически (редактирование запрещено)
+        $data = $this->request->only(['number', 'owner_id', 'type_id', 'notes']);
         $data = array_filter($data, fn($v) => $v !== null);
 
         $user = Auth::user();
@@ -754,7 +755,44 @@ class ChannelController extends BaseController
             Response::error('Канал не найден', 404);
         }
 
+        $directionId = (int) ($channel['direction_id'] ?? 0);
+        $channelNumber = (int) ($channel['channel_number'] ?? 0);
+
+        // Удалять можно только последний (по номеру) канал в направлении
+        if ($directionId > 0) {
+            $maxRow = $this->db->fetch(
+                "SELECT MAX(channel_number) as mx FROM cable_channels WHERE direction_id = :did",
+                ['did' => $directionId]
+            );
+            $max = (int) ($maxRow['mx'] ?? 0);
+            if ($max > 0 && $channelNumber !== $max) {
+                Response::error('Можно удалить только последний канал в направлении', 400);
+            }
+        }
+
+        // Проверяем, используется ли канал в маршрутах кабелей
         try {
+            $used = $this->db->fetchAll(
+                "SELECT cb.id, cb.number
+                 FROM cable_route_channels crc
+                 JOIN cables cb ON crc.cable_id = cb.id
+                 WHERE crc.cable_channel_id = :cid
+                 ORDER BY cb.number
+                 LIMIT 50",
+                ['cid' => $channelId]
+            );
+            if (!empty($used)) {
+                $nums = array_values(array_filter(array_map(fn($r) => $r['number'] ?? null, $used)));
+                $list = implode(', ', $nums);
+                Response::error("Нельзя удалить канал: в нём находятся кабели: {$list}", 400);
+            }
+        } catch (\Throwable $e) {
+            // Если таблиц нет/ошибка — безопасно запрещаем удаление (чтобы не потерять целостность)
+            Response::error('Нельзя проверить использование канала кабелями', 400);
+        }
+
+        try {
+            $this->db->delete('object_photos', "object_table = 'cable_channels' AND object_id = :id", ['id' => $channelId]);
             $this->db->delete('cable_channels', 'id = :id', ['id' => $channelId]);
 
             $this->log('delete', 'cable_channels', $channelId, $channel, null);
@@ -762,7 +800,7 @@ class ChannelController extends BaseController
             Response::success(null, 'Канал удалён');
         } catch (\PDOException $e) {
             if (strpos($e->getMessage(), 'foreign key') !== false) {
-                Response::error('Направление используется', 400);
+                Response::error('Нельзя удалить канал, так как он используется', 400);
             }
             throw $e;
         }

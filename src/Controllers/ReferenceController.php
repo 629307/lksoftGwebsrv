@@ -269,9 +269,9 @@ class ReferenceController extends BaseController
 
         $data = $this->request->only($config['fields']);
 
-        // Для видов объектов запрещаем изменение code (чтобы не ломать логику слоёв/карты)
-        if ($type === 'object_types' && array_key_exists('code', $data)) {
-            unset($data['code']);
+        // Для видов объектов разрешаем редактировать только описание/иконку/цвет
+        if ($type === 'object_types') {
+            $data = array_intersect_key($data, array_flip(['description', 'icon', 'color']));
         }
         
         // Преобразование булевых значений
@@ -339,6 +339,11 @@ class ReferenceController extends BaseController
         $config = $this->getConfig($type);
         $recordId = (int) $id;
 
+        // Виды объектов не удаляем (по ТЗ)
+        if ($type === 'object_types') {
+            Response::error('Нельзя удалить вид объекта', 400);
+        }
+
         $item = $this->db->fetch(
             "SELECT * FROM {$config['table']} WHERE id = :id",
             ['id' => $recordId]
@@ -352,10 +357,7 @@ class ReferenceController extends BaseController
         if (isset($item['is_system']) && $item['is_system']) {
             Response::error('Нельзя удалить системную запись', 400);
         }
-        // Системные виды объектов (well/channel/marker/cable_*) не удаляем, но редактирование разрешено
-        if ($type === 'object_types' && isset($item['code']) && in_array($item['code'], $this->systemObjectTypeCodes(), true)) {
-            Response::error('Нельзя удалить системный вид объекта', 400);
-        }
+        // (системные проверки для object_types больше не нужны — удаление запрещено целиком)
 
         try {
             $this->db->delete($config['table'], 'id = :id', ['id' => $recordId]);

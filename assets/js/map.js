@@ -35,6 +35,14 @@ const MapManager = {
     wellLabelsMinZoom: 15,
     initialViewLocked: true,
 
+    // Режим группы (показываем только объекты группы)
+    groupMode: false,
+    activeGroupId: null,
+
+    // Режим выбора объекта на карте для добавления в группу
+    groupPickMode: false,
+    groupPickGroupId: null,
+
     // Цвета для слоёв
     colors: {
         wells: '#fa00fa',
@@ -53,6 +61,42 @@ const MapManager = {
         repair: '#f59e0b',
         planned: '#3b82f6',
         decommissioned: '#6b7280',
+    },
+
+    selectedBoundsRect: null,
+
+    rebuildWellLabelsFromWellsLayer() {
+        if (!this.wellLabelsLayer) return;
+        this.wellLabelsLayer.clearLayers();
+
+        const labelColorDefault = this.colors.wells;
+
+        const addLabel = (latlng, number, color) => {
+            const label = L.marker(latlng, {
+                interactive: false,
+                keyboard: false,
+                icon: L.divIcon({
+                    className: 'well-number-label',
+                    html: `<div class="well-number-label-text" style="color:${color || labelColorDefault}">${number}</div>`,
+                    iconAnchor: [0, 0],
+                }),
+            });
+            label.addTo(this.wellLabelsLayer);
+        };
+
+        try {
+            (this.layers?.wells?.getLayers?.() || []).forEach((layer) => {
+                const meta = layer?._igsMeta;
+                if (!meta || meta.objectType !== 'well') return;
+                const coords = layer.getLatLng?.();
+                const props = meta.properties || {};
+                const number = props.number;
+                if (!coords || !number) return;
+                addLabel(coords, number, props.type_color || this.colors.wells);
+            });
+        } catch (_) {
+            // ignore
+        }
     },
 
     getTypeDisplayName(objectType) {
@@ -126,16 +170,33 @@ const MapManager = {
         App.notify('Кликните на объекте на карте для привязки к инциденту', 'info');
     },
 
+    startGroupPickMode(groupId) {
+        this.groupPickMode = true;
+        this.groupPickGroupId = parseInt(groupId);
+        if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+        App.notify('Кликните на объекте на карте для добавления в группу', 'info');
+    },
+
     /**
      * Загрузка всех данных
      */
     async loadAllLayers() {
         console.log('Загрузка слоёв карты...');
+
+        // Если активен режим группы — слои загружаются через loadGroup()
+        if (this.groupMode) return;
+
+        // Фильтр по контракту: показываем только колодцы + кабели (направления/столбики не показываем)
+        const contractOnly = !!this.filters?.contract_id;
+        if (contractOnly) {
+            this.layers.channels.clearLayers();
+            this.layers.markers.clearLayers();
+        }
         
         const results = await Promise.allSettled([
             this.loadWells(),
-            this.loadChannelDirections(),
-            this.loadMarkerPosts(),
+            contractOnly ? Promise.resolve() : this.loadChannelDirections(),
+            contractOnly ? Promise.resolve() : this.loadMarkerPosts(),
             this.loadCables('ground'),
             this.loadCables('aerial'),
             this.loadCables('duct'),
@@ -159,8 +220,15 @@ const MapManager = {
      */
     async loadWells() {
         try {
-            console.log('Loading wells with filters:', this.filters);
-            const response = await API.wells.geojson(this.filters);
+            // Фильтр по контракту: колодцы показываем ВСЕ (игнорируем остальные фильтры)
+            const f = { ...(this.filters || {}) };
+            if (f.contract_id) {
+                // при выбранном контракте колодцы не фильтруем
+                for (const k of Object.keys(f)) delete f[k];
+            }
+
+            console.log('Loading wells with filters:', f);
+            const response = await API.wells.geojson(f);
             console.log('Wells GeoJSON response:', response);
             
             // Проверяем на ошибку API
@@ -223,22 +291,6 @@ const MapManager = {
                             this.handleObjectsClick(e.latlng || layer.getLatLng());
                         });
 
-                        // Подпись номера над колодцем (отдельный слой)
-                        if (this.wellLabelsEnabled && this.wellLabelsLayer && feature?.properties?.number) {
-                            // Цвет текста подписи — из справочника "Состояние" (object_status.color)
-                            const labelColor = feature.properties.status_color || '#ffffff';
-                            const label = L.marker(layer.getLatLng(), {
-                                interactive: false,
-                                keyboard: false,
-                                icon: L.divIcon({
-                                    className: 'well-number-label',
-                                    html: `<div class="well-number-label-text" style="color:${labelColor}">${feature.properties.number}</div>`,
-                                    iconAnchor: [0, 0],
-                                }),
-                            });
-                            label.addTo(this.wellLabelsLayer);
-                        }
-                        
                         // Popup при наведении
                         layer.bindTooltip(`
                             <strong>Колодец: ${feature.properties.number}</strong><br>
@@ -247,7 +299,8 @@ const MapManager = {
                         `, { permanent: false, direction: 'top' });
                     },
                 }).addTo(this.layers.wells);
-                // Обновляем видимость слоя подписей после перерисовки
+                // Пересобираем подписи из текущего слоя колодцев (важно для режима "Группа")
+                if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
                 this.updateWellLabelsVisibility();
             }
         } catch (error) {
@@ -265,19 +318,12 @@ const MapManager = {
 
     setWellLabelsEnabled(enabled) {
         this.wellLabelsEnabled = !!enabled;
-        // При включении — перерисуем подписи (иначе слой может быть пуст после скрытия)
-        if (this.wellLabelsEnabled) {
-            this.loadWells();
-        }
+        if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
         this.updateWellLabelsVisibility();
     },
 
     toggleWellLabels() {
         this.setWellLabelsEnabled(!this.wellLabelsEnabled);
-        // Перерисовываем подписи при включении
-        if (this.wellLabelsEnabled) {
-            this.loadWells();
-        }
     },
 
     /**
@@ -363,7 +409,7 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
-                        const color = feature.properties.status_color || this.colors.markers;
+                        const color = feature.properties.type_color || this.colors.markers;
                         return L.marker(latlng, {
                             icon: L.divIcon({
                                 html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
@@ -461,6 +507,35 @@ const MapManager = {
         const hits = this.getObjectsAtLatLng(latlng);
         this.lastClickHits = hits;
 
+        // Выбор объекта для добавления в группу
+        if (this.groupPickMode) {
+            if (hits.length <= 1) {
+                const h = hits[0];
+                if (h) {
+                    const gid = this.groupPickGroupId;
+                    this.groupPickMode = false;
+                    this.groupPickGroupId = null;
+                    if (this.map) this.map.getContainer().style.cursor = '';
+                    App.addGroupObjectFromMap(gid, h);
+                }
+                return;
+            }
+
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(hits || []).map((h, idx) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectGroupObjectFromHits(${idx})">
+                            ${h.title}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите объект для добавления в группу.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            App.showModal('Выберите объект', content, footer);
+            return;
+        }
+
         // Выбор объекта для инцидента
         if (this.incidentSelectMode) {
             if (hits.length <= 1) {
@@ -520,6 +595,17 @@ const MapManager = {
         this.incidentSelectMode = false;
         App.hideModal();
         App.addIncidentRelatedObjectFromMap(h);
+    },
+
+    selectGroupObjectFromHits(idx) {
+        const h = (this.lastClickHits || [])[idx];
+        if (!h) return;
+        const gid = this.groupPickGroupId;
+        this.groupPickMode = false;
+        this.groupPickGroupId = null;
+        if (this.map) this.map.getContainer().style.cursor = '';
+        App.hideModal();
+        App.addGroupObjectFromMap(gid, h);
     },
 
     getObjectsAtLatLng(latlng) {
@@ -629,6 +715,8 @@ const MapManager = {
      * Применение фильтров
      */
     setFilters(filters) {
+        this.groupMode = false;
+        this.activeGroupId = null;
         this.filters = filters;
         this.loadAllLayers();
     },
@@ -637,6 +725,8 @@ const MapManager = {
      * Сброс фильтров
      */
     clearFilters() {
+        this.groupMode = false;
+        this.activeGroupId = null;
         this.filters = {};
         this.loadAllLayers();
     },
@@ -773,6 +863,31 @@ const MapManager = {
         this.selectedLayer = layer || null;
         if (this.selectedLayer) {
             this.applySelectedShadow(this.selectedLayer, true);
+        }
+
+        // Рамка вокруг выбранного линейного объекта
+        if (this.selectedBoundsRect) {
+            try {
+                this.map.removeLayer(this.selectedBoundsRect);
+            } catch (_) {}
+            this.selectedBoundsRect = null;
+        }
+        // Только для линейных/площадных объектов (у точек getLatLng)
+        if (this.selectedLayer && typeof this.selectedLayer.getBounds === 'function' && typeof this.selectedLayer.getLatLng !== 'function') {
+            try {
+                const bounds = this.selectedLayer.getBounds();
+                if (bounds && bounds.isValid && bounds.isValid()) {
+                    this.selectedBoundsRect = L.rectangle(bounds, {
+                        color: '#f59e0b',
+                        weight: 2,
+                        dashArray: '6,4',
+                        fill: false,
+                        interactive: false,
+                    }).addTo(this.map);
+                }
+            } catch (_) {
+                // ignore
+            }
         }
     },
 
@@ -1386,10 +1501,14 @@ const MapManager = {
                 return;
             }
             
+            this.groupMode = true;
+            this.activeGroupId = parseInt(groupId);
+
             // Очищаем все слои
             for (const layer of Object.values(this.layers)) {
                 layer.clearLayers();
             }
+            if (this.wellLabelsLayer) this.wellLabelsLayer.clearLayers();
             
             // Фильтруем features с невалидной геометрией
             let validFeatures = response.features.filter(f => f && f.geometry && f.geometry.type);
@@ -1406,31 +1525,76 @@ const MapManager = {
             }
             
             if (validFeatures.length > 0) {
-                // Загружаем объекты группы
-                L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
-                    pointToLayer: (feature, latlng) => {
-                        const color = feature.properties.object_type === 'well' 
-                            ? this.colors.wells 
-                            : this.colors.markers;
-                        return L.circleMarker(latlng, {
+                const addPoint = (objectType, feature, latlng) => {
+                    if (objectType === 'well') {
+                        const layer = L.circleMarker(latlng, {
                             radius: 8,
-                            fillColor: color,
+                            fillColor: this.colors.wells,
                             color: '#fff',
                             weight: 2,
                             opacity: 1,
                             fillOpacity: 0.8,
+                        }).addTo(this.layers.wells);
+                        layer._igsMeta = { objectType: 'well', properties: feature.properties };
+                        layer.on('click', (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng || layer.getLatLng());
                         });
-                    },
-                    style: (feature) => ({
-                        color: this.colors.channels,
-                        weight: 3,
-                        opacity: 0.8,
-                    }),
-                    onEachFeature: (feature, layer) => {
-                        layer.on('click', () => this.showObjectInfo(feature.properties.object_type, feature.properties));
-                    },
-                }).addTo(this.layers.wells);
-                
+                        return;
+                    }
+                    if (objectType === 'marker_post') {
+                        const color = this.colors.markers;
+                        const layer = L.marker(latlng, {
+                            icon: L.divIcon({
+                                html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
+                                className: 'marker-post-icon',
+                                iconSize: [24, 24],
+                                iconAnchor: [12, 24],
+                            }),
+                        }).addTo(this.layers.markers);
+                        layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
+                        layer.on('click', (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            this.handleObjectsClick(e.latlng || layer.getLatLng());
+                        });
+                    }
+                };
+
+                const addLine = (layerGroup, objectType, feature, latlngs, style) => {
+                    const layer = L.polyline(latlngs, style).addTo(layerGroup);
+                    layer._igsMeta = { objectType, properties: feature.properties };
+                    layer.on('click', (e) => {
+                        L.DomEvent.stopPropagation(e);
+                        this.handleObjectsClick(e.latlng);
+                    });
+                };
+
+                validFeatures.forEach((f) => {
+                    const ot = f?.properties?.object_type;
+                    const geom = f?.geometry;
+                    if (!ot || !geom) return;
+
+                    if (geom.type === 'Point') {
+                        const latlng = L.GeoJSON.coordsToLatLng(geom.coordinates);
+                        addPoint(ot, f, latlng);
+                        return;
+                    }
+
+                    // LineString / MultiLineString
+                    const latlngs = L.GeoJSON.coordsToLatLngs(geom.coordinates, geom.type === 'MultiLineString' ? 1 : 0);
+                    if (ot === 'channel_direction') {
+                        addLine(this.layers.channels, 'channel_direction', f, latlngs, { color: this.colors.channels, weight: 3, opacity: 0.8 });
+                    } else if (ot === 'ground_cable') {
+                        addLine(this.layers.groundCables, 'ground_cable', f, latlngs, { color: this.colors.groundCables, weight: 2, opacity: 0.8 });
+                    } else if (ot === 'aerial_cable') {
+                        addLine(this.layers.aerialCables, 'aerial_cable', f, latlngs, { color: this.colors.aerialCables, weight: 2, opacity: 0.8, dashArray: '5, 5' });
+                    } else if (ot === 'duct_cable') {
+                        addLine(this.layers.ductCables, 'duct_cable', f, latlngs, { color: this.colors.ductCables, weight: 2, opacity: 0.8 });
+                    }
+                });
+
+                if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
+                this.updateWellLabelsVisibility();
                 this.fitToAllObjects();
             }
             

@@ -15,44 +15,36 @@ class ReportController extends BaseController
      */
     public function objects(): void
     {
-        $filters = $this->buildFilters([
-            'owner_id' => 'owner_id',
-            'type_id' => 'type_id',
-            'status_id' => 'status_id',
-        ]);
-
-        $where = $filters['where'];
-        $params = $filters['params'];
+        // На экране отчёта используется фильтр по собственнику (owner_id)
+        $ownerId = (int) $this->request->query('owner_id', 0);
+        $params = $ownerId > 0 ? ['oid' => $ownerId] : [];
+        $whereOwner = $ownerId > 0 ? " WHERE owner_id = :oid" : "";
 
         // Статистика по колодцам
         $wellsSql = "SELECT 'wells' as object_type, 'Колодцы' as object_name, COUNT(*) as count FROM wells";
-        if ($where) $wellsSql .= " WHERE {$where}";
-        $wells = $this->db->fetch($wellsSql, $params);
+        $wells = $this->db->fetch($wellsSql . $whereOwner, $params);
 
         // Направления каналов
-        $directionsSql = "SELECT 'channel_directions' as object_type, 'Направления каналов' as object_name, COUNT(*) as count FROM channel_directions";
-        if ($where) $directionsSql .= " WHERE {$where}";
-        $directions = $this->db->fetch($directionsSql, $params);
+        $directionsSql = "SELECT 'channel_directions' as object_type, 'Направления каналов' as object_name,
+                                 COUNT(*) as count, COALESCE(SUM(length_m), 0) as total_length
+                          FROM channel_directions";
+        $directions = $this->db->fetch($directionsSql . $whereOwner, $params);
 
         // Столбики
         $postsSql = "SELECT 'marker_posts' as object_type, 'Столбики' as object_name, COUNT(*) as count FROM marker_posts";
-        if ($where) $postsSql .= " WHERE {$where}";
-        $posts = $this->db->fetch($postsSql, $params);
+        $posts = $this->db->fetch($postsSql . $whereOwner, $params);
 
         // Кабели в грунте
         $groundSql = "SELECT 'ground_cables' as object_type, 'Кабели в грунте' as object_name, COUNT(*) as count, COALESCE(SUM(length_m), 0) as total_length FROM ground_cables";
-        if ($where) $groundSql .= " WHERE {$where}";
-        $ground = $this->db->fetch($groundSql, $params);
+        $ground = $this->db->fetch($groundSql . $whereOwner, $params);
 
         // Воздушные кабели
         $aerialSql = "SELECT 'aerial_cables' as object_type, 'Воздушные кабели' as object_name, COUNT(*) as count, COALESCE(SUM(length_m), 0) as total_length FROM aerial_cables";
-        if ($where) $aerialSql .= " WHERE {$where}";
-        $aerial = $this->db->fetch($aerialSql, $params);
+        $aerial = $this->db->fetch($aerialSql . $whereOwner, $params);
 
         // Кабели в канализации
         $ductSql = "SELECT 'duct_cables' as object_type, 'Кабели в канализации' as object_name, COUNT(*) as count, COALESCE(SUM(length_m), 0) as total_length FROM duct_cables";
-        if ($where) $ductSql .= " WHERE {$where}";
-        $duct = $this->db->fetch($ductSql, $params);
+        $duct = $this->db->fetch($ductSql . $whereOwner, $params);
 
         // Статистика по состояниям
         $byStatus = $this->db->fetchAll(
@@ -314,7 +306,8 @@ class ReportController extends BaseController
                 $w = $ownerId > 0 ? " WHERE owner_id = :oid" : "";
 
                 $data[] = ['Колодцы', $this->db->fetch("SELECT COUNT(*) as c FROM wells{$w}", $p)['c'], '-'];
-                $data[] = ['Направления каналов', $this->db->fetch("SELECT COUNT(*) as c FROM channel_directions{$w}", $p)['c'], '-'];
+                $dir = $this->db->fetch("SELECT COUNT(*) as c, COALESCE(SUM(length_m), 0) as l FROM channel_directions{$w}", $p);
+                $data[] = ['Направления каналов', $dir['c'], $dir['l']];
                 $data[] = ['Каналы', $this->db->fetch(
                     $ownerId > 0
                         ? "SELECT COUNT(*) as c FROM cable_channels cc JOIN channel_directions cd ON cc.direction_id = cd.id WHERE cd.owner_id = :oid"

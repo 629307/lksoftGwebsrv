@@ -326,12 +326,28 @@ const App = {
             const icon = input?.closest('label')?.querySelector('.layer-icon');
             if (icon && color) icon.style.background = color;
         };
+        const setLayerName = (checkboxId, name) => {
+            const input = document.getElementById(checkboxId);
+            const label = input?.closest('label');
+            if (!label || !name) return;
+            const spans = label.querySelectorAll('span');
+            const textSpan = spans?.[spans.length - 1];
+            if (textSpan) textSpan.textContent = name;
+        };
         setLayerIcon('layer-wells', codeToColor.well);
         setLayerIcon('layer-channels', codeToColor.channel);
         setLayerIcon('layer-markers', codeToColor.marker);
         setLayerIcon('layer-ground-cables', codeToColor.cable_ground);
         setLayerIcon('layer-aerial-cables', codeToColor.cable_aerial);
         setLayerIcon('layer-duct-cables', codeToColor.cable_duct);
+
+        // Обновляем названия слоёв из справочника "Виды объектов"
+        setLayerName('layer-wells', byCode.well?.name);
+        setLayerName('layer-channels', byCode.channel?.name);
+        setLayerName('layer-markers', byCode.marker?.name);
+        setLayerName('layer-ground-cables', byCode.cable_ground?.name);
+        setLayerName('layer-aerial-cables', byCode.cable_aerial?.name);
+        setLayerName('layer-duct-cables', byCode.cable_duct?.name);
 
         if (redrawMap && MapManager?.map) {
             MapManager.loadAllLayers();
@@ -529,16 +545,27 @@ const App = {
         if (statusId) filters.status_id = statusId;
         if (contractId) filters.contract_id = contractId;
 
-        // При выборе контракта принудительно включаем слои кабелей
+        // При выборе контракта:
+        // - показываем все колодцы
+        // - показываем только кабели выбранного контракта
+        // - НЕ показываем направления и столбики
         if (contractId) {
             const setLayer = (checkboxId, layerName) => {
                 const cb = document.getElementById(checkboxId);
                 if (cb) cb.checked = true;
                 MapManager.toggleLayer(layerName, true);
             };
+            const unsetLayer = (checkboxId, layerName) => {
+                const cb = document.getElementById(checkboxId);
+                if (cb) cb.checked = false;
+                MapManager.toggleLayer(layerName, false);
+            };
+            setLayer('layer-wells', 'wells');
             setLayer('layer-ground-cables', 'groundCables');
             setLayer('layer-aerial-cables', 'aerialCables');
             setLayer('layer-duct-cables', 'ductCables');
+            unsetLayer('layer-channels', 'channels');
+            unsetLayer('layer-markers', 'markers');
         }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров
@@ -1231,7 +1258,7 @@ const App = {
                         </div>
                         <div class="form-group">
                             <label>Длина (м)</label>
-                            <input type="number" name="length_m" step="0.01" value="${obj.length_m || ''}">
+                            <input type="number" name="length_m" step="0.01" value="${obj.length_m || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
                         <div class="form-group">
                             <label>Примечания</label>
@@ -1240,11 +1267,22 @@ const App = {
                         <hr>
                         <h4>Каналы (${obj.channels ? obj.channels.length : 0} из 16)</h4>
                         <div id="channels-list" style="max-height: 200px; overflow-y: auto;">
-                            ${obj.channels && obj.channels.length > 0 ? obj.channels.map(ch => `
-                                <div class="channel-item" style="padding: 8px; border-bottom: 1px solid var(--border-color);">
-                                    <strong>Канал ${ch.channel_number}</strong>: ${ch.kind_name || '-'} / ${ch.status_name || '-'}
-                                </div>
-                            `).join('') : '<p class="text-muted">Каналы не добавлены</p>'}
+                            ${(() => {
+                                const channels = (obj.channels || []).slice().sort((a, b) => (a.channel_number || 0) - (b.channel_number || 0));
+                                const lastNumber = channels.length ? channels[channels.length - 1].channel_number : null;
+                                return channels.length > 0 ? channels.map(ch => `
+                                    <div class="channel-item" style="padding: 8px; border-bottom: 1px solid var(--border-color); display:flex; gap:8px; align-items:center;">
+                                        ${lastNumber !== null && ch.channel_number === lastNumber ? `
+                                            <button type="button" class="btn btn-sm btn-danger" title="Удалить канал" onclick="App.deleteLastChannelFromDirection(${obj.id}, ${ch.id})">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        ` : `<span style="width:34px;"></span>`}
+                                        <div style="flex:1;">
+                                            <strong>Канал ${ch.channel_number}</strong>: ${ch.kind_name || '-'} / ${ch.status_name || '-'}
+                                        </div>
+                                    </div>
+                                `).join('') : '<p class="text-muted">Каналы не добавлены</p>';
+                            })()}
                         </div>
                         <button type="button" class="btn btn-sm btn-secondary" onclick="App.showAddChannelToDirection(${obj.id})" style="margin-top: 8px;">
                             <i class="fas fa-plus"></i> Добавить канал
@@ -1393,6 +1431,9 @@ const App = {
                         </div>
                         <button type="button" class="btn btn-sm btn-secondary" onclick="App.showAddObjectToGroup(${obj.id})" style="margin-top: 8px;">
                             <i class="fas fa-plus"></i> Добавить объекты
+                        </button>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="App.startGroupPickOnMap(${obj.id})" style="margin-top: 8px; margin-left: 8px;">
+                            <i class="fas fa-crosshairs"></i> Указать объект на карте
                         </button>
                     </form>
                 `;
@@ -1902,6 +1943,43 @@ const App = {
         }
     },
 
+    startGroupPickOnMap(groupId) {
+        this.hideModal();
+        this.switchPanel('map');
+        MapManager.startGroupPickMode(groupId);
+    },
+
+    async addGroupObjectFromMap(groupId, hit) {
+        const gid = parseInt(groupId);
+        if (!gid || !hit) return;
+
+        const type = hit.objectType;
+        const id = parseInt(hit?.properties?.id);
+        if (!type || !id) {
+            this.notify('Не удалось определить объект', 'error');
+            return;
+        }
+
+        const allowed = new Set(['well', 'channel_direction', 'marker_post', 'unified_cable']);
+        if (!allowed.has(type)) {
+            this.notify('Этот тип объекта нельзя добавить в группу с карты', 'warning');
+            return;
+        }
+
+        try {
+            const resp = await API.groups.addObjects(gid, [{ type, id }]);
+            if (resp?.success === false) {
+                this.notify(resp.message || 'Ошибка добавления', 'error');
+                return;
+            }
+            this.notify('Объект добавлен в группу', 'success');
+            // Возвращаем пользователя в карточку группы с обновлённым списком
+            this.showEditObjectModal('groups', gid);
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка добавления', 'error');
+        }
+    },
+
     /**
      * Показ модального окна добавления канала к направлению
      */
@@ -1940,6 +2018,22 @@ const App = {
         
         // Загружаем справочники
         await this.loadModalSelects('channels');
+    },
+
+    async deleteLastChannelFromDirection(directionId, channelId) {
+        if (!confirm('Удалить последний канал?')) return;
+        try {
+            const resp = await API.cableChannels.delete(channelId);
+            if (resp?.success === false) {
+                this.notify(resp.message || 'Ошибка удаления канала', 'error');
+                return;
+            }
+            this.notify('Канал удалён', 'success');
+            // Обновляем окно редактирования направления
+            this.showEditObjectModal('directions', directionId);
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка удаления канала', 'error');
+        }
     },
 
     /**
@@ -2115,6 +2209,12 @@ const App = {
     renderObjectsReport(data) {
         // Фильтр по собственнику
         const owners = data?.owners || [];
+        const formatLen = (v) => {
+            if (v === null || v === undefined || v === '') return '-';
+            const n = Number(v);
+            if (Number.isNaN(n)) return '-';
+            return n.toFixed(2);
+        };
         return `
             <div class="filters-row" style="margin: 12px 0;">
                 <select id="report-objects-owner">
@@ -2134,7 +2234,7 @@ const App = {
                         <tr>
                             <td>${item.object_name}</td>
                             <td>${item.count}</td>
-                            <td>${item.total_length || '-'}</td>
+                            <td>${formatLen(item.total_length)}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -2442,9 +2542,11 @@ const App = {
                         <button class="btn btn-sm btn-primary" onclick="App.editReference(${row.id})">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button class="btn btn-sm btn-danger" onclick="App.deleteReference(${row.id})">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        ${this.currentReference === 'object_types' ? '' : `
+                            <button class="btn btn-sm btn-danger" onclick="App.deleteReference(${row.id})">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        `}
                     </td>
                 ` : ''}
             </tr>
@@ -2837,7 +2939,7 @@ const App = {
                     </div>
                     <div class="form-group">
                         <label>Длина (м)</label>
-                        <input type="number" name="length_m" step="0.01">
+                        <input type="number" name="length_m" step="0.01" disabled style="background: var(--bg-tertiary);" placeholder="Авто-расчёт">
                     </div>
                     <div class="form-group">
                         <label>Примечания</label>
@@ -3482,7 +3584,7 @@ const App = {
                 </div>
                 <div class="form-group">
                     <label>Длина (м)</label>
-                    <input type="number" name="length_m" step="0.01" placeholder="Авто-расчёт по координатам">
+                    <input type="number" name="length_m" step="0.01" disabled style="background: var(--bg-tertiary);" placeholder="Авто-расчёт по координатам">
                 </div>
                 <div class="form-group">
                     <label>Примечания</label>
@@ -4557,11 +4659,11 @@ const App = {
             'object_types': `
                 <div class="form-group">
                     <label>Код *</label>
-                    <input type="text" name="code" value="${data.code || ''}" required ${data.id ? 'readonly' : ''}>
+                    <input type="text" name="code" value="${data.code || ''}" required ${data.id ? 'disabled style="background: var(--bg-tertiary);"' : ''}>
                 </div>
                 <div class="form-group">
                     <label>Название *</label>
-                    <input type="text" name="name" value="${data.name || ''}" required>
+                    <input type="text" name="name" value="${data.name || ''}" required ${data.id ? 'disabled style="background: var(--bg-tertiary);"' : ''}>
                 </div>
                 <div class="form-group">
                     <label>Описание</label>
@@ -4570,6 +4672,7 @@ const App = {
                 <div class="form-group">
                     <label>Иконка</label>
                     <input type="text" name="icon" value="${data.icon || ''}" placeholder="circle, line, marker...">
+                    <p class="text-muted">Иконки: Font Awesome 6 (solid). Примеры: map-marker-alt, project-diagram, wave-square, broadcast-tower, route, tag.</p>
                 </div>
                 <div class="form-group">
                     <label>Цвет</label>
@@ -4787,10 +4890,7 @@ const App = {
 
             // Системные виды объектов не удаляем (скрываем кнопку)
             if (this.currentReference === 'object_types') {
-                const systemCodes = new Set(['well', 'channel', 'marker', 'cable_ground', 'cable_aerial', 'cable_duct']);
-                if (systemCodes.has(data?.code)) {
-                    document.getElementById('btn-delete-ref')?.classList.add('hidden');
-                }
+                document.getElementById('btn-delete-ref')?.classList.add('hidden');
             }
             
             // Загружаем связанные справочники
