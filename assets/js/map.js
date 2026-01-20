@@ -692,6 +692,7 @@ const MapManager = {
             </div>`;
         }
         if (objectType === 'channel_direction') {
+            const canIncrease = (window.App && typeof window.App.canWrite === 'function' && window.App.canWrite());
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInDirection(${properties.id})">
                     Показать кабели в направлении
@@ -699,6 +700,11 @@ const MapManager = {
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showChannelsInDirection(${properties.id})">
                     Показать каналы направления
                 </button>
+                ${canIncrease ? `
+                    <button type="button" class="btn btn-sm btn-primary" onclick="App.increaseDirectionChannels(${properties.id}, ${properties.channels || 0})">
+                        Увеличить кол-во каналов
+                    </button>
+                ` : ``}
             </div>`;
         }
 

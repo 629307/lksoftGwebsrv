@@ -10,6 +10,39 @@ use App\Core\Auth;
 
 class ChannelController extends BaseController
 {
+    private function getDefaultChannelKindId(): ?int
+    {
+        try {
+            $row = $this->db->fetch(
+                "SELECT ok.id
+                 FROM object_kinds ok
+                 JOIN object_types ot ON ok.object_type_id = ot.id
+                 WHERE ot.code = 'channel' AND ok.is_default = true
+                 ORDER BY ok.id
+                 LIMIT 1"
+            );
+            return $row ? (int) $row['id'] : null;
+        } catch (\Throwable $e) {
+            // Если колонка is_default ещё не добавлена миграцией — просто не используем дефолт.
+            return null;
+        }
+    }
+
+    private function getDefaultStatusId(): ?int
+    {
+        try {
+            $row = $this->db->fetch(
+                "SELECT id
+                 FROM object_status
+                 WHERE is_default = true
+                 ORDER BY sort_order, id
+                 LIMIT 1"
+            );
+            return $row ? (int) $row['id'] : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
     /**
      * GET /api/channel-directions
      * Список направлений каналов
@@ -204,6 +237,12 @@ class ChannelController extends BaseController
             Response::error('Начальный и конечный колодцы должны быть разными', 422);
         }
 
+        $channelCount = (int) ($this->request->input('channel_count') ?? 1);
+        if ($channelCount < 1) $channelCount = 1;
+        if ($channelCount > 16) {
+            Response::error('Максимальное количество каналов - 16', 422);
+        }
+
         // Проверяем существование колодцев
         $wells = $this->db->fetchAll(
             "SELECT id, ST_AsText(geom_wgs84) as geom FROM wells WHERE id IN (:start_id, :end_id)",
@@ -262,14 +301,20 @@ class ChannelController extends BaseController
             $stmt = $this->db->query($sql, $data);
             $id = $stmt->fetchColumn();
 
-            // Автоматически создаём 1 канал по умолчанию (диаметр 110)
-            $this->db->insert('cable_channels', [
-                'direction_id' => $id,
-                'channel_number' => 1,
-                'diameter_mm' => 110,
-                'created_by' => $user['id'],
-                'updated_by' => $user['id'],
-            ]);
+            // Автоматически создаём каналы (1..N) по умолчанию (диаметр 110)
+            $defaultKindId = $this->getDefaultChannelKindId();
+            $defaultStatusId = $this->getDefaultStatusId();
+            for ($i = 1; $i <= $channelCount; $i++) {
+                $this->db->insert('cable_channels', [
+                    'direction_id' => $id,
+                    'channel_number' => $i,
+                    'kind_id' => $defaultKindId,
+                    'status_id' => $defaultStatusId,
+                    'diameter_mm' => 110,
+                    'created_by' => $user['id'],
+                    'updated_by' => $user['id'],
+                ]);
+            }
 
             $this->db->commit();
 
@@ -386,6 +431,15 @@ class ChannelController extends BaseController
             // Автоматически присваиваем следующий номер
             $data['channel_number'] = $count['cnt'] + 1;
         }
+        if (empty($data['kind_id'])) {
+            $data['kind_id'] = $this->getDefaultChannelKindId();
+        }
+        if (empty($data['status_id'])) {
+            $data['status_id'] = $this->getDefaultStatusId();
+        }
+        if (empty($data['diameter_mm'])) {
+            $data['diameter_mm'] = 110;
+        }
 
         $data['direction_id'] = $directionId;
         
@@ -410,6 +464,71 @@ class ChannelController extends BaseController
     }
 
     /**
+     * POST /api/channel-directions/{id}/channels/ensure
+     * Увеличение количества каналов до target_count (только увеличение)
+     */
+    public function ensureChannelCount(string $id): void
+    {
+        $this->checkWriteAccess();
+        $directionId = (int) $id;
+
+        $direction = $this->db->fetch("SELECT * FROM channel_directions WHERE id = :id", ['id' => $directionId]);
+        if (!$direction) {
+            Response::error('Направление не найдено', 404);
+        }
+
+        $target = (int) ($this->request->input('target_count') ?? 0);
+        if ($target < 1) {
+            Response::error('Некорректное значение количества каналов', 422);
+        }
+        if ($target > 16) {
+            Response::error('Максимальное количество каналов - 16', 422);
+        }
+
+        $countRow = $this->db->fetch(
+            "SELECT COUNT(*) as cnt FROM cable_channels WHERE direction_id = :id",
+            ['id' => $directionId]
+        );
+        $current = (int) ($countRow['cnt'] ?? 0);
+
+        if ($target <= $current) {
+            Response::error('Можно только увеличить количество каналов', 400);
+        }
+
+        $user = Auth::user();
+        $defaultKindId = $this->getDefaultChannelKindId();
+        $defaultStatusId = $this->getDefaultStatusId();
+
+        try {
+            $this->db->beginTransaction();
+
+            for ($i = $current + 1; $i <= $target; $i++) {
+                $this->db->insert('cable_channels', [
+                    'direction_id' => $directionId,
+                    'channel_number' => $i,
+                    'kind_id' => $defaultKindId,
+                    'status_id' => $defaultStatusId,
+                    'diameter_mm' => 110,
+                    'created_by' => $user['id'],
+                    'updated_by' => $user['id'],
+                ]);
+            }
+
+            $this->db->commit();
+
+            Response::success([
+                'direction_id' => $directionId,
+                'before' => $current,
+                'after' => $target,
+                'added' => $target - $current,
+            ], 'Каналы добавлены');
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+    }
+
+    /**
      * GET /api/cable-channels
      * Список всех каналов
      */
@@ -427,7 +546,15 @@ class ChannelController extends BaseController
         $where = $filters['where'];
         $params = $filters['params'];
 
-        $total = $this->getTotal('cable_channels', $where, $params, 'cc');
+        // COUNT должен учитывать JOIN-ы, т.к. _search включает поля cd.number
+        $totalSql = "SELECT COUNT(*) as total
+                     FROM cable_channels cc
+                     LEFT JOIN channel_directions cd ON cc.direction_id = cd.id";
+        if ($where) {
+            $totalSql .= " WHERE {$where}";
+        }
+        $totalRow = $this->db->fetch($totalSql, $params);
+        $total = (int) ($totalRow['total'] ?? 0);
 
         $sql = "SELECT cc.id, cc.channel_number, cc.direction_id, cc.kind_id, cc.status_id,
                        cc.diameter_mm, cc.material, cc.notes,

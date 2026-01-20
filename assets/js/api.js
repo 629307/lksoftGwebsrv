@@ -352,6 +352,10 @@ const API = {
         addChannel(directionId, data) {
             return API.post(`/channel-directions/${directionId}/channels`, data);
         },
+
+        ensureChannelCount(directionId, targetCount) {
+            return API.post(`/channel-directions/${directionId}/channels/ensure`, { target_count: targetCount });
+        },
     },
 
     // ========================

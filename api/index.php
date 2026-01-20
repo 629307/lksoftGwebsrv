@@ -190,6 +190,7 @@ $router->post('/api/channel-directions', [ChannelController::class, 'store'], ['
 $router->put('/api/channel-directions/{id}', [ChannelController::class, 'update'], ['auth']);
 $router->delete('/api/channel-directions/{id}', [ChannelController::class, 'destroy'], ['auth']);
 $router->post('/api/channel-directions/{id}/channels', [ChannelController::class, 'addChannel'], ['auth']);
+$router->post('/api/channel-directions/{id}/channels/ensure', [ChannelController::class, 'ensureChannelCount'], ['auth']);
 
 // Каналы (дочерние объекты направлений)
 $router->get('/api/cable-channels', [ChannelController::class, 'listChannels'], ['auth']);

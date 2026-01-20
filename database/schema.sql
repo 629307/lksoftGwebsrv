@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS object_types (
     description TEXT,
     icon VARCHAR(100),
     color VARCHAR(20),
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS object_kinds (
     name VARCHAR(100) NOT NULL,
     object_type_id INTEGER REFERENCES object_types(id) ON DELETE CASCADE,
     description TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -97,6 +99,7 @@ CREATE TABLE IF NOT EXISTS object_status (
     color VARCHAR(20),
     description TEXT,
     sort_order INTEGER DEFAULT 0,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -115,6 +118,7 @@ CREATE TABLE IF NOT EXISTS owners (
     contact_phone VARCHAR(50),
     contact_email VARCHAR(255),
     notes TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -134,6 +138,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     status VARCHAR(50) DEFAULT 'active',
     amount DECIMAL(15,2),
     notes TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

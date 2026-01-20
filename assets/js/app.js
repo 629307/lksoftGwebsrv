@@ -2389,13 +2389,19 @@ const App = {
 
         const columns = Object.keys(data[0]).filter(k => !['id', 'created_at', 'updated_at', 'permissions'].includes(k));
         const canManage = this.canManageReferences();
+
+        const formatCell = (col, value) => {
+            if (col === 'is_default') return value ? 'Да' : '-';
+            if (value === null || value === undefined || value === '') return '-';
+            return String(value);
+        };
         
         document.getElementById('ref-table-header').innerHTML = 
             columns.slice(0, 5).map(col => `<th>${col}</th>`).join('') + (canManage ? '<th>Действия</th>' : '');
         
         document.getElementById('ref-table-body').innerHTML = data.map(row => `
             <tr>
-                ${columns.slice(0, 5).map(col => `<td>${row[col] || '-'}</td>`).join('')}
+                ${columns.slice(0, 5).map(col => `<td>${formatCell(col, row[col])}</td>`).join('')}
                 ${canManage ? `
                     <td>
                         <button class="btn btn-sm btn-primary" onclick="App.editReference(${row.id})">
@@ -2783,6 +2789,10 @@ const App = {
                         <select name="end_well_id" required id="modal-end-well-select"></select>
                     </div>
                     <div class="form-group">
+                        <label>Количество каналов</label>
+                        <input type="number" name="channel_count" min="1" max="16" value="1">
+                    </div>
+                    <div class="form-group">
                         <label>Собственник</label>
                         <select name="owner_id" id="modal-owner-select"></select>
                     </div>
@@ -2992,13 +3002,24 @@ const App = {
             const results = await Promise.all(promises);
             const [owners, types, kinds, statuses] = results;
             
+            const pickDefault = (selectEl) => {
+                if (!selectEl) return;
+                if (selectEl.value) return;
+                const opt = Array.from(selectEl.options).find(o => o?.dataset?.isDefault === '1' && o.value);
+                if (opt) {
+                    selectEl.value = opt.value;
+                    selectEl.dispatchEvent(new Event('change'));
+                }
+            };
+
             // Определяем код вида объекта из скрытого поля
             const objectTypeCode = document.querySelector('input[name="object_type_code"]')?.value;
 
             if (owners.success && document.getElementById('modal-owner-select')) {
                 document.getElementById('modal-owner-select').innerHTML = 
                     '<option value="">Выберите...</option>' +
-                    owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}">${o.name}</option>`).join('');
+                    owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}" data-is-default="${o.is_default ? 1 : 0}">${o.name}</option>`).join('');
+                pickDefault(document.getElementById('modal-owner-select'));
             }
 
             // Обновление префикса номера по выбранному собственнику
@@ -3025,7 +3046,7 @@ const App = {
             if (types.success && document.getElementById('modal-type-select')) {
                 const typeSelect = document.getElementById('modal-type-select');
                 typeSelect.innerHTML = types.data.map(t => 
-                    `<option value="${t.id}" data-code="${t.code}">${t.name}</option>`
+                    `<option value="${t.id}" data-code="${t.code}" data-is-default="${t.is_default ? 1 : 0}">${t.name}</option>`
                 ).join('');
                 
                 // Автоматически выбираем вид объекта по коду
@@ -3036,6 +3057,8 @@ const App = {
                         // Обновляем список типов (kinds) для выбранного вида
                         this.filterKindsByType(matchingType.id, kinds.data);
                     }
+                } else {
+                    pickDefault(typeSelect);
                 }
             }
             
@@ -3043,6 +3066,21 @@ const App = {
                 // Сохраняем все типы для фильтрации
                 this.allKinds = kinds.data;
                 
+                // Для "Каналы" (cable_channels) вид объекта в форме не выбирается —
+                // берём дефолтные типы в рамках object_types.code === 'channel'
+                if (objectType === 'channels' && !document.getElementById('modal-type-select')) {
+                    const channelType = (types?.data || []).find(t => t.code === 'channel');
+                    const channelTypeId = channelType?.id || null;
+                    const filtered = channelTypeId
+                        ? (kinds.data || []).filter(k => String(k.object_type_id) === String(channelTypeId))
+                        : (kinds.data || []);
+                    const kindSelect = document.getElementById('modal-kind-select');
+                    kindSelect.innerHTML = '<option value="">Выберите...</option>' +
+                        filtered.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+                    pickDefault(kindSelect);
+                    return;
+                }
+
                 // Если уже выбран вид, фильтруем типы
                 const typeSelect = document.getElementById('modal-type-select');
                 if (typeSelect && typeSelect.value) {
@@ -3050,13 +3088,15 @@ const App = {
                 } else {
                     document.getElementById('modal-kind-select').innerHTML = 
                         '<option value="">Выберите...</option>' +
-                        kinds.data.map(k => `<option value="${k.id}">${k.name}</option>`).join('');
+                        kinds.data.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+                    pickDefault(document.getElementById('modal-kind-select'));
                 }
             }
             
             if (statuses.success && document.getElementById('modal-status-select')) {
                 document.getElementById('modal-status-select').innerHTML = 
-                    statuses.data.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+                    statuses.data.map(s => `<option value="${s.id}" data-is-default="${s.is_default ? 1 : 0}">${s.name}</option>`).join('');
+                pickDefault(document.getElementById('modal-status-select'));
             }
 
             // Контракты (для кабеля при редактировании)
@@ -3068,7 +3108,8 @@ const App = {
                 const cResp = results[idxContracts] || contractsResp;
                 if (cResp?.success) {
                     contractSelect.innerHTML = '<option value="">Не указан</option>' +
-                        cResp.data.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
+                        cResp.data.map(c => `<option value="${c.id}" data-is-default="${c.is_default ? 1 : 0}">${c.number} — ${c.name}</option>`).join('');
+                    pickDefault(contractSelect);
                 }
             }
 
@@ -3138,7 +3179,15 @@ const App = {
                 if (cableTypesResponse?.success && document.getElementById('modal-cable-type-select')) {
                     document.getElementById('modal-cable-type-select').innerHTML = 
                         '<option value="">Выберите тип...</option>' +
-                        cableTypesResponse.data.map(ct => `<option value="${ct.id}">${ct.name}</option>`).join('');
+                        cableTypesResponse.data.map(ct => `<option value="${ct.id}" data-is-default="${ct.is_default ? 1 : 0}">${ct.name}</option>`).join('');
+                    const sel = document.getElementById('modal-cable-type-select');
+                    if (sel && !sel.value) {
+                        const def = (cableTypesResponse.data || []).find(ct => ct.is_default);
+                        if (def) {
+                            sel.value = String(def.id);
+                            this.onCableTypeChange().catch(() => {});
+                        }
+                    }
                 }
                 
                 // Виды объектов для кабелей
@@ -3169,7 +3218,13 @@ const App = {
         );
         
         kindSelect.innerHTML = '<option value="">Выберите...</option>' +
-            filteredKinds.map(k => `<option value="${k.id}">${k.name}</option>`).join('');
+            filteredKinds.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+
+        // Автовыбор значения по умолчанию (если ничего не выбрано)
+        if (!kindSelect.value) {
+            const def = filteredKinds.find(k => k.is_default);
+            if (def) kindSelect.value = String(def.id);
+        }
     },
 
     /**
@@ -3381,6 +3436,10 @@ const App = {
                     <input type="text" value="${endWell.number}" disabled style="background: var(--bg-tertiary);">
                 </div>
                 <div class="form-group">
+                    <label>Количество каналов</label>
+                    <input type="number" name="channel_count" min="1" max="16" value="1">
+                </div>
+                <div class="form-group">
                     <label>Собственник</label>
                     <select name="owner_id" id="modal-owner-select"></select>
                 </div>
@@ -3536,6 +3595,73 @@ const App = {
         }
     },
 
+    async increaseDirectionChannels(directionId, currentCount = null) {
+        try {
+            // Если currentCount не передан — подгружаем направление
+            let current = (currentCount !== null && currentCount !== undefined) ? parseInt(currentCount) : null;
+            if (current === null || Number.isNaN(current)) {
+                const resp = await API.channelDirections.get(directionId);
+                const dir = resp.data || resp;
+                current = (dir.channels || []).length;
+            }
+
+            const content = `
+                <div class="form-group">
+                    <label>Текущее количество каналов</label>
+                    <input type="number" value="${current}" disabled style="background: var(--bg-tertiary);">
+                </div>
+                <div class="form-group">
+                    <label>Новое количество каналов (только увеличение)</label>
+                    <input type="number" id="increase-direction-target" min="${Math.min(16, current + 1)}" max="16" value="${Math.min(16, current + 1)}">
+                    <p class="text-muted">Будут созданы новые каналы со значениями по умолчанию. Максимум 16.</p>
+                </div>
+            `;
+            const footer = `
+                <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="App.confirmIncreaseDirectionChannels(${directionId}, ${current})">Увеличить</button>
+            `;
+            this.showModal('Увеличить количество каналов', content, footer);
+        } catch (e) {
+            this.notify('Ошибка загрузки направления', 'error');
+        }
+    },
+
+    async confirmIncreaseDirectionChannels(directionId, current) {
+        const input = document.getElementById('increase-direction-target');
+        const target = parseInt(input?.value);
+        if (!target || Number.isNaN(target)) {
+            this.notify('Введите корректное количество', 'error');
+            return;
+        }
+        if (target <= current) {
+            this.notify('Можно только увеличить количество каналов', 'warning');
+            return;
+        }
+        if (target > 16) {
+            this.notify('Максимум 16 каналов', 'warning');
+            return;
+        }
+        if (!confirm(`Увеличить количество каналов с ${current} до ${target}?`)) return;
+
+        try {
+            const resp = await API.channelDirections.ensureChannelCount(directionId, target);
+            if (resp?.success === false) {
+                this.notify(resp.message || 'Ошибка', 'error');
+                return;
+            }
+            this.hideModal();
+            this.notify('Каналы добавлены', 'success');
+            // Обновляем слой направлений (там отображается счетчик каналов)
+            if (window.MapManager && typeof window.MapManager.loadChannelDirections === 'function') {
+                window.MapManager.loadChannelDirections();
+            } else if (window.MapManager && typeof window.MapManager.loadAllLayers === 'function') {
+                window.MapManager.loadAllLayers();
+            }
+        } catch (e) {
+            this.notify(e.message || 'Ошибка увеличения количества каналов', 'error');
+        }
+    },
+
     async showCablesForChannel(channelId) {
         try {
             const resp = await API.unifiedCables.byChannel(channelId);
@@ -3633,7 +3759,13 @@ const App = {
                     : response.data;
                 
                 catalogSelect.innerHTML = '<option value="">Выберите марку кабеля...</option>' +
-                    filteredCables.map(c => `<option value="${c.id}">${c.marking} (${c.fiber_count} жил)</option>`).join('');
+                    filteredCables.map(c => `<option value="${c.id}" data-is-default="${c.is_default ? 1 : 0}">${c.marking} (${c.fiber_count} жил)</option>`).join('');
+
+                // Автовыбор значения по умолчанию (если ничего не выбрано / новая запись)
+                if (!catalogSelect.value) {
+                    const def = (filteredCables || []).find(c => c.is_default);
+                    if (def) catalogSelect.value = String(def.id);
+                }
             }
         } catch (error) {
             catalogSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
@@ -3809,7 +3941,9 @@ const App = {
 
             const ownersData = owners?.data || [];
             ownerSelect.innerHTML = '<option value="">Выберите...</option>' +
-                ownersData.map(o => `<option value="${o.id}" data-code="${o.code || ''}">${o.name}</option>`).join('');
+                ownersData.map(o => `<option value="${o.id}" data-code="${o.code || ''}" data-is-default="${o.is_default ? 1 : 0}">${o.name}</option>`).join('');
+            const ownerDefault = ownersData.find(o => o.is_default);
+            if (ownerDefault) ownerSelect.value = String(ownerDefault.id);
 
             // type_id для колодцев определяется системным кодом "well"
             const typesData = types?.data || [];
@@ -3822,11 +3956,15 @@ const App = {
                 : kindsData;
 
             kindSelect.innerHTML = '<option value="">Выберите...</option>' +
-                filteredKinds.map(k => `<option value="${k.id}">${k.name}</option>`).join('');
+                filteredKinds.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+            const kindDefault = filteredKinds.find(k => k.is_default);
+            if (kindDefault) kindSelect.value = String(kindDefault.id);
 
             const statusData = statuses?.data || [];
             statusSelect.innerHTML = '<option value="">Выберите...</option>' +
-                statusData.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+                statusData.map(s => `<option value="${s.id}" data-is-default="${s.is_default ? 1 : 0}">${s.name}</option>`).join('');
+            const statusDefault = statusData.find(s => s.is_default);
+            if (statusDefault) statusSelect.value = String(statusDefault.id);
         } catch (e) {
             ownerSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
             kindSelect.innerHTML = '<option value="">Ошибка загрузки</option>';
@@ -4368,6 +4506,16 @@ const App = {
      * Получить форму для справочника по типу
      */
     getReferenceForm(type, data = {}) {
+        const defaultBlock = `
+            <div class="form-group" style="margin-top: 8px;">
+                <label style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" name="is_default" ${data.is_default ? 'checked' : ''}>
+                    По умолчанию
+                </label>
+                <p class="text-muted">Можно выбрать только одно значение по умолчанию в справочнике (для "Типов" — в рамках "Вида объекта").</p>
+            </div>
+        `;
+
         const forms = {
             'object_types': `
                 <div class="form-group">
@@ -4390,6 +4538,7 @@ const App = {
                     <label>Цвет</label>
                     <input type="color" name="color" value="${data.color || '#3498db'}">
                 </div>
+                ${defaultBlock}
             `,
             'object_kinds': `
                 <div class="form-group">
@@ -4408,6 +4557,7 @@ const App = {
                     <label>Описание</label>
                     <textarea name="description" rows="2">${data.description || ''}</textarea>
                 </div>
+                ${defaultBlock}
             `,
             'object_status': `
                 <div class="form-group">
@@ -4430,6 +4580,7 @@ const App = {
                     <label>Порядок сортировки</label>
                     <input type="number" name="sort_order" value="${data.sort_order || 0}">
                 </div>
+                ${defaultBlock}
             `,
             'owners': `
                 <div class="form-group">
@@ -4468,6 +4619,7 @@ const App = {
                     <label>Примечания</label>
                     <textarea name="notes" rows="2">${data.notes || ''}</textarea>
                 </div>
+                ${defaultBlock}
             `,
             'contracts': `
                 <div class="form-group">
@@ -4506,6 +4658,7 @@ const App = {
                     <label>Примечания</label>
                     <textarea name="notes" rows="2">${data.notes || ''}</textarea>
                 </div>
+                ${defaultBlock}
             `,
             'cable_types': `
                 <div class="form-group">
@@ -4520,6 +4673,7 @@ const App = {
                     <label>Описание</label>
                     <textarea name="description" rows="2">${data.description || ''}</textarea>
                 </div>
+                ${defaultBlock}
             `,
             'cable_catalog': `
                 <div class="form-group">
@@ -4538,6 +4692,7 @@ const App = {
                     <label>Описание</label>
                     <textarea name="description" rows="2">${data.description || ''}</textarea>
                 </div>
+                ${defaultBlock}
             `,
         };
         
@@ -4632,8 +4787,11 @@ const App = {
                 if (types.success) {
                     objectTypeSelect.innerHTML = '<option value="">Не указан</option>' +
                         types.data.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+                    const defaultType = (types.data || []).find(t => t.is_default);
                     if (objectTypeSelect.dataset.value) {
                         objectTypeSelect.value = objectTypeSelect.dataset.value;
+                    } else if (defaultType) {
+                        objectTypeSelect.value = String(defaultType.id);
                     }
                 }
             }
@@ -4645,8 +4803,11 @@ const App = {
                 if (owners.success) {
                     ownerSelect.innerHTML = '<option value="">Не указан</option>' +
                         owners.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+                    const defaultOwner = (owners.data || []).find(o => o.is_default);
                     if (ownerSelect.dataset.value) {
                         ownerSelect.value = ownerSelect.dataset.value;
+                    } else if (defaultOwner) {
+                        ownerSelect.value = String(defaultOwner.id);
                     }
                 }
             }
@@ -4658,8 +4819,11 @@ const App = {
                 if (cableTypes.success) {
                     cableTypeSelect.innerHTML = '<option value="">Выберите тип</option>' +
                         cableTypes.data.map(ct => `<option value="${ct.id}">${ct.name}</option>`).join('');
+                    const defaultCableType = (cableTypes.data || []).find(ct => ct.is_default);
                     if (cableTypeSelect.dataset.value) {
                         cableTypeSelect.value = cableTypeSelect.dataset.value;
+                    } else if (defaultCableType) {
+                        cableTypeSelect.value = String(defaultCableType.id);
                     }
                 }
             }

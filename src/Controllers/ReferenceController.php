@@ -19,40 +19,54 @@ class ReferenceController extends BaseController
     private array $references = [
         'object_types' => [
             'table' => 'object_types',
-            'fields' => ['code', 'name', 'description', 'icon', 'color'],
+            'fields' => ['code', 'name', 'description', 'icon', 'color', 'is_default'],
             'search' => ['code', 'name'],
         ],
         'object_kinds' => [
             'table' => 'object_kinds',
-            'fields' => ['code', 'name', 'object_type_id', 'description'],
+            'fields' => ['code', 'name', 'object_type_id', 'description', 'is_default'],
             'search' => ['code', 'name'],
         ],
         'object_status' => [
             'table' => 'object_status',
-            'fields' => ['code', 'name', 'color', 'description', 'sort_order'],
+            'fields' => ['code', 'name', 'color', 'description', 'sort_order', 'is_default'],
             'search' => ['code', 'name'],
         ],
         'owners' => [
             'table' => 'owners',
-            'fields' => ['code', 'name', 'short_name', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes'],
+            'fields' => ['code', 'name', 'short_name', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
             'search' => ['code', 'name', 'short_name', 'inn'],
         ],
         'contracts' => [
             'table' => 'contracts',
-            'fields' => ['number', 'name', 'owner_id', 'start_date', 'end_date', 'status', 'amount', 'notes'],
+            'fields' => ['number', 'name', 'owner_id', 'start_date', 'end_date', 'status', 'amount', 'notes', 'is_default'],
             'search' => ['number', 'name'],
         ],
         'cable_types' => [
             'table' => 'cable_types',
-            'fields' => ['code', 'name', 'description'],
+            'fields' => ['code', 'name', 'description', 'is_default'],
             'search' => ['code', 'name'],
         ],
         'cable_catalog' => [
             'table' => 'cable_catalog',
-            'fields' => ['cable_type_id', 'fiber_count', 'marking', 'description'],
+            'fields' => ['cable_type_id', 'fiber_count', 'marking', 'description', 'is_default'],
             'search' => ['marking'],
         ],
     ];
+
+    private function defaultScope(string $type, array $data, ?array $existing = null): array
+    {
+        // Возвращает: [whereSql, params]
+        // Для object_kinds дефолт задаётся в рамках object_type_id.
+        if ($type === 'object_kinds') {
+            $objectTypeId = $data['object_type_id'] ?? ($existing['object_type_id'] ?? null);
+            if (empty($objectTypeId)) {
+                Response::error('Для "Типы объектов" нужно указать "Вид объекта", чтобы выбрать значение по умолчанию', 422);
+            }
+            return ['object_type_id = :object_type_id', ['object_type_id' => (int) $objectTypeId]];
+        }
+        return ['1=1', []];
+    }
 
     /**
      * GET /api/references/{type}
@@ -78,7 +92,7 @@ class ReferenceController extends BaseController
         if ($where) {
             $sql .= " WHERE {$where}";
         }
-        $sql .= " ORDER BY id LIMIT :limit OFFSET :offset";
+        $sql .= " ORDER BY is_default DESC, id LIMIT :limit OFFSET :offset";
         
         $params['limit'] = $pagination['limit'];
         $params['offset'] = $pagination['offset'];
@@ -96,7 +110,7 @@ class ReferenceController extends BaseController
     {
         $config = $this->getConfig($type);
         
-        $sql = "SELECT * FROM {$config['table']} ORDER BY ";
+        $sql = "SELECT * FROM {$config['table']} ORDER BY is_default DESC, ";
         
         // Сортировка по sort_order если есть, иначе по наиболее подходящему полю.
         // В некоторых справочниках (например, cable_catalog) поля 'name' нет.
@@ -172,8 +186,25 @@ class ReferenceController extends BaseController
         try {
             // Фильтруем пустые значения, но сохраняем 0 и false
             $filteredData = array_filter($data, fn($v) => $v !== null && $v !== '');
-            
+
+            $isDefault = !empty($filteredData['is_default']);
+            $inTxn = false;
+            if ($isDefault) {
+                [$scopeWhere, $scopeParams] = $this->defaultScope($type, $filteredData, null);
+                $this->db->beginTransaction();
+                $inTxn = true;
+                $this->db->query(
+                    "UPDATE {$config['table']} SET is_default = false WHERE {$scopeWhere}",
+                    $scopeParams
+                );
+            }
+
             $id = $this->db->insert($config['table'], $filteredData);
+
+            if ($isDefault) {
+                $this->db->commit();
+                $inTxn = false;
+            }
             
             $item = $this->db->fetch(
                 "SELECT * FROM {$config['table']} WHERE id = :id",
@@ -184,9 +215,13 @@ class ReferenceController extends BaseController
 
             Response::success($item, 'Запись создана', 201);
         } catch (\PDOException $e) {
+            if (!empty($inTxn)) $this->db->rollback();
             if (strpos($e->getMessage(), 'unique') !== false || strpos($e->getMessage(), 'duplicate') !== false) {
                 Response::error('Запись с таким кодом/номером уже существует', 400);
             }
+            throw $e;
+        } catch (\Throwable $e) {
+            if (!empty($inTxn)) $this->db->rollback();
             throw $e;
         }
     }
@@ -251,7 +286,24 @@ class ReferenceController extends BaseController
         }
 
         try {
+            $isDefault = array_key_exists('is_default', $data) && !empty($data['is_default']);
+            $inTxn = false;
+            if ($isDefault) {
+                [$scopeWhere, $scopeParams] = $this->defaultScope($type, $data, $oldItem);
+                $this->db->beginTransaction();
+                $inTxn = true;
+                $this->db->query(
+                    "UPDATE {$config['table']} SET is_default = false WHERE {$scopeWhere} AND id <> :id",
+                    array_merge($scopeParams, ['id' => $recordId])
+                );
+            }
+
             $this->db->update($config['table'], $data, 'id = :id', ['id' => $recordId]);
+
+            if ($isDefault) {
+                $this->db->commit();
+                $inTxn = false;
+            }
             
             $item = $this->db->fetch(
                 "SELECT * FROM {$config['table']} WHERE id = :id",
@@ -262,9 +314,13 @@ class ReferenceController extends BaseController
 
             Response::success($item, 'Запись обновлена');
         } catch (\PDOException $e) {
+            if (!empty($inTxn)) $this->db->rollback();
             if (strpos($e->getMessage(), 'unique') !== false || strpos($e->getMessage(), 'duplicate') !== false) {
                 Response::error('Запись с таким кодом/номером уже существует', 400);
             }
+            throw $e;
+        } catch (\Throwable $e) {
+            if (!empty($inTxn)) $this->db->rollback();
             throw $e;
         }
     }
