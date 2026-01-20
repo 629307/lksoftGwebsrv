@@ -9,6 +9,7 @@ const App = {
     currentReference: null,
     pagination: { page: 1, limit: 50, total: 0 },
     incidentDraftRelatedObjects: [],
+    selectedObjectIds: new Set(),
 
     /**
      * Инициализация приложения
@@ -146,6 +147,39 @@ const App = {
         // Поиск объектов
         document.getElementById('search-objects').addEventListener('input', (e) => this.handleSearch(e.target.value));
 
+        // Множественный выбор объектов (делегирование событий)
+        document.getElementById('objects-table')?.addEventListener('change', (e) => {
+            const target = e.target;
+            if (!(target instanceof HTMLInputElement)) return;
+
+            if (target.id === 'select-all-objects') {
+                const checked = target.checked;
+                document.querySelectorAll('#table-body input.obj-select[type="checkbox"]').forEach((cb) => {
+                    cb.checked = checked;
+                    const id = cb.dataset.id;
+                    if (!id) return;
+                    if (checked) this.selectedObjectIds.add(id);
+                    else this.selectedObjectIds.delete(id);
+                });
+                this.updateBulkDeleteButton();
+                return;
+            }
+
+            if (target.classList.contains('obj-select')) {
+                const id = target.dataset.id;
+                if (!id) return;
+                if (target.checked) this.selectedObjectIds.add(id);
+                else this.selectedObjectIds.delete(id);
+
+                const all = Array.from(document.querySelectorAll('#table-body input.obj-select[type="checkbox"]'));
+                const allChecked = all.length > 0 && all.every(cb => cb.checked);
+                const selectAll = document.getElementById('select-all-objects');
+                if (selectAll) selectAll.checked = allChecked;
+
+                this.updateBulkDeleteButton();
+            }
+        });
+
         // Фильтры для кабелей в списке объектов
         document.getElementById('cables-filter-object-type')?.addEventListener('change', () => {
             this.pagination.page = 1;
@@ -164,6 +198,7 @@ const App = {
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
         document.getElementById('btn-export').addEventListener('click', () => this.exportObjects());
+        document.getElementById('btn-delete-selected')?.addEventListener('click', () => this.deleteSelectedObjects());
 
         // Инциденты
         document.getElementById('btn-add-incident').addEventListener('click', () => this.showAddIncidentModal());
@@ -547,6 +582,8 @@ const App = {
     switchTab(tab) {
         this.currentTab = tab;
         this.pagination.page = 1;
+        this.selectedObjectIds.clear();
+        this.updateBulkDeleteButton();
 
         document.querySelectorAll('.tab').forEach(t => {
             t.classList.toggle('active', t.dataset.tab === tab);
@@ -733,12 +770,22 @@ const App = {
             cable_marking: 'Маркировка',
         };
 
+        // Сбрасываем выбор при перерисовке списка
+        this.selectedObjectIds.clear();
+        this.updateBulkDeleteButton();
+
+        const canBulkDelete = this.canDelete();
+
         // Заголовок
-        header.innerHTML = columns.map(col => `<th>${columnNames[col] || col}</th>`).join('') + '<th>Действия</th>';
+        header.innerHTML =
+            (canBulkDelete ? `<th style="width: 34px;"><input type="checkbox" id="select-all-objects"></th>` : '') +
+            columns.map(col => `<th>${columnNames[col] || col}</th>`).join('') +
+            '<th>Действия</th>';
 
         // Тело таблицы
         body.innerHTML = data.map(row => `
             <tr data-id="${row.id}">
+                ${canBulkDelete ? `<td><input type="checkbox" class="obj-select" data-id="${row.id}"></td>` : ''}
                 ${columns.map(col => `<td>${row[col] || '-'}</td>`).join('')}
                 <td>
                     ${Number(row.photo_count || 0) > 0 ? `
@@ -757,6 +804,69 @@ const App = {
                 </td>
             </tr>
         `).join('');
+    },
+
+    updateBulkDeleteButton() {
+        const btn = document.getElementById('btn-delete-selected');
+        if (!btn) return;
+        const count = this.selectedObjectIds?.size || 0;
+        const can = this.canDelete();
+        btn.classList.toggle('hidden', !can || count === 0);
+        btn.innerHTML = `<i class="fas fa-trash"></i> Удалить выбранные${count ? ` (${count})` : ''}`;
+    },
+
+    async deleteSelectedObjects() {
+        if (!this.canDelete()) {
+            this.notify('Недостаточно прав для удаления', 'error');
+            return;
+        }
+        const ids = Array.from(this.selectedObjectIds || []);
+        if (!ids.length) return;
+
+        if (!confirm(`Удалить выбранные записи (${ids.length})?`)) return;
+
+        const results = { ok: 0, failed: 0, errors: [] };
+        for (const id of ids) {
+            try {
+                await this.deleteObjectByTab(id);
+                results.ok += 1;
+            } catch (e) {
+                results.failed += 1;
+                results.errors.push({ id, message: e?.message || 'Ошибка' });
+            }
+        }
+
+        this.selectedObjectIds.clear();
+        this.updateBulkDeleteButton();
+
+        if (results.failed) {
+            this.notify(`Удалено: ${results.ok}, ошибок: ${results.failed}`, 'warning');
+            console.error('Bulk delete errors:', results.errors);
+        } else {
+            this.notify(`Удалено: ${results.ok}`, 'success');
+        }
+
+        this.loadObjects();
+        try { MapManager.loadAllLayers(); } catch (_) {}
+    },
+
+    deleteObjectByTab(id) {
+        switch (this.currentTab) {
+            case 'wells':
+                return API.wells.delete(id);
+            case 'directions':
+                return API.channelDirections.delete(id);
+            case 'channels':
+                return API.cableChannels.delete(id);
+            case 'markers':
+                return API.markerPosts.delete(id);
+            case 'unified_cables':
+                return API.unifiedCables.delete(id);
+            case 'groups':
+                return API.groups.delete(id);
+            default:
+                return Promise.reject(new Error('Неизвестный тип объекта'));
+        }
     },
 
     getPhotosObjectTable(tab) {
@@ -856,15 +966,15 @@ const App = {
         let html = '';
         
         if (page > 1) {
-            html += `<button onclick="App.goToPage(${page - 1})"><i class="fas fa-chevron-left"></i></button>`;
+            html += `<button type="button" onclick="App.goToPage(${page - 1}); return false;"><i class="fas fa-chevron-left"></i></button>`;
         }
 
         for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i++) {
-            html += `<button class="${i === page ? 'active' : ''}" onclick="App.goToPage(${i})">${i}</button>`;
+            html += `<button type="button" class="${i === page ? 'active' : ''}" onclick="App.goToPage(${i}); return false;">${i}</button>`;
         }
 
         if (page < pages) {
-            html += `<button onclick="App.goToPage(${page + 1})"><i class="fas fa-chevron-right"></i></button>`;
+            html += `<button type="button" onclick="App.goToPage(${page + 1}); return false;"><i class="fas fa-chevron-right"></i></button>`;
         }
 
         container.innerHTML = html;
@@ -874,7 +984,10 @@ const App = {
      * Переход на страницу
      */
     goToPage(page) {
-        this.pagination.page = page;
+        const p = parseInt(page, 10);
+        if (!p || p < 1) return;
+        if (this.pagination?.pages && p > this.pagination.pages) return;
+        this.pagination.page = p;
         this.loadObjects();
     },
 
