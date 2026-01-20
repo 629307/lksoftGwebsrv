@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS channel_directions (
     geom_msk86 GEOMETRY(LINESTRING, 200004),
     owner_id INTEGER REFERENCES owners(id) ON DELETE RESTRICT,
     type_id INTEGER REFERENCES object_types(id) ON DELETE RESTRICT,
+    status_id INTEGER REFERENCES object_status(id) ON DELETE RESTRICT,
     start_well_id INTEGER NOT NULL REFERENCES wells(id) ON DELETE RESTRICT,
     end_well_id INTEGER NOT NULL REFERENCES wells(id) ON DELETE RESTRICT,
     length_m DECIMAL(10,2),

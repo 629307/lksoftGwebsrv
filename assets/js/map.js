@@ -32,7 +32,7 @@ const MapManager = {
     // Подписи колодцев
     wellLabelsEnabled: true,
     wellLabelsLayer: null,
-    wellLabelsMinZoom: 15,
+    wellLabelsMinZoom: 14,
     initialViewLocked: true,
 
     // Режим группы (показываем только объекты группы)
@@ -63,7 +63,11 @@ const MapManager = {
         decommissioned: '#6b7280',
     },
 
-    selectedBoundsRect: null,
+    getPlannedOverrideColor(props, fallback) {
+        const code = props?.status_code;
+        if (code === 'planned' && props?.status_color) return props.status_color;
+        return fallback;
+    },
 
     rebuildWellLabelsFromWellsLayer() {
         if (!this.wellLabelsLayer) return;
@@ -92,7 +96,9 @@ const MapManager = {
                 const props = meta.properties || {};
                 const number = props.number;
                 if (!coords || !number) return;
-                addLabel(coords, number, props.type_color || this.colors.wells);
+                const base = props.type_color || this.colors.wells;
+                const color = this.getPlannedOverrideColor(props, base);
+                addLabel(coords, number, color);
             });
         } catch (_) {
             // ignore
@@ -254,7 +260,7 @@ const MapManager = {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
                         // Цвет символа колодца — из справочника "Виды объектов" (object_types.well.color)
-                        const color = this.colors.wells;
+                        const color = this.getPlannedOverrideColor(feature?.properties, this.colors.wells);
                         return L.circleMarker(latlng, {
                             radius: 8,
                             fillColor: color,
@@ -353,7 +359,7 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: this.colors.channels,
+                        color: this.getPlannedOverrideColor(feature?.properties, this.colors.channels),
                         weight: 3,
                         opacity: 0.8,
                     }),
@@ -409,7 +415,8 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
-                        const color = feature.properties.type_color || this.colors.markers;
+                        const base = feature.properties.type_color || this.colors.markers;
+                        const color = this.getPlannedOverrideColor(feature?.properties, base);
                         return L.marker(latlng, {
                             icon: L.divIcon({
                                 html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
@@ -472,7 +479,10 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: feature.properties.object_type_color || feature.properties.status_color || color,
+                        color: this.getPlannedOverrideColor(
+                            feature?.properties,
+                            feature.properties.object_type_color || feature.properties.status_color || color
+                        ),
                         weight: 2,
                         opacity: 0.8,
                         dashArray: type === 'aerial' ? '5, 5' : null,
@@ -863,31 +873,6 @@ const MapManager = {
         this.selectedLayer = layer || null;
         if (this.selectedLayer) {
             this.applySelectedShadow(this.selectedLayer, true);
-        }
-
-        // Рамка вокруг выбранного линейного объекта
-        if (this.selectedBoundsRect) {
-            try {
-                this.map.removeLayer(this.selectedBoundsRect);
-            } catch (_) {}
-            this.selectedBoundsRect = null;
-        }
-        // Только для линейных/площадных объектов (у точек getLatLng)
-        if (this.selectedLayer && typeof this.selectedLayer.getBounds === 'function' && typeof this.selectedLayer.getLatLng !== 'function') {
-            try {
-                const bounds = this.selectedLayer.getBounds();
-                if (bounds && bounds.isValid && bounds.isValid()) {
-                    this.selectedBoundsRect = L.rectangle(bounds, {
-                        color: '#f59e0b',
-                        weight: 2,
-                        dashArray: '6,4',
-                        fill: false,
-                        interactive: false,
-                    }).addTo(this.map);
-                }
-            } catch (_) {
-                // ignore
-            }
         }
     },
 
@@ -1527,9 +1512,10 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 const addPoint = (objectType, feature, latlng) => {
                     if (objectType === 'well') {
+                        const fill = this.getPlannedOverrideColor(feature?.properties, feature?.properties?.type_color || this.colors.wells);
                         const layer = L.circleMarker(latlng, {
                             radius: 8,
-                            fillColor: this.colors.wells,
+                            fillColor: fill,
                             color: '#fff',
                             weight: 2,
                             opacity: 1,
@@ -1543,7 +1529,8 @@ const MapManager = {
                         return;
                     }
                     if (objectType === 'marker_post') {
-                        const color = this.colors.markers;
+                        const base = feature?.properties?.type_color || this.colors.markers;
+                        const color = this.getPlannedOverrideColor(feature?.properties, base);
                         const layer = L.marker(latlng, {
                             icon: L.divIcon({
                                 html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
@@ -1561,6 +1548,13 @@ const MapManager = {
                 };
 
                 const addLine = (layerGroup, objectType, feature, latlngs, style) => {
+                    const props = feature?.properties;
+                    if (props?.status_code === 'planned' && props?.status_color) {
+                        style = { ...(style || {}), color: props.status_color };
+                    } else if (props?.type_color) {
+                        // для старых кабелей/направлений в группе используем цвет вида объекта
+                        style = { ...(style || {}), color: props.type_color };
+                    }
                     const layer = L.polyline(latlngs, style).addTo(layerGroup);
                     layer._igsMeta = { objectType, properties: feature.properties };
                     layer.on('click', (e) => {

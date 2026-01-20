@@ -833,6 +833,19 @@ const App = {
                             <i class="fas fa-edit"></i>
                         </button>
                     ` : ''}
+                    ${this.canDelete() ? `
+                        ${this.currentTab === 'channels' ? `
+                            ${(Number(row.channel_number || 0) === Number(row.max_channel_number || -1)) ? `
+                                <button class="btn btn-sm btn-danger" onclick="App.deleteObject('${this.currentTab}', ${row.id})" title="Удалить">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            ` : ``}
+                        ` : `
+                            <button class="btn btn-sm btn-danger" onclick="App.deleteObject('${this.currentTab}', ${row.id})" title="Удалить">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        `}
+                    ` : ''}
                 </td>
             </tr>
         `).join('');
@@ -852,12 +865,35 @@ const App = {
             this.notify('Недостаточно прав для удаления', 'error');
             return;
         }
-        const ids = Array.from(this.selectedObjectIds || []);
+        let ids = Array.from(this.selectedObjectIds || []);
         if (!ids.length) return;
 
         if (!confirm(`Удалить выбранные записи (${ids.length})?`)) return;
 
         const results = { ok: 0, failed: 0, errors: [] };
+
+        // Для "Каналы" удаляем строго с последнего в каждом направлении
+        if (this.currentTab === 'channels') {
+            try {
+                const details = [];
+                for (const id of ids) {
+                    const resp = await API.cableChannels.get(id);
+                    const ch = resp?.data || resp;
+                    if (ch && ch.id) details.push(ch);
+                }
+                // Группируем по направлению и сортируем по номеру канала DESC
+                details.sort((a, b) => {
+                    const da = Number(a.direction_id || 0);
+                    const db = Number(b.direction_id || 0);
+                    if (da !== db) return da - db;
+                    return Number(b.channel_number || 0) - Number(a.channel_number || 0);
+                });
+                ids = details.map(d => d.id);
+            } catch (_) {
+                // если не удалось получить детали — оставим исходный порядок
+            }
+        }
+
         for (const id of ids) {
             try {
                 await this.deleteObjectByTab(id);
@@ -1255,6 +1291,10 @@ const App = {
                         <div class="form-group">
                             <label>Собственник</label>
                             <select name="owner_id" id="modal-owner-select" data-value="${obj.owner_id || ''}"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Состояние</label>
+                            <select name="status_id" id="modal-status-select" data-value="${obj.status_id || ''}"></select>
                         </div>
                         <div class="form-group">
                             <label>Длина (м)</label>
@@ -2000,7 +2040,7 @@ const App = {
                 </div>
                 <div class="form-group">
                     <label>Диаметр (мм)</label>
-                    <input type="number" name="diameter_mm">
+                    <input type="number" name="diameter_mm" value="110">
                 </div>
                 <div class="form-group">
                     <label>Примечания</label>
@@ -2933,6 +2973,10 @@ const App = {
                         <label>Собственник</label>
                         <select name="owner_id" id="modal-owner-select"></select>
                     </div>
+                    <div class="form-group">
+                        <label>Состояние</label>
+                        <select name="status_id" id="modal-status-select"></select>
+                    </div>
                     <div class="form-group" style="display: none;">
                         <label>Вид</label>
                         <select name="type_id" id="modal-type-select"></select>
@@ -3581,6 +3625,10 @@ const App = {
                 <div class="form-group">
                     <label>Собственник</label>
                     <select name="owner_id" id="modal-owner-select"></select>
+                </div>
+                <div class="form-group">
+                    <label>Состояние</label>
+                    <select name="status_id" id="modal-status-select"></select>
                 </div>
                 <div class="form-group">
                     <label>Длина (м)</label>
@@ -4663,7 +4711,7 @@ const App = {
                 </div>
                 <div class="form-group">
                     <label>Название *</label>
-                    <input type="text" name="name" value="${data.name || ''}" required ${data.id ? 'disabled style="background: var(--bg-tertiary);"' : ''}>
+                    <input type="text" name="name" value="${data.name || ''}" required>
                 </div>
                 <div class="form-group">
                     <label>Описание</label>

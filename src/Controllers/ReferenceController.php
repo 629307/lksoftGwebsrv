@@ -269,9 +269,9 @@ class ReferenceController extends BaseController
 
         $data = $this->request->only($config['fields']);
 
-        // Для видов объектов разрешаем редактировать только описание/иконку/цвет
+        // Для видов объектов разрешаем редактировать только название/описание/иконку/цвет
         if ($type === 'object_types') {
-            $data = array_intersect_key($data, array_flip(['description', 'icon', 'color']));
+            $data = array_intersect_key($data, array_flip(['name', 'description', 'icon', 'color']));
         }
         
         // Преобразование булевых значений

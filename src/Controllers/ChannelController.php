@@ -54,6 +54,7 @@ class ChannelController extends BaseController
         $filters = $this->buildFilters([
             'owner_id' => 'cd.owner_id',
             'type_id' => 'cd.type_id',
+            'status_id' => 'cd.status_id',
             'start_well_id' => 'cd.start_well_id',
             'end_well_id' => 'cd.end_well_id',
             '_search' => ['cd.number', 'cd.notes'],
@@ -73,11 +74,12 @@ class ChannelController extends BaseController
         $sql = "SELECT cd.id, cd.number, 
                        ST_AsGeoJSON(cd.geom_wgs84)::json as geometry,
                        ST_Length(cd.geom_wgs84::geography) as calculated_length,
-                       cd.owner_id, cd.type_id, cd.start_well_id, cd.end_well_id,
+                       cd.owner_id, cd.type_id, cd.status_id, cd.start_well_id, cd.end_well_id,
                        cd.length_m, cd.notes,
                        (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'channel_directions' AND op.object_id = cd.id) as photo_count,
                        o.name as owner_name,
                        ot.name as type_name,
+                       os.code as status_code, os.name as status_name, os.color as status_color,
                        sw.number as start_well_number,
                        ew.number as end_well_number,
                        (SELECT COUNT(*) FROM cable_channels WHERE direction_id = cd.id) as channel_count,
@@ -85,6 +87,7 @@ class ChannelController extends BaseController
                 FROM channel_directions cd
                 LEFT JOIN owners o ON cd.owner_id = o.id
                 LEFT JOIN object_types ot ON cd.type_id = ot.id
+                LEFT JOIN object_status os ON cd.status_id = os.id
                 LEFT JOIN wells sw ON cd.start_well_id = sw.id
                 LEFT JOIN wells ew ON cd.end_well_id = ew.id";
         
@@ -110,6 +113,7 @@ class ChannelController extends BaseController
         $filters = $this->buildFilters([
             'owner_id' => 'cd.owner_id',
             'type_id' => 'cd.type_id',
+            'status_id' => 'cd.status_id',
         ]);
 
         $where = $filters['where'];
@@ -125,15 +129,17 @@ class ChannelController extends BaseController
 
         $sql = "SELECT cd.id, cd.number, 
                        ST_AsGeoJSON(cd.geom_wgs84)::json as geometry,
-                       cd.owner_id, cd.type_id, cd.length_m,
+                       cd.owner_id, cd.type_id, cd.status_id, cd.length_m,
                        o.name as owner_name,
                        ot.name as type_name, ot.color as type_color,
+                       os.code as status_code, os.name as status_name, os.color as status_color,
                        sw.number as start_well,
                        ew.number as end_well,
                        (SELECT COUNT(*) FROM cable_channels WHERE direction_id = cd.id) as channels
                 FROM channel_directions cd
                 LEFT JOIN owners o ON cd.owner_id = o.id
                 LEFT JOIN object_types ot ON cd.type_id = ot.id
+                LEFT JOIN object_status os ON cd.status_id = os.id
                 LEFT JOIN wells sw ON cd.start_well_id = sw.id
                 LEFT JOIN wells ew ON cd.end_well_id = ew.id
                 WHERE {$where}";
@@ -172,11 +178,13 @@ class ChannelController extends BaseController
                     ST_Length(cd.geom_wgs84::geography) as calculated_length,
                     o.name as owner_name,
                     ot.name as type_name,
+                    os.code as status_code, os.name as status_name, os.color as status_color,
                     sw.number as start_well_number,
                     ew.number as end_well_number
              FROM channel_directions cd
              LEFT JOIN owners o ON cd.owner_id = o.id
              LEFT JOIN object_types ot ON cd.type_id = ot.id
+             LEFT JOIN object_status os ON cd.status_id = os.id
              LEFT JOIN wells sw ON cd.start_well_id = sw.id
              LEFT JOIN wells ew ON cd.end_well_id = ew.id
              WHERE cd.id = :id",
@@ -253,10 +261,10 @@ class ChannelController extends BaseController
             Response::error('Один или оба колодца не найдены', 404);
         }
 
-        $data = $this->request->only(['number', 'owner_id', 'type_id', 'start_well_id', 'end_well_id', 'length_m', 'notes']);
+        $data = $this->request->only(['number', 'owner_id', 'type_id', 'status_id', 'start_well_id', 'end_well_id', 'length_m', 'notes']);
         
         // Убедиться, что все необязательные поля присутствуют (даже если null)
-        $optionalFields = ['owner_id', 'type_id', 'notes'];
+        $optionalFields = ['owner_id', 'type_id', 'status_id', 'notes'];
         foreach ($optionalFields as $field) {
             if (!array_key_exists($field, $data)) {
                 $data[$field] = null;
@@ -280,12 +288,12 @@ class ChannelController extends BaseController
                         FROM wells sw, wells ew
                         WHERE sw.id = :start_well_id AND ew.id = :end_well_id
                     )
-                    INSERT INTO channel_directions (number, geom_wgs84, geom_msk86, owner_id, type_id, 
+                    INSERT INTO channel_directions (number, geom_wgs84, geom_msk86, owner_id, type_id, status_id,
                                                     start_well_id, end_well_id, length_m, notes, created_by, updated_by)
                     SELECT :number,
                            ST_MakeLine(start_wgs84, end_wgs84),
                            ST_MakeLine(start_msk86, end_msk86),
-                           :owner_id, :type_id, :start_well_id2, :end_well_id2, 
+                           :owner_id, :type_id, :status_id, :start_well_id2, :end_well_id2, 
                            ROUND(ST_Length(ST_MakeLine(start_wgs84, end_wgs84)::geography)::numeric, 2),
                            :notes, :created_by, :updated_by
                     FROM well_geoms
@@ -347,7 +355,7 @@ class ChannelController extends BaseController
         }
 
         // length_m рассчитывается автоматически (редактирование запрещено)
-        $data = $this->request->only(['number', 'owner_id', 'type_id', 'notes']);
+        $data = $this->request->only(['number', 'owner_id', 'type_id', 'status_id', 'notes']);
         $data = array_filter($data, fn($v) => $v !== null);
 
         $user = Auth::user();
@@ -557,7 +565,9 @@ class ChannelController extends BaseController
         $totalRow = $this->db->fetch($totalSql, $params);
         $total = (int) ($totalRow['total'] ?? 0);
 
-        $sql = "SELECT cc.id, cc.channel_number, cc.direction_id, cc.kind_id, cc.status_id,
+        $sql = "SELECT cc.id, cc.channel_number, cc.direction_id,
+                       MAX(cc.channel_number) OVER (PARTITION BY cc.direction_id) as max_channel_number,
+                       cc.kind_id, cc.status_id,
                        cc.diameter_mm, cc.material, cc.notes,
                        (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'cable_channels' AND op.object_id = cc.id) as photo_count,
                        cd.number as direction_number,

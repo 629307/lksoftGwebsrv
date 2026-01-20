@@ -211,7 +211,7 @@ class UnifiedCableController extends BaseController
                        c.owner_id, o.name as owner_name,
                        ot.code as object_type_code, ot.name as object_type_name, ot.color as object_type_color,
                        ct.name as cable_type_name,
-                       os.name as status_name, os.color as status_color,
+                       os.code as status_code, os.name as status_name, os.color as status_color,
                        cc.fiber_count, cc.marking
                 FROM cables c
                 LEFT JOIN cable_catalog cc ON c.cable_catalog_id = cc.id

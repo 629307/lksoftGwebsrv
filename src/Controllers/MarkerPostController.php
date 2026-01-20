@@ -148,7 +148,7 @@ class MarkerPostController extends BaseController
                        mp.owner_id, mp.status_id,
                        o.name as owner_name,
                        ot.name as type_name, ot.color as type_color,
-                       os.name as status_name, os.color as status_color
+                       os.code as status_code, os.name as status_name, os.color as status_color
                 FROM marker_posts mp
                 LEFT JOIN owners o ON mp.owner_id = o.id
                 LEFT JOIN object_types ot ON mp.type_id = ot.id

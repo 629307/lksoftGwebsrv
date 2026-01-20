@@ -298,9 +298,13 @@ class GroupController extends BaseController
 
         // Колодцы (с фильтрацией по геометрии)
         $wells = $this->db->fetchAll(
-            "SELECT w.id, w.number, ST_AsGeoJSON(w.geom_wgs84)::json as geometry, 'well' as object_type
+            "SELECT w.id, w.number, ST_AsGeoJSON(w.geom_wgs84)::json as geometry, 'well' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_wells gw
              JOIN wells w ON gw.well_id = w.id
+             LEFT JOIN object_types ot ON w.type_id = ot.id
+             LEFT JOIN object_status os ON w.status_id = os.id
              WHERE gw.group_id = :id AND w.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
@@ -314,9 +318,13 @@ class GroupController extends BaseController
 
         // Направления (с фильтрацией по геометрии)
         $directions = $this->db->fetchAll(
-            "SELECT cd.id, cd.number, ST_AsGeoJSON(cd.geom_wgs84)::json as geometry, 'channel_direction' as object_type
+            "SELECT cd.id, cd.number, ST_AsGeoJSON(cd.geom_wgs84)::json as geometry, 'channel_direction' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_channel_directions gcd
              JOIN channel_directions cd ON gcd.channel_direction_id = cd.id
+             LEFT JOIN object_types ot ON cd.type_id = ot.id
+             LEFT JOIN object_status os ON cd.status_id = os.id
              WHERE gcd.group_id = :id AND cd.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
@@ -330,9 +338,13 @@ class GroupController extends BaseController
 
         // Кабели в грунте (с фильтрацией по геометрии)
         $groundCables = $this->db->fetchAll(
-            "SELECT gc.id, gc.number, ST_AsGeoJSON(gc.geom_wgs84)::json as geometry, 'ground_cable' as object_type
+            "SELECT gc.id, gc.number, ST_AsGeoJSON(gc.geom_wgs84)::json as geometry, 'ground_cable' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_ground_cables ggc
              JOIN ground_cables gc ON ggc.ground_cable_id = gc.id
+             LEFT JOIN object_types ot ON gc.type_id = ot.id
+             LEFT JOIN object_status os ON gc.status_id = os.id
              WHERE ggc.group_id = :id AND gc.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
@@ -346,9 +358,13 @@ class GroupController extends BaseController
 
         // Воздушные кабели (с фильтрацией по геометрии)
         $aerialCables = $this->db->fetchAll(
-            "SELECT ac.id, ac.number, ST_AsGeoJSON(ac.geom_wgs84)::json as geometry, 'aerial_cable' as object_type
+            "SELECT ac.id, ac.number, ST_AsGeoJSON(ac.geom_wgs84)::json as geometry, 'aerial_cable' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_aerial_cables gac
              JOIN aerial_cables ac ON gac.aerial_cable_id = ac.id
+             LEFT JOIN object_types ot ON ac.type_id = ot.id
+             LEFT JOIN object_status os ON ac.status_id = os.id
              WHERE gac.group_id = :id AND ac.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
@@ -362,9 +378,13 @@ class GroupController extends BaseController
 
         // Кабели в канализации (с фильтрацией по геометрии)
         $ductCables = $this->db->fetchAll(
-            "SELECT dc.id, dc.number, ST_AsGeoJSON(dc.geom_wgs84)::json as geometry, 'duct_cable' as object_type
+            "SELECT dc.id, dc.number, ST_AsGeoJSON(dc.geom_wgs84)::json as geometry, 'duct_cable' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_duct_cables gdc
              JOIN duct_cables dc ON gdc.duct_cable_id = dc.id
+             LEFT JOIN object_types ot ON dc.type_id = ot.id
+             LEFT JOIN object_status os ON dc.status_id = os.id
              WHERE gdc.group_id = :id AND dc.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
@@ -378,9 +398,13 @@ class GroupController extends BaseController
 
         // Столбики (с фильтрацией по геометрии)
         $markerPosts = $this->db->fetchAll(
-            "SELECT mp.id, mp.number, ST_AsGeoJSON(mp.geom_wgs84)::json as geometry, 'marker_post' as object_type
+            "SELECT mp.id, mp.number, ST_AsGeoJSON(mp.geom_wgs84)::json as geometry, 'marker_post' as object_type,
+                    ot.color as type_color,
+                    os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_marker_posts gmp
              JOIN marker_posts mp ON gmp.marker_post_id = mp.id
+             LEFT JOIN object_types ot ON mp.type_id = ot.id
+             LEFT JOIN object_status os ON mp.status_id = os.id
              WHERE gmp.group_id = :id AND mp.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]
         );
