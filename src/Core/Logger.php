@@ -9,13 +9,12 @@ namespace App\Core;
 class Logger
 {
     private static ?Logger $instance = null;
-    private string $logFile;
     private array $logLevels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'];
 
     private function __construct()
     {
-        $this->logFile = __DIR__ . '/../../dmessite.log';
-        $this->ensureLogFileExists();
+        // Логирование через стандартный механизм PHP (error_log).
+        // Ведение отдельного файла dmessite.log отключено.
     }
 
     public static function getInstance(): Logger
@@ -26,15 +25,11 @@ class Logger
         return self::$instance;
     }
 
-    /**
-     * Убедиться, что файл лога существует
-     */
-    private function ensureLogFileExists(): void
+    private function write(string $logEntry): void
     {
-        if (!file_exists($this->logFile)) {
-            touch($this->logFile);
-            chmod($this->logFile, 0666);
-        }
+        // error_log пишет в стандартный error_log PHP/веб-сервера (настройка окружения).
+        // Не создаёт/не использует dmessite.log в корне проекта.
+        error_log($logEntry);
     }
 
     /**
@@ -68,7 +63,7 @@ class Logger
             $contextStr
         );
 
-        file_put_contents($this->logFile, $logEntry, FILE_APPEND | LOCK_EX);
+        $this->write($logEntry);
     }
 
     /**
@@ -131,7 +126,8 @@ class Logger
      */
     public function getLogFile(): string
     {
-        return $this->logFile;
+        // Файл dmessite.log больше не используется.
+        return '';
     }
 
     /**
@@ -139,12 +135,8 @@ class Logger
      */
     public function getLastEntries(int $count = 100): array
     {
-        if (!file_exists($this->logFile)) {
-            return [];
-        }
-
-        $lines = file($this->logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        return array_slice($lines, -$count);
+        // Хвост лога из файла недоступен (ведётся в error_log окружения).
+        return [];
     }
 
     /**
@@ -152,7 +144,7 @@ class Logger
      */
     public function clear(): void
     {
-        file_put_contents($this->logFile, '');
+        // Нечего очищать: dmessite.log отключён.
     }
 
     // Предотвращаем клонирование
