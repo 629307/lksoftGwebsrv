@@ -1396,17 +1396,20 @@ const MapManager = {
             let lat, lng;
             let bounds = null;
             let cableGeometry = null;
+            let highlightRouteDirections = false;
 
-            const getLinePoints = (geom) => {
-                if (!geom || !geom.type) return [];
-                if (geom.type === 'LineString' && Array.isArray(geom.coordinates)) {
-                    return geom.coordinates;
+            const boundsFromGeometry = (geom) => {
+                try {
+                    if (!geom || !geom.type) return null;
+                    const tmp = L.geoJSON({
+                        type: 'FeatureCollection',
+                        features: [{ type: 'Feature', geometry: geom, properties: {} }],
+                    });
+                    const b = tmp.getBounds();
+                    return (b && b.isValid()) ? b : null;
+                } catch (_) {
+                    return null;
                 }
-                if (geom.type === 'MultiLineString' && Array.isArray(geom.coordinates)) {
-                    // flatten lines -> points
-                    return geom.coordinates.flat();
-                }
-                return [];
             };
 
             switch (objectType) {
@@ -1468,31 +1471,43 @@ const MapManager = {
                         const geom = typeof response.data.geometry === 'string' 
                             ? JSON.parse(response.data.geometry) 
                             : response.data.geometry;
-                        if (geom && geom.coordinates) {
-                            const coords = getLinePoints(geom);
-                            const midIdx = Math.floor(coords.length / 2);
-                            lng = coords[midIdx][0];
-                            lat = coords[midIdx][1];
-                            const latLngs = coords.map(c => [c[1], c[0]]);
-                            bounds = L.latLngBounds(latLngs);
+                        bounds = boundsFromGeometry(geom) || bounds;
+                        if (bounds) {
+                            const c = bounds.getCenter();
+                            lat = c.lat;
+                            lng = c.lng;
                         }
                     }
                     break;
                     
                 case 'unified_cables':
                     response = await API.unifiedCables.get(objectId);
-                    if (response.success && response.data && response.data.geometry) {
-                        const geom = typeof response.data.geometry === 'string' 
-                            ? JSON.parse(response.data.geometry) 
-                            : response.data.geometry;
-                        if (geom && geom.coordinates) {
-                            const coords = getLinePoints(geom);
-                            const midIdx = Math.floor(coords.length / 2);
-                            lng = coords[midIdx][0];
-                            lat = coords[midIdx][1];
-                            const latLngs = coords.map(c => [c[1], c[0]]);
-                            bounds = L.latLngBounds(latLngs);
+                    if (response.success && response.data) {
+                        const rawGeom = response.data.geometry;
+                        const geom = typeof rawGeom === 'string' ? JSON.parse(rawGeom) : rawGeom;
+                        if (geom && geom.type) {
+                            bounds = boundsFromGeometry(geom) || bounds;
+                            if (bounds) {
+                                const c = bounds.getCenter();
+                                lat = c.lat;
+                                lng = c.lng;
+                            }
                             cableGeometry = geom;
+                        } else if (response.data.object_type_code === 'cable_duct') {
+                            // Фоллбек: если геометрии нет (маршрут может быть только через направления)
+                            try {
+                                const route = await API.unifiedCables.routeDirectionsGeojson(objectId);
+                                if (route && route.type === 'FeatureCollection') {
+                                    const b = L.geoJSON(route).getBounds();
+                                    if (b && b.isValid()) {
+                                        bounds = b;
+                                        const c = bounds.getCenter();
+                                        lat = c.lat;
+                                        lng = c.lng;
+                                        highlightRouteDirections = true;
+                                    }
+                                }
+                            } catch (_) {}
                         }
                     }
                     break;
@@ -1513,8 +1528,12 @@ const MapManager = {
             }, 100);
 
             // Для кабелей дополнительно делаем подсветку "без фильтров" (поверх слоёв)
-            if (objectType === 'unified_cables' && cableGeometry) {
-                setTimeout(() => this.highlightCableGeometryByGeoJson(cableGeometry), 180);
+            if (objectType === 'unified_cables') {
+                if (cableGeometry && cableGeometry.type) {
+                    setTimeout(() => this.highlightCableGeometryByGeoJson(cableGeometry), 180);
+                } else if (highlightRouteDirections) {
+                    setTimeout(() => this.highlightCableRouteDirections(objectId), 180);
+                }
             }
 
         } catch (error) {

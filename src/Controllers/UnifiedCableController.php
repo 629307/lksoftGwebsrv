@@ -250,7 +250,16 @@ class UnifiedCableController extends BaseController
     {
         $cable = $this->db->fetch(
             "SELECT c.*, 
-                    ST_AsGeoJSON(c.geom_wgs84)::json as geometry,
+                    CASE
+                        WHEN ot.code = 'cable_duct' THEN (
+                            SELECT ST_AsGeoJSON(ST_Collect(cd.geom_wgs84))::json
+                            FROM cable_route_channels crc
+                            JOIN cable_channels cc2 ON crc.cable_channel_id = cc2.id
+                            JOIN channel_directions cd ON cc2.direction_id = cd.id
+                            WHERE crc.cable_id = c.id AND cd.geom_wgs84 IS NOT NULL
+                        )
+                        ELSE ST_AsGeoJSON(c.geom_wgs84)::json
+                    END as geometry,
                     cc.marking as cable_marking, cc.fiber_count,
                     ct.code as cable_type_code, ct.name as cable_type_name,
                     o.name as owner_name,
