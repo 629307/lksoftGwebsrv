@@ -101,7 +101,7 @@ const MapManager = {
                 const props = meta.properties || {};
                 const number = props.number;
                 if (!coords || !number) return;
-                const base = props.type_color || this.colors.wells;
+                const base = props.status_color || props.type_color || this.colors.wells;
                 const color = this.getPlannedOverrideColor(props, base);
                 addLabel(coords, number, color);
             };
@@ -804,7 +804,7 @@ const MapManager = {
             </div>`;
         }
         if (objectType === 'channel_direction') {
-            const canIncrease = (window.App && typeof window.App.canWrite === 'function' && window.App.canWrite());
+            const canIncrease = (typeof App !== 'undefined' && typeof App.canWrite === 'function' && App.canWrite());
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInDirection(${properties.id})">
                     Показать кабели в направлении
@@ -840,7 +840,9 @@ const MapManager = {
         // Загружаем группы (после того как panel.dataset заполнен)
         setTimeout(() => {
             try {
-                window.App?.loadObjectGroupsIntoInfo?.(objectType, properties.id);
+                if (typeof App !== 'undefined' && typeof App.loadObjectGroupsIntoInfo === 'function') {
+                    App.loadObjectGroupsIntoInfo(objectType, properties.id);
+                }
             } catch (_) {}
         }, 0);
     },
