@@ -306,6 +306,43 @@ const App = {
             });
         }
 
+        // Alt + hotkey из "Настройки" = запуск инструмента панели карты
+        if (!this._boundAltHotkeys) {
+            this._boundAltHotkeys = true;
+            document.addEventListener('keydown', (e) => {
+                try {
+                    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+                    const key = (e.key || '').toString();
+                    if (!key || key.length !== 1) return;
+
+                    // Не перехватываем ввод в полях
+                    const t = e.target;
+                    const tag = (t?.tagName || '').toUpperCase();
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return;
+
+                    const k = key.toLowerCase();
+                    const s = this.settings || {};
+                    const map = {
+                        [String(s.hotkey_add_direction || '').toLowerCase()]: 'btn-add-direction-map',
+                        [String(s.hotkey_add_well || '').toLowerCase()]: 'btn-add-well-map',
+                        [String(s.hotkey_add_marker || '').toLowerCase()]: 'btn-add-marker-map',
+                        [String(s.hotkey_add_duct_cable || '').toLowerCase()]: 'btn-add-duct-cable-map',
+                        [String(s.hotkey_add_ground_cable || '').toLowerCase()]: 'btn-add-ground-cable-map',
+                        [String(s.hotkey_add_aerial_cable || '').toLowerCase()]: 'btn-add-aerial-cable-map',
+                    };
+                    const btnId = map[k];
+                    if (!btnId || k === '') return;
+                    const btn = document.getElementById(btnId);
+                    if (!btn) return;
+
+                    e.preventDefault();
+                    btn.click();
+                } catch (_) {
+                    // ignore
+                }
+            });
+        }
+
         // Панель инструментов карты
         document.getElementById('btn-add-direction-map')?.addEventListener('click', () => MapManager.startAddDirectionMode());
         document.getElementById('btn-add-well-map')?.addEventListener('click', () => MapManager.startAddingObject('wells'));
@@ -2846,6 +2883,12 @@ const App = {
         const len = document.getElementById('settings-cable-well-len');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
+        const hkDir = document.getElementById('settings-hotkey-add-direction');
+        const hkWell = document.getElementById('settings-hotkey-add-well');
+        const hkMarker = document.getElementById('settings-hotkey-add-marker');
+        const hkDuct = document.getElementById('settings-hotkey-add-duct-cable');
+        const hkGround = document.getElementById('settings-hotkey-add-ground-cable');
+        const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable');
 
         if (z) z.value = (this.settings.map_default_zoom ?? MapManager.defaultZoom ?? 14);
         if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
@@ -2853,6 +2896,12 @@ const App = {
         if (len) len.value = (this.settings.cable_in_well_length_m ?? 3);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
+        if (hkDir) hkDir.value = (this.settings.hotkey_add_direction ?? '');
+        if (hkWell) hkWell.value = (this.settings.hotkey_add_well ?? '');
+        if (hkMarker) hkMarker.value = (this.settings.hotkey_add_marker ?? '');
+        if (hkDuct) hkDuct.value = (this.settings.hotkey_add_duct_cable ?? '');
+        if (hkGround) hkGround.value = (this.settings.hotkey_add_ground_cable ?? '');
+        if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
     },
 
     async saveSettings() {
@@ -2866,6 +2915,27 @@ const App = {
         const len = document.getElementById('settings-cable-well-len')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
+        const hkDir = document.getElementById('settings-hotkey-add-direction')?.value;
+        const hkWell = document.getElementById('settings-hotkey-add-well')?.value;
+        const hkMarker = document.getElementById('settings-hotkey-add-marker')?.value;
+        const hkDuct = document.getElementById('settings-hotkey-add-duct-cable')?.value;
+        const hkGround = document.getElementById('settings-hotkey-add-ground-cable')?.value;
+        const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable')?.value;
+
+        const normalizeHotkey = (v) => {
+            const s = (v ?? '').toString().trim();
+            if (!s) return '';
+            return s.length ? s[0] : '';
+        };
+        const validateHotkey = (label, v) => {
+            const s = normalizeHotkey(v);
+            if (!s) return '';
+            if (!/^[a-z0-9]$/i.test(s)) {
+                this.notify(`Hotkey для "${label}" должен быть одной латинской буквой или цифрой`, 'error');
+                throw new Error('invalid_hotkey');
+            }
+            return s.toLowerCase();
+        };
 
         const payload = {
             map_default_zoom: z,
@@ -2875,6 +2945,17 @@ const App = {
             url_geoproj: geo,
             url_cadastre: cad,
         };
+        try {
+            payload.hotkey_add_direction = validateHotkey('Добавить направление', hkDir);
+            payload.hotkey_add_well = validateHotkey('Добавить колодец', hkWell);
+            payload.hotkey_add_marker = validateHotkey('Добавить столбик', hkMarker);
+            payload.hotkey_add_duct_cable = validateHotkey('Добавить кабель в канализации', hkDuct);
+            payload.hotkey_add_ground_cable = validateHotkey('Добавить кабель в грунте', hkGround);
+            payload.hotkey_add_aerial_cable = validateHotkey('Добавить воздушный кабель', hkAerial);
+        } catch (e) {
+            if (e?.message === 'invalid_hotkey') return;
+            // continue - unexpected
+        }
 
         try {
             const resp = await API.settings.update(payload);

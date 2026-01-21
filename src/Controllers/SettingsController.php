@@ -52,6 +52,13 @@ class SettingsController extends BaseController
             'cable_in_well_length_m',
             'url_geoproj',
             'url_cadastre',
+            // Hotkeys: Alt + <символ> для инструментов карты
+            'hotkey_add_direction',
+            'hotkey_add_well',
+            'hotkey_add_marker',
+            'hotkey_add_duct_cable',
+            'hotkey_add_ground_cable',
+            'hotkey_add_aerial_cable',
         ];
 
         $toSave = array_intersect_key($data, array_flip($allowed));
