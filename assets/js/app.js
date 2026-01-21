@@ -10,6 +10,7 @@ const App = {
     pagination: { page: 1, limit: 50, total: 0 },
     incidentDraftRelatedObjects: [],
     selectedObjectIds: new Set(),
+    _contractsPanelLoaded: false,
 
     /**
      * Инициализация приложения
@@ -118,15 +119,7 @@ const App = {
 
         // Навигация
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const panel = item.dataset.panel;
-                const ref = item.dataset.ref;
-                this.switchPanel(panel);
-                if (ref) {
-                    // Контракты вынесены в отдельный пункт меню: открываем справочник сразу
-                    setTimeout(() => this.showReference(ref), 0);
-                }
-            });
+            item.addEventListener('click', () => this.switchPanel(item.dataset.panel));
         });
 
         // Переключение темы
@@ -226,6 +219,9 @@ const App = {
         });
         document.getElementById('btn-back-refs').addEventListener('click', () => this.hideReference());
         document.getElementById('btn-add-ref').addEventListener('click', () => this.showAddReferenceModal());
+
+        // Контракты (отдельная панель)
+        document.getElementById('btn-add-contract')?.addEventListener('click', () => this.showAddContractModal());
 
         // Админка
         document.getElementById('btn-add-user').addEventListener('click', () => this.showAddUserModal());
@@ -456,6 +452,9 @@ const App = {
                 break;
             case 'incidents':
                 this.loadIncidents();
+                break;
+            case 'contracts':
+                this.loadContractsPanel();
                 break;
             case 'admin':
                 this.loadUsers();
@@ -2613,6 +2612,68 @@ const App = {
         this.currentReference = null;
         document.querySelector('.references-grid').classList.remove('hidden');
         document.getElementById('reference-content').classList.add('hidden');
+    },
+
+    async loadContractsPanel() {
+        // Контракты — отдельный раздел (не "Справочники")
+        this.currentReference = 'contracts';
+        const header = document.getElementById('contracts-table-header');
+        const body = document.getElementById('contracts-table-body');
+        if (!header || !body) return;
+
+        // Кнопка "Добавить" доступна администратору и роли "Пользователь" (при write)
+        document.getElementById('btn-add-contract')?.classList.toggle('hidden', !this.canManageReferenceType('contracts'));
+
+        header.innerHTML = '<th>Загрузка...</th>';
+        body.innerHTML = `<tr><td>Загрузка...</td></tr>`;
+
+        try {
+            const resp = await API.references.list('contracts', { page: 1, limit: 500 });
+            const data = resp?.data || [];
+            const canManage = this.canManageReferenceType('contracts');
+
+            // Колонки как в справочнике contracts
+            const columns = ['number', 'name', 'owner_id', 'landlord_id', 'start_date', 'end_date', 'status', 'amount', 'notes'];
+            const labels = {
+                number: 'Номер',
+                name: 'Название',
+                owner_id: 'Арендатор',
+                landlord_id: 'Арендодатель',
+                start_date: 'Дата начала',
+                end_date: 'Дата окончания',
+                status: 'Статус',
+                amount: 'Сумма',
+                notes: 'Примечания',
+            };
+
+            header.innerHTML =
+                columns.map(c => `<th>${labels[c] || c}</th>`).join('') +
+                (canManage ? '<th>Действия</th>' : '');
+
+            const fmt = (v) => (v === null || v === undefined || v === '' ? '-' : String(v));
+
+            body.innerHTML = (data || []).map(row => `
+                <tr>
+                    ${columns.map(c => `<td>${fmt(row[c])}</td>`).join('')}
+                    ${canManage ? `
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="App.editReference(${row.id})" title="Редактировать">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                        </td>
+                    ` : ''}
+                </tr>
+            `).join('') || `<tr><td colspan="${canManage ? columns.length + 1 : columns.length}">Нет данных</td></tr>`;
+        } catch (e) {
+            header.innerHTML = '<th>Ошибка</th>';
+            body.innerHTML = `<tr><td>Ошибка загрузки</td></tr>`;
+        }
+    },
+
+    showAddContractModal() {
+        this.currentReference = 'contracts';
+        // Переиспользуем существующую форму справочника
+        this.showAddReferenceModal();
     },
 
     /**
@@ -5092,7 +5153,11 @@ const App = {
             if (response.success) {
                 this.hideModal();
                 this.notify('Запись создана', 'success');
-                this.showReference(this.currentReference);
+                if (this.currentPanel === 'contracts' && this.currentReference === 'contracts') {
+                    this.loadContractsPanel();
+                } else {
+                    this.showReference(this.currentReference);
+                }
             } else {
                 this.notify(response.message || 'Ошибка', 'error');
             }
@@ -5121,7 +5186,11 @@ const App = {
             if (response.success) {
                 this.hideModal();
                 this.notify('Запись обновлена', 'success');
-                this.showReference(this.currentReference);
+                if (this.currentPanel === 'contracts' && this.currentReference === 'contracts') {
+                    this.loadContractsPanel();
+                } else {
+                    this.showReference(this.currentReference);
+                }
                 if (this.currentReference === 'object_types') {
                     this.refreshObjectTypeColors(true).catch(() => {});
                 }

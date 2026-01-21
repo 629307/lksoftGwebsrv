@@ -97,7 +97,7 @@
                         <i class="fas fa-exclamation-triangle"></i>
                         <span>Инциденты</span>
                     </button>
-                    <button class="nav-item" data-panel="references" data-ref="contracts">
+                    <button class="nav-item" data-panel="contracts">
                         <i class="fas fa-file-contract"></i>
                         <span>Контракты</span>
                     </button>
@@ -364,6 +364,24 @@
                     </div>
                     
                     <div class="incidents-list" id="incidents-list"></div>
+                </div>
+
+                <!-- Панель контрактов (отдельно от справочников) -->
+                <div class="content-panel" id="content-contracts">
+                    <div class="panel-header">
+                        <h2>Контракты</h2>
+                        <div class="panel-actions">
+                            <button class="btn btn-primary" id="btn-add-contract">
+                                <i class="fas fa-plus"></i> Добавить
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="contracts-table">
+                            <thead><tr id="contracts-table-header"></tr></thead>
+                            <tbody id="contracts-table-body"></tbody>
+                        </table>
+                    </div>
                 </div>
 
                 <!-- Панель отчётов -->
