@@ -95,9 +95,11 @@ class ReportController extends BaseController
 
         // Список контрактов для селекта
         $contracts = $this->db->fetchAll(
-            "SELECT c.id, c.number, c.name, c.amount, c.owner_id, o.name as owner_name
+            "SELECT c.id, c.number, c.name, c.amount, c.owner_id, o.name as owner_name,
+                    c.landlord_id, ol.name as landlord_name
              FROM contracts c
              LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN owners ol ON c.landlord_id = ol.id
              ORDER BY c.start_date DESC NULLS LAST, c.id DESC"
         );
 
@@ -112,9 +114,10 @@ class ReportController extends BaseController
         }
 
         $contract = $this->db->fetch(
-            "SELECT c.*, o.name as owner_name
+            "SELECT c.*, o.name as owner_name, ol.name as landlord_name
              FROM contracts c
              LEFT JOIN owners o ON c.owner_id = o.id
+             LEFT JOIN owners ol ON c.landlord_id = ol.id
              WHERE c.id = :id",
             ['id' => $contractId]
         );
@@ -140,9 +143,7 @@ class ReportController extends BaseController
             ['cid' => $contractId]
         );
         $contractedCount = count($contractedCables);
-        $contractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $contractedCables));
-        $amount = (float) ($contract['amount'] ?? 0);
-        $costPerMeter = $contractedLength > 0 ? round($amount / $contractedLength, 4) : null;
+        $contractedLengthTotal = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $contractedCables));
 
         // Незаконтрактованные кабели собственника контракта (contract_id IS NULL)
         $ownerId = (int) ($contract['owner_id'] ?? 0);
@@ -166,7 +167,59 @@ class ReportController extends BaseController
             );
         }
         $uncontractedCount = count($uncontractedCables);
-        $uncontractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
+        $uncontractedLengthTotal = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
+
+        // "Длина расч. (м) в части контракта" = SUM(length_m направлений арендодателя) + 3 * COUNT(направлений арендодателя)
+        $landlordId = (int) ($contract['landlord_id'] ?? 0);
+        $amount = (float) ($contract['amount'] ?? 0);
+
+        $decorateWithContractPart = function(array $rows) use ($landlordId): array {
+            if (empty($rows)) return [];
+            $ids = array_map(fn($r) => (int) ($r['id'] ?? 0), $rows);
+            $ids = array_values(array_filter($ids));
+            $map = [];
+            if ($landlordId > 0 && !empty($ids)) {
+                // Уникальные направления в маршруте кабеля
+                $in = implode(',', array_fill(0, count($ids), '?'));
+                $sql = "
+                    WITH dirs AS (
+                        SELECT DISTINCT crc.cable_id, cd.id as dir_id, cd.length_m, cd.owner_id
+                        FROM cable_route_channels crc
+                        JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+                        JOIN channel_directions cd ON ch.direction_id = cd.id
+                        WHERE crc.cable_id IN ({$in})
+                    )
+                    SELECT cable_id,
+                           COALESCE(SUM(CASE WHEN owner_id = ? THEN COALESCE(length_m, 0) ELSE 0 END), 0) as sum_len,
+                           COALESCE(SUM(CASE WHEN owner_id = ? THEN 1 ELSE 0 END), 0) as cnt_dirs
+                    FROM dirs
+                    GROUP BY cable_id
+                ";
+                $params = array_merge($ids, [$landlordId, $landlordId]);
+                $calcRows = $this->db->fetchAll($sql, $params);
+                foreach ($calcRows as $cr) {
+                    $cid = (int) ($cr['cable_id'] ?? 0);
+                    $sumLen = (float) ($cr['sum_len'] ?? 0);
+                    $cnt = (int) ($cr['cnt_dirs'] ?? 0);
+                    $map[$cid] = round($sumLen + 3.0 * $cnt, 2);
+                }
+            }
+            foreach ($rows as &$r) {
+                $cid = (int) ($r['id'] ?? 0);
+                $r['length_contract_part'] = $cid && isset($map[$cid]) ? $map[$cid] : 0.0;
+            }
+            unset($r);
+            return $rows;
+        };
+
+        $contractedCables = $decorateWithContractPart($contractedCables);
+        $uncontractedCables = $decorateWithContractPart($uncontractedCables);
+
+        $contractedLengthPart = array_sum(array_map(fn($c) => (float) ($c['length_contract_part'] ?? 0), $contractedCables));
+        $uncontractedLengthPart = array_sum(array_map(fn($c) => (float) ($c['length_contract_part'] ?? 0), $uncontractedCables));
+
+        $contractedCostPerMeter = $contractedLengthPart > 0 ? round($amount / $contractedLengthPart, 4) : null;
+        $uncontractedCostPerMeter = $uncontractedLengthPart > 0 ? round($amount / $uncontractedLengthPart, 4) : null;
 
         Response::success([
             'contracts' => $contracts,
@@ -174,15 +227,18 @@ class ReportController extends BaseController
             'contracted' => [
                 'stats' => [
                     'count' => $contractedCount,
-                    'length_sum' => round($contractedLength, 2),
-                    'cost_per_meter' => $costPerMeter,
+                    'length_sum_total' => round($contractedLengthTotal, 2),
+                    'length_sum_contract_part' => round($contractedLengthPart, 2),
+                    'cost_per_meter' => $contractedCostPerMeter,
                 ],
                 'cables' => $contractedCables,
             ],
             'uncontracted' => [
                 'stats' => [
                     'count' => $uncontractedCount,
-                    'length_sum' => round($uncontractedLength, 2),
+                    'length_sum_total' => round($uncontractedLengthTotal, 2),
+                    'length_sum_contract_part' => round($uncontractedLengthPart, 2),
+                    'cost_per_meter' => $uncontractedCostPerMeter,
                 ],
                 'cables' => $uncontractedCables,
             ],
@@ -342,10 +398,13 @@ class ReportController extends BaseController
                 // Если контракт не выбран — выгружаем список контрактов
                 if ($contractId <= 0) {
                     $filename = 'report_contracts_' . date('Y-m-d') . '.csv';
-                    $headers = ['Номер', 'Наименование', 'Собственник', 'Начало', 'Окончание', 'Статус', 'Сумма'];
+                    $headers = ['Номер', 'Наименование', 'Арендатор', 'Арендодатель', 'Начало', 'Окончание', 'Статус', 'Сумма'];
                     $contracts = $this->db->fetchAll(
-                        "SELECT c.number, c.name, o.name as owner, c.start_date, c.end_date, c.status, c.amount
-                         FROM contracts c LEFT JOIN owners o ON c.owner_id = o.id ORDER BY c.start_date DESC"
+                        "SELECT c.number, c.name, o.name as tenant, ol.name as landlord, c.start_date, c.end_date, c.status, c.amount
+                         FROM contracts c
+                         LEFT JOIN owners o ON c.owner_id = o.id
+                         LEFT JOIN owners ol ON c.landlord_id = ol.id
+                         ORDER BY c.start_date DESC"
                     );
                     foreach ($contracts as $c) {
                         $data[] = array_values($c);
@@ -357,9 +416,10 @@ class ReportController extends BaseController
                 $filename = 'report_contract_' . $contractId . '_' . date('Y-m-d') . '.csv';
 
                 $contract = $this->db->fetch(
-                    "SELECT c.*, o.name as owner_name
+                    "SELECT c.*, o.name as owner_name, ol.name as landlord_name
                      FROM contracts c
                      LEFT JOIN owners o ON c.owner_id = o.id
+                     LEFT JOIN owners ol ON c.landlord_id = ol.id
                      WHERE c.id = :id",
                     ['id' => $contractId]
                 );
@@ -384,9 +444,8 @@ class ReportController extends BaseController
                     ['cid' => $contractId]
                 );
                 $contractedCount = count($contractedCables);
-                $contractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $contractedCables));
                 $amount = (float) ($contract['amount'] ?? 0);
-                $costPerMeter = $contractedLength > 0 ? round($amount / $contractedLength, 4) : null;
+                $landlordId = (int) ($contract['landlord_id'] ?? 0);
 
                 $ownerId = (int) ($contract['owner_id'] ?? 0);
                 $uncontractedCables = [];
@@ -409,7 +468,63 @@ class ReportController extends BaseController
                     );
                 }
                 $uncontractedCount = count($uncontractedCables);
-                $uncontractedLength = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
+
+                $calcPart = function(array $rows) use ($landlordId): array {
+                    if (empty($rows)) return [$rows, 0.0];
+                    $numbers = array_map(fn($r) => (string) ($r['number'] ?? ''), $rows);
+                    $numbers = array_values(array_filter($numbers));
+                    $map = [];
+                    if ($landlordId > 0 && !empty($numbers)) {
+                        $in = implode(',', array_fill(0, count($numbers), '?'));
+                        $sql = "
+                            WITH cable_ids AS (
+                                SELECT id, number FROM cables WHERE number IN ({$in})
+                            ),
+                            dirs AS (
+                                SELECT DISTINCT crc.cable_id, cd.id as dir_id, cd.length_m, cd.owner_id
+                                FROM cable_route_channels crc
+                                JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+                                JOIN channel_directions cd ON ch.direction_id = cd.id
+                                WHERE crc.cable_id IN (SELECT id FROM cable_ids)
+                            )
+                            SELECT cable_id,
+                                   COALESCE(SUM(CASE WHEN owner_id = ? THEN COALESCE(length_m, 0) ELSE 0 END), 0) as sum_len,
+                                   COALESCE(SUM(CASE WHEN owner_id = ? THEN 1 ELSE 0 END), 0) as cnt_dirs
+                            FROM dirs
+                            GROUP BY cable_id
+                        ";
+                        $params = array_merge($numbers, [$landlordId, $landlordId]);
+                        $calcRows = $this->db->fetchAll($sql, $params);
+                        foreach ($calcRows as $cr) {
+                            $cid = (int) ($cr['cable_id'] ?? 0);
+                            $sumLen = (float) ($cr['sum_len'] ?? 0);
+                            $cnt = (int) ($cr['cnt_dirs'] ?? 0);
+                            $map[$cid] = round($sumLen + 3.0 * $cnt, 2);
+                        }
+                    }
+                    // Подтягиваем id по номеру и проставляем длину
+                    $idByNumber = [];
+                    if (!empty($numbers)) {
+                        $in2 = implode(',', array_fill(0, count($numbers), '?'));
+                        $idRows = $this->db->fetchAll("SELECT id, number FROM cables WHERE number IN ({$in2})", $numbers);
+                        foreach ($idRows as $ir) $idByNumber[(string) $ir['number']] = (int) $ir['id'];
+                    }
+                    $sum = 0.0;
+                    foreach ($rows as &$r) {
+                        $cid = $idByNumber[(string) ($r['number'] ?? '')] ?? 0;
+                        $val = $cid && isset($map[$cid]) ? (float) $map[$cid] : 0.0;
+                        $r['length_contract_part'] = $val;
+                        $sum += $val;
+                    }
+                    unset($r);
+                    return [$rows, $sum];
+                };
+
+                [$contractedCables, $contractedPartSum] = $calcPart($contractedCables);
+                [$uncontractedCables, $uncontractedPartSum] = $calcPart($uncontractedCables);
+
+                $contractedCostPerMeter = $contractedPartSum > 0 ? round($amount / $contractedPartSum, 4) : null;
+                $uncontractedCostPerMeter = $uncontractedPartSum > 0 ? round($amount / $uncontractedPartSum, 4) : null;
 
                 // Для "мультисекционного" CSV используем пустой $headers и сами пишем строки ниже
                 $headers = [];
@@ -417,24 +532,26 @@ class ReportController extends BaseController
                     ['__SECTION__', 'Контракт'],
                     ['Номер', $contract['number'] ?? ''],
                     ['Наименование', $contract['name'] ?? ''],
-                    ['Собственник', $contract['owner_name'] ?? ''],
+                    ['Арендатор', $contract['owner_name'] ?? ''],
+                    ['Арендодатель', $contract['landlord_name'] ?? ''],
                     ['Начало', $contract['start_date'] ?? ''],
                     ['Окончание', $contract['end_date'] ?? ''],
                     ['Статус', $contract['status'] ?? ''],
                     ['Сумма', $contract['amount'] ?? ''],
                     ['__SECTION__', 'Кабеля контракта (статистика)'],
                     ['Количество', $contractedCount],
-                    ['Общая протяженность (м)', round($contractedLength, 2)],
-                    ['Стоимость за 1 метр', $costPerMeter === null ? '' : $costPerMeter],
+                    ['Общая протяженность кабелей (м) в части контракта', round($contractedPartSum, 2)],
+                    ['Стоимость за 1 метр', $contractedCostPerMeter === null ? '' : $contractedCostPerMeter],
                     ['__SECTION__', 'Кабеля контракта'],
-                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м)'],
-                    ...array_map(fn($c) => array_values($c), $contractedCables),
+                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м), всего кабеля', 'Длина расч. (м) в части контракта'],
+                    ...array_map(fn($c) => [$c['number'], $c['object_type_name'], $c['cable_type_name'], $c['marking'], $c['owner_name'], $c['length_calculated'], $c['length_contract_part'] ?? 0], $contractedCables),
                     ['__SECTION__', 'Не законтрактованные кабеля собственника (статистика)'],
                     ['Количество', $uncontractedCount],
-                    ['Общая протяженность (м)', round($uncontractedLength, 2)],
+                    ['Общая протяженность кабелей (м) в части контракта', round($uncontractedPartSum, 2)],
+                    ['Стоимость за 1 метр', $uncontractedCostPerMeter === null ? '' : $uncontractedCostPerMeter],
                     ['__SECTION__', 'Не законтрактованные кабеля собственника'],
-                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м)'],
-                    ...array_map(fn($c) => array_values($c), $uncontractedCables),
+                    ['Номер', 'Вид объекта', 'Тип кабеля', 'Кабель (из каталога)', 'Собственник', 'Длина расч. (м), всего кабеля', 'Длина расч. (м) в части контракта'],
+                    ...array_map(fn($c) => [$c['number'], $c['object_type_name'], $c['cable_type_name'], $c['marking'], $c['owner_name'], $c['length_calculated'], $c['length_contract_part'] ?? 0], $uncontractedCables),
                 ];
                 break;
 

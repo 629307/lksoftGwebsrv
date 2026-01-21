@@ -2392,8 +2392,8 @@ const App = {
         const contracts = data?.contracts || [];
         const selectedId = data?.contract?.id ? String(data.contract.id) : '';
 
-        const contracted = data?.contracted || { stats: { count: 0, length_sum: 0, cost_per_meter: null }, cables: [] };
-        const uncontracted = data?.uncontracted || { stats: { count: 0, length_sum: 0 }, cables: [] };
+        const contracted = data?.contracted || { stats: { count: 0, length_sum_contract_part: 0, cost_per_meter: null }, cables: [] };
+        const uncontracted = data?.uncontracted || { stats: { count: 0, length_sum_contract_part: 0, cost_per_meter: null }, cables: [] };
 
         const renderCablesTable = (rows) => `
             <table>
@@ -2404,7 +2404,8 @@ const App = {
                         <th>Тип кабеля</th>
                         <th>Кабель (из каталога)</th>
                         <th>Собственник</th>
-                        <th>Длина расч. (м)</th>
+                        <th>Длина расч. (м), всего кабеля</th>
+                        <th>Длина расч. (м) в части контракта</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2416,11 +2417,15 @@ const App = {
                             <td>${c.marking || '-'}</td>
                             <td>${c.owner_name || '-'}</td>
                             <td>${c.length_calculated || 0}</td>
+                            <td>${Number(c.length_contract_part || 0).toFixed(2)}</td>
                         </tr>
-                    `).join('') || '<tr><td colspan="6">Нет данных</td></tr>'}
+                    `).join('') || '<tr><td colspan="7">Нет данных</td></tr>'}
                 </tbody>
             </table>
         `;
+
+        const green = (v) => `<span style="color: var(--success-color); font-weight: 600;">${v}</span>`;
+        const fmt2 = (v) => Number(v || 0).toFixed(2);
 
         return `
             <div class="filters-row" style="margin: 12px 0;">
@@ -2438,9 +2443,9 @@ const App = {
                     <h4>
                         Кабеля контракта
                         <span class="text-muted">
-                            (Количество кабелей: ${contracted.stats.count},
-                            Общая протяженность кабелей (м): ${Number(contracted.stats.length_sum || 0).toFixed(2)},
-                            Стоимость за 1 метр: ${contracted.stats.cost_per_meter === null ? '-' : contracted.stats.cost_per_meter})
+                            (Количество кабелей: ${green(contracted.stats.count)},
+                            Общая протяженность кабелей (м) в части контракта: ${green(fmt2(contracted.stats.length_sum_contract_part || 0))},
+                            Стоимость за 1 метр: ${green(contracted.stats.cost_per_meter === null ? '-' : contracted.stats.cost_per_meter)})
                         </span>
                     </h4>
                     ${renderCablesTable(contracted.cables)}
@@ -2450,8 +2455,9 @@ const App = {
                     <h4>
                         Не законтрактованные Кабеля собственника контракта
                         <span class="text-muted">
-                            (Количество кабелей: ${uncontracted.stats.count},
-                            Общая протяженность кабелей (м): ${Number(uncontracted.stats.length_sum || 0).toFixed(2)})
+                            (Количество кабелей: ${green(uncontracted.stats.count)},
+                            Общая протяженность кабелей (м) в части контракта: ${green(fmt2(uncontracted.stats.length_sum_contract_part || 0))},
+                            Стоимость за 1 метр: ${green(uncontracted.stats.cost_per_meter === null ? '-' : uncontracted.stats.cost_per_meter)})
                         </span>
                     </h4>
                     ${renderCablesTable(uncontracted.cables)}
