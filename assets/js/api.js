@@ -311,6 +311,14 @@ const API = {
             return API.delete(`/wells/${id}`);
         },
 
+        existsNumber(number, exclude_id = null) {
+            const params = { number };
+            if (exclude_id !== null && exclude_id !== undefined && exclude_id !== '') {
+                params.exclude_id = exclude_id;
+            }
+            return API.get('/wells/exists', params);
+        },
+
         importTextPreview(text, delimiter = ';') {
             return API.post('/wells/import-text/preview', { text, delimiter });
         },

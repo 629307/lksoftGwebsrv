@@ -354,8 +354,8 @@ class ChannelController extends BaseController
             Response::error('Направление не найдено', 404);
         }
 
-        // length_m рассчитывается автоматически (редактирование запрещено)
-        $data = $this->request->only(['number', 'owner_id', 'type_id', 'status_id', 'notes']);
+        // number и length_m рассчитываются/задаются автоматически (редактирование запрещено)
+        $data = $this->request->only(['owner_id', 'type_id', 'status_id', 'notes']);
         $data = array_filter($data, fn($v) => $v !== null);
 
         $user = Auth::user();

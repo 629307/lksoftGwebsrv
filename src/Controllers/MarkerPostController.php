@@ -369,8 +369,27 @@ class MarkerPostController extends BaseController
             );
         }
 
-        if (!empty($data)) {
-            $this->db->update('marker_posts', $data, 'id = :id', ['id' => $postId]);
+        try {
+            $this->db->beginTransaction();
+
+            if (!empty($data)) {
+                $this->db->update('marker_posts', $data, 'id = :id', ['id' => $postId]);
+            }
+
+            // Если изменён собственник — обновляем номер: СТ-<код собственника>-<id>
+            if (array_key_exists('owner_id', $data) && (int) $data['owner_id'] !== (int) $oldPost['owner_id']) {
+                $owner = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => (int) $data['owner_id']]);
+                $ownerCode = $owner['code'] ?? null;
+                if ($ownerCode) {
+                    $number = "СТ-{$ownerCode}-{$postId}";
+                    $this->db->update('marker_posts', ['number' => $number], 'id = :id', ['id' => $postId]);
+                }
+            }
+
+            $this->db->commit();
+        } catch (\PDOException $e) {
+            $this->db->rollback();
+            throw $e;
         }
 
         $post = $this->db->fetch(

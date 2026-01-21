@@ -1239,12 +1239,19 @@ const App = {
             let formHtml = '';
 
             if (type === 'wells') {
+                const rawNumber = (obj.number || '').toString();
+                const wellSuffixMatch = rawNumber.match(/^ККС-[^-]+-(.+)$/);
+                const numberSuffix = (wellSuffixMatch ? wellSuffixMatch[1] : rawNumber) || '';
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <input type="text" name="number" value="${obj.number || ''}" required>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" name="number_prefix" id="modal-number-prefix" readonly style="flex: 0 0 180px; background: var(--bg-tertiary);" value="ККС-">
+                                <input type="text" name="number_suffix" id="modal-number-suffix" required style="flex: 1;" value="${this.escapeHtml(numberSuffix)}">
+                            </div>
+                            <div id="well-number-hint" class="text-muted" style="margin-top:6px;"></div>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1284,7 +1291,7 @@ const App = {
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер</label>
-                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                            <input type="text" id="modal-marker-number" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1328,7 +1335,7 @@ const App = {
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <input type="text" name="number" value="${obj.number || ''}" required>
+                            <input type="text" name="number" value="${obj.number || ''}" required readonly style="background: var(--bg-tertiary);">
                         </div>
                         <div class="form-group">
                             <label>Начальный колодец: <strong>${obj.start_well_number || '-'}</strong></label>
@@ -1414,7 +1421,7 @@ const App = {
                         <input type="hidden" name="object_type_code" value="${obj.object_type_code || ''}">
                         <div class="form-group">
                             <label>Номер</label>
-                            <input type="text" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                            <input type="text" id="modal-cable-number" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
                         </div>
                         <div class="form-group">
                             <label>Длина расч. (м)</label>
@@ -1579,6 +1586,11 @@ const App = {
             
             // Загружаем справочники и устанавливаем значения
             await this.loadModalSelectsWithValues(type);
+
+            // Подсказка/валидация номера колодца при редактировании (уникальность)
+            if (type === 'wells') {
+                this.setupWellEditNumberValidation(id);
+            }
 
             // Подгружаем фотографии (если блок есть)
             if (photoTable) {
@@ -1760,13 +1772,91 @@ const App = {
     },
 
     /**
+     * Колодцы: подсветка/проверка уникальности номера при редактировании
+     */
+    setupWellEditNumberValidation(wellId) {
+        const ownerSelect = document.getElementById('modal-owner-select');
+        const prefixInput = document.getElementById('modal-number-prefix');
+        const suffixInput = document.getElementById('modal-number-suffix');
+        const hint = document.getElementById('well-number-hint');
+        if (!suffixInput) return;
+
+        const lightGreen = 'rgba(34, 197, 94, 0.15)';
+        const lightRed = 'rgba(239, 68, 68, 0.15)';
+
+        let timer = null;
+        let lastChecked = '';
+
+        const setOk = () => {
+            suffixInput.style.background = lightGreen;
+            if (hint) hint.textContent = '';
+            if (suffixInput.setCustomValidity) suffixInput.setCustomValidity('');
+        };
+
+        const setBad = () => {
+            suffixInput.style.background = lightRed;
+            if (hint) hint.textContent = 'Требуется поменять порядковый номер, так как колодец с таким номером уже есть в системе';
+            if (suffixInput.setCustomValidity) suffixInput.setCustomValidity('Номер колодца уже существует');
+        };
+
+        const clear = () => {
+            suffixInput.style.background = '';
+            if (hint) hint.textContent = '';
+            if (suffixInput.setCustomValidity) suffixInput.setCustomValidity('');
+        };
+
+        const buildNumber = () => {
+            const prefix = (prefixInput?.value || '').toString();
+            const suffix = (suffixInput?.value || '').toString();
+            return `${prefix}${suffix}`.trim();
+        };
+
+        const check = async () => {
+            const number = buildNumber();
+            if (!number || number === lastChecked) return;
+            lastChecked = number;
+
+            try {
+                const resp = await API.wells.existsNumber(number, wellId);
+                const exists = !!(resp?.data?.exists);
+                if (exists) setBad();
+                else setOk();
+            } catch (_) {
+                clear();
+            }
+        };
+
+        const schedule = () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(check, 250);
+        };
+
+        // Доп. обработчик поверх существующего (который обновляет префикс)
+        if (ownerSelect) ownerSelect.addEventListener('change', schedule);
+        suffixInput.addEventListener('input', schedule);
+
+        // стартовая проверка
+        schedule();
+    },
+
+    /**
      * Отправка формы редактирования объекта
      */
     async submitEditObject(type, id) {
         const form = document.getElementById('edit-object-form');
+        if (form?.reportValidity && !form.reportValidity()) return;
         const formData = new FormData(form);
         const data = Object.fromEntries(formData.entries());
         delete data.id;
+
+        // Колодцы: собираем полный номер из префикса и суффикса
+        if (type === 'wells' && (data.number_prefix !== undefined || data.number_suffix !== undefined)) {
+            const prefix = (data.number_prefix || '').toString();
+            const suffix = (data.number_suffix || '').toString();
+            data.number = `${prefix}${suffix}`.trim();
+            delete data.number_prefix;
+            delete data.number_suffix;
+        }
         
         // Собираем выбранные группы
         const groupCheckboxes = form.querySelectorAll('input[name="group_ids"]:checked');
@@ -3422,12 +3512,13 @@ const App = {
                 const updatePrefix = () => {
                     const ownerCode = ownerSelect.selectedOptions?.[0]?.dataset?.code || '';
                     if (!ownerCode) return;
+                    const currentId = document.querySelector('#edit-object-form input[name="id"]')?.value || '<id>';
                     if (objectType === 'wells') {
                         if (prefixInput) prefixInput.value = `ККС-${ownerCode}-`;
                     } else if (objectType === 'markers') {
-                        if (markerNumberInput) markerNumberInput.value = `СТ-${ownerCode}-<id>`;
+                        if (markerNumberInput) markerNumberInput.value = `СТ-${ownerCode}-${currentId}`;
                     } else if (objectType === 'unified_cables') {
-                        if (cableNumberInput) cableNumberInput.value = `КАБ-${ownerCode}-<id>`;
+                        if (cableNumberInput) cableNumberInput.value = `КАБ-${ownerCode}-${currentId}`;
                     }
                 };
                 ownerSelect.onchange = updatePrefix;

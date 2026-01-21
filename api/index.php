@@ -174,6 +174,7 @@ $router->delete('/api/references/{type}/{id}', [ReferenceController::class, 'des
 // Колодцы
 $router->get('/api/wells', [WellController::class, 'index'], ['auth']);
 $router->get('/api/wells/geojson', [WellController::class, 'geojson'], ['auth']);
+$router->get('/api/wells/exists', [WellController::class, 'existsNumber'], ['auth']);
 $router->get('/api/wells/export', [WellController::class, 'export'], ['auth']);
 $router->post('/api/wells/import-text/preview', [WellController::class, 'importTextPreview'], ['auth']);
 $router->post('/api/wells/import-text', [WellController::class, 'importText'], ['auth']);

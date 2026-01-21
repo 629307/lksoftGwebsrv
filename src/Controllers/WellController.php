@@ -286,6 +286,31 @@ class WellController extends BaseController
     }
 
     /**
+     * GET /api/wells/exists?number=...&exclude_id=...
+     * Проверка уникальности номера колодца (для UI)
+     */
+    public function existsNumber(): void
+    {
+        $number = trim((string) $this->request->query('number', ''));
+        $excludeId = (int) $this->request->query('exclude_id', 0);
+
+        if ($number === '') {
+            Response::success(['exists' => false]);
+        }
+
+        $sql = "SELECT id FROM wells WHERE number = :number";
+        $params = ['number' => $number];
+        if ($excludeId > 0) {
+            $sql .= " AND id <> :exclude_id";
+            $params['exclude_id'] = $excludeId;
+        }
+        $sql .= " LIMIT 1";
+
+        $row = $this->db->fetch($sql, $params);
+        Response::success(['exists' => (bool) $row]);
+    }
+
+    /**
      * PUT /api/wells/{id}
      * Обновление колодца
      */
@@ -310,6 +335,26 @@ class WellController extends BaseController
 
         try {
             $this->db->beginTransaction();
+
+            // Номер колодца: ККС-<код собственника>-<суффикс>
+            $ownerIdOld = (int) ($oldWell['owner_id'] ?? 0);
+            $ownerIdNew = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : $ownerIdOld;
+            $numberIncoming = array_key_exists('number', $data) ? trim((string) $data['number']) : null;
+            $numberBase = ($numberIncoming !== null && $numberIncoming !== '') ? $numberIncoming : (string) ($oldWell['number'] ?? '');
+            $suffix = '';
+            if (preg_match('/^ККС-[^-]+-(.+)$/u', $numberBase, $m)) {
+                $suffix = trim((string) ($m[1] ?? ''));
+            } else {
+                $suffix = trim($numberBase);
+            }
+
+            if (($ownerIdNew > 0 && $ownerIdNew !== $ownerIdOld) || $numberIncoming !== null) {
+                $owner = $this->db->fetch("SELECT code FROM owners WHERE id = :id", ['id' => $ownerIdNew]);
+                $ownerCode = $owner['code'] ?? null;
+                if ($ownerCode) {
+                    $data['number'] = "ККС-{$ownerCode}-{$suffix}";
+                }
+            }
 
             // Обновляем координаты если переданы
             $longitude = $this->request->input('longitude');
@@ -342,6 +387,21 @@ class WellController extends BaseController
             // Обновляем остальные поля
             if (!empty($data)) {
                 $this->db->update('wells', $data, 'id = :id', ['id' => $wellId]);
+            }
+
+            // Если изменён номер колодца — обновляем номера направлений, где он участвует
+            $newNumber = $data['number'] ?? ($oldWell['number'] ?? null);
+            if ($newNumber !== null && (string) $newNumber !== (string) ($oldWell['number'] ?? '')) {
+                $this->db->query(
+                    "UPDATE channel_directions cd
+                     SET number = CONCAT(sw.number, '-', ew.number),
+                         updated_by = :uid
+                     FROM wells sw, wells ew
+                     WHERE cd.start_well_id = sw.id
+                       AND cd.end_well_id = ew.id
+                       AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
+                    ['uid' => $user['id'], 'wid' => $wellId]
+                );
             }
 
             $this->db->commit();
