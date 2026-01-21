@@ -118,7 +118,15 @@ const App = {
 
         // Навигация
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => this.switchPanel(item.dataset.panel));
+            item.addEventListener('click', () => {
+                const panel = item.dataset.panel;
+                const ref = item.dataset.ref;
+                this.switchPanel(panel);
+                if (ref) {
+                    // Контракты вынесены в отдельный пункт меню: открываем справочник сразу
+                    setTimeout(() => this.showReference(ref), 0);
+                }
+            });
         });
 
         // Переключение темы
