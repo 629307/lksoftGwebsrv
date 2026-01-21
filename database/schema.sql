@@ -152,6 +152,15 @@ CREATE INDEX idx_contracts_number ON contracts(number);
 
 COMMENT ON TABLE contracts IS 'Контракты на обслуживание';
 
+-- 1.9 Системные настройки
+CREATE TABLE IF NOT EXISTS app_settings (
+    code VARCHAR(100) PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+COMMENT ON TABLE app_settings IS 'Системные настройки приложения (key/value)';
+
 -- 1.8 Стили отображения (удалено, используем object_types + object_status)
 
 -- ============================================================

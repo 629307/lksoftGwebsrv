@@ -73,6 +73,17 @@ abstract class BaseController
         return compact('page', 'limit', 'offset');
     }
 
+    protected function getAppSetting(string $code, $default = null)
+    {
+        try {
+            $row = $this->db->fetch("SELECT value FROM app_settings WHERE code = :c", ['c' => $code]);
+            if (!$row) return $default;
+            return $row['value'];
+        } catch (\Throwable $e) {
+            return $default;
+        }
+    }
+
     /**
      * Получить общее количество записей
      * @param string $table Имя таблицы

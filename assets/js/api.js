@@ -684,4 +684,16 @@ const API = {
             return API.download(`/reports/export/${type}`, { ...params, delimiter });
         },
     },
+
+    // ========================
+    // Настройки
+    // ========================
+    settings: {
+        get() {
+            return API.get('/settings');
+        },
+        update(data) {
+            return API.put('/settings', data);
+        }
+    },
 };

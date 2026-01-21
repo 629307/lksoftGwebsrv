@@ -169,11 +169,13 @@ class ReportController extends BaseController
         $uncontractedCount = count($uncontractedCables);
         $uncontractedLengthTotal = array_sum(array_map(fn($c) => (float) ($c['length_calculated'] ?? 0), $uncontractedCables));
 
-        // "Длина расч. (м) в части контракта" = SUM(length_m направлений арендодателя) + 3 * COUNT(направлений арендодателя)
+        // "Длина расч. (м) в части контракта" = SUM(length_m направлений арендодателя) + K * COUNT(направлений арендодателя),
+        // где K = настройка "cable_in_well_length_m" (учитываемая длина кабеля в колодце)
         $landlordId = (int) ($contract['landlord_id'] ?? 0);
+        $cableInWellLen = (float) $this->getAppSetting('cable_in_well_length_m', 3);
         $amount = (float) ($contract['amount'] ?? 0);
 
-        $decorateWithContractPart = function(array $rows) use ($landlordId): array {
+        $decorateWithContractPart = function(array $rows) use ($landlordId, $cableInWellLen): array {
             if (empty($rows)) return [];
             $ids = array_map(fn($r) => (int) ($r['id'] ?? 0), $rows);
             $ids = array_values(array_filter($ids));
@@ -201,7 +203,7 @@ class ReportController extends BaseController
                     $cid = (int) ($cr['cable_id'] ?? 0);
                     $sumLen = (float) ($cr['sum_len'] ?? 0);
                     $cnt = (int) ($cr['cnt_dirs'] ?? 0);
-                    $map[$cid] = round($sumLen + 3.0 * $cnt, 2);
+                    $map[$cid] = round($sumLen + $cableInWellLen * $cnt, 2);
                 }
             }
             foreach ($rows as &$r) {
@@ -469,7 +471,8 @@ class ReportController extends BaseController
                 }
                 $uncontractedCount = count($uncontractedCables);
 
-                $calcPart = function(array $rows) use ($landlordId): array {
+                $cableInWellLen = (float) $this->getAppSetting('cable_in_well_length_m', 3);
+                $calcPart = function(array $rows) use ($landlordId, $cableInWellLen): array {
                     if (empty($rows)) return [$rows, 0.0];
                     $numbers = array_map(fn($r) => (string) ($r['number'] ?? ''), $rows);
                     $numbers = array_values(array_filter($numbers));
@@ -499,7 +502,7 @@ class ReportController extends BaseController
                             $cid = (int) ($cr['cable_id'] ?? 0);
                             $sumLen = (float) ($cr['sum_len'] ?? 0);
                             $cnt = (int) ($cr['cnt_dirs'] ?? 0);
-                            $map[$cid] = round($sumLen + 3.0 * $cnt, 2);
+                            $map[$cid] = round($sumLen + $cableInWellLen * $cnt, 2);
                         }
                     }
                     // Подтягиваем id по номеру и проставляем длину

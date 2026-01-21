@@ -114,6 +114,7 @@ use App\Controllers\GroupController;
 use App\Controllers\ImportController;
 use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
+use App\Controllers\SettingsController;
 
 $router = new Router();
 $request = new Request();
@@ -277,6 +278,10 @@ $router->get('/api/reports/contracts', [ReportController::class, 'contracts'], [
 $router->get('/api/reports/owners', [ReportController::class, 'owners'], ['auth']);
 $router->get('/api/reports/incidents', [ReportController::class, 'incidents'], ['auth']);
 $router->get('/api/reports/export/{type}', [ReportController::class, 'export'], ['auth']);
+
+// Настройки (системные)
+$router->get('/api/settings', [SettingsController::class, 'index'], ['auth']);
+$router->put('/api/settings', [SettingsController::class, 'update'], ['auth']);
 
 // Запуск маршрутизации
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

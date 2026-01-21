@@ -113,6 +113,10 @@
                         <i class="fas fa-cog"></i>
                         <span>Админ</span>
                     </button>
+                    <button class="nav-item admin-only" data-panel="settings">
+                        <i class="fas fa-sliders-h"></i>
+                        <span>Настройки</span>
+                    </button>
                 </nav>
 
                 <!-- Панель слоёв -->
@@ -187,10 +191,10 @@
                     <div class="sidebar-panel-links">
                         <h3><i class="fas fa-external-link-alt"></i> Ссылки</h3>
                         <div class="filters-panel">
-                            <a class="btn btn-secondary btn-block" href="https://geoproj.ru/" target="_blank" rel="noopener noreferrer">
+                            <a class="btn btn-secondary btn-block" id="link-geoproj" href="https://geoproj.ru/" target="_blank" rel="noopener noreferrer">
                                 <i class="fas fa-ruler-combined"></i> Ресурс для пересчёта координат
                             </a>
-                            <a class="btn btn-secondary btn-block" href="https://nspd.gov.ru/map?zoom=16.801685060501118&theme_id=1&coordinate_x=8535755.537972113&coordinate_y=9908336.650357058&baseLayerId=235&is_copy_url=true" target="_blank" rel="noopener noreferrer">
+                            <a class="btn btn-secondary btn-block" id="link-cadastre" href="https://nspd.gov.ru/map?zoom=16.801685060501118&theme_id=1&coordinate_x=8535755.537972113&coordinate_y=9908336.650357058&baseLayerId=235&is_copy_url=true" target="_blank" rel="noopener noreferrer">
                                 <i class="fas fa-map"></i> Публичная кадастровая карта
                             </a>
                         </div>
@@ -503,6 +507,47 @@
                     <div class="admin-section">
                         <h3><i class="fas fa-history"></i> Журнал действий</h3>
                         <div id="audit-log"></div>
+                    </div>
+                </div>
+
+                <!-- Панель настроек -->
+                <div class="content-panel" id="content-settings">
+                    <div class="panel-header">
+                        <h2>Настройки</h2>
+                        <div class="panel-actions">
+                            <button class="btn btn-primary" id="btn-save-settings">
+                                <i class="fas fa-save"></i> Сохранить
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <form id="settings-form" style="max-width: 720px;">
+                            <div class="form-group">
+                                <label>Зум карты по умолчанию</label>
+                                <input type="number" id="settings-map-zoom" min="1" max="22" step="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Координаты WGS84 по умолчанию — Широта</label>
+                                <input type="number" id="settings-map-lat" step="0.000001">
+                            </div>
+                            <div class="form-group">
+                                <label>Координаты WGS84 по умолчанию — Долгота</label>
+                                <input type="number" id="settings-map-lng" step="0.000001">
+                            </div>
+                            <div class="form-group">
+                                <label>Учитываемая длина кабеля в колодце (м)</label>
+                                <input type="number" id="settings-cable-well-len" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label>Ссылка на Ресурс для пересчёта координат</label>
+                                <input type="url" id="settings-url-geoproj" placeholder="https://geoproj.ru/">
+                            </div>
+                            <div class="form-group">
+                                <label>Ссылка на Публичную кадастровую карту</label>
+                                <input type="url" id="settings-url-cadastre" placeholder="https://nspd.gov.ru/...">
+                            </div>
+                            <p class="text-muted">Настройки применяются к карте и ссылкам в боковой панели.</p>
+                        </form>
                     </div>
                 </div>
             </main>

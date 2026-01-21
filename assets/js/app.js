@@ -7,6 +7,7 @@ const App = {
     currentPanel: 'map',
     currentTab: 'wells',
     currentReference: null,
+    settings: {},
     pagination: { page: 1, limit: 50, total: 0 },
     incidentDraftRelatedObjects: [],
     selectedObjectIds: new Set(),
@@ -86,6 +87,9 @@ const App = {
         // Кнопка "Загрузить" доступна только для колодцев + права на запись
         document.getElementById('btn-import')?.classList.toggle('hidden', this.currentTab !== 'wells' || !this.canWrite());
 
+        // Подгружаем настройки до инициализации карты (центр/зум/ссылки)
+        await this.loadSettings().catch(() => {});
+
         // Инициализируем карту
         MapManager.init();
 
@@ -105,6 +109,31 @@ const App = {
             console.error('Ошибка загрузки данных карты:', error);
             this.notify('Ошибка загрузки данных карты', 'error');
         }
+    },
+
+    async loadSettings() {
+        try {
+            const resp = await API.settings.get();
+            if (resp?.success === false) return;
+            this.settings = resp?.data || resp || {};
+        } catch (e) {
+            this.settings = {};
+        }
+
+        // Применяем на MapManager дефолтные центр/зум
+        const z = parseInt(this.settings.map_default_zoom, 10);
+        const lat = parseFloat(this.settings.map_default_lat);
+        const lng = parseFloat(this.settings.map_default_lng);
+        if (Number.isFinite(z)) MapManager.defaultZoom = z;
+        if (Number.isFinite(lat) && Number.isFinite(lng)) MapManager.defaultCenter = [lat, lng];
+
+        // Применяем ссылки в сайдбаре
+        const g = (this.settings.url_geoproj || '').toString().trim();
+        const c = (this.settings.url_cadastre || '').toString().trim();
+        const linkGeo = document.getElementById('link-geoproj');
+        const linkCad = document.getElementById('link-cadastre');
+        if (linkGeo && g) linkGeo.href = g;
+        if (linkCad && c) linkCad.href = c;
     },
 
     /**
@@ -225,6 +254,12 @@ const App = {
 
         // Админка
         document.getElementById('btn-add-user').addEventListener('click', () => this.showAddUserModal());
+
+        // Настройки
+        document.getElementById('btn-save-settings')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.saveSettings();
+        });
 
         // Модальное окно
         document.getElementById('btn-close-modal').addEventListener('click', () => this.hideModal());
@@ -458,6 +493,9 @@ const App = {
                 break;
             case 'admin':
                 this.loadUsers();
+                break;
+            case 'settings':
+                this.loadSettingsPanel();
                 break;
         }
     },
@@ -2674,6 +2712,61 @@ const App = {
         this.currentReference = 'contracts';
         // Переиспользуем существующую форму справочника
         this.showAddReferenceModal();
+    },
+
+    async loadSettingsPanel() {
+        // Панель доступна только администратору (кнопка скрыта через admin-only)
+        await this.loadSettings().catch(() => {});
+
+        const z = document.getElementById('settings-map-zoom');
+        const lat = document.getElementById('settings-map-lat');
+        const lng = document.getElementById('settings-map-lng');
+        const len = document.getElementById('settings-cable-well-len');
+        const geo = document.getElementById('settings-url-geoproj');
+        const cad = document.getElementById('settings-url-cadastre');
+
+        if (z) z.value = (this.settings.map_default_zoom ?? MapManager.defaultZoom ?? 14);
+        if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
+        if (lng) lng.value = (this.settings.map_default_lng ?? (MapManager.defaultCenter?.[1] ?? 76.68617));
+        if (len) len.value = (this.settings.cable_in_well_length_m ?? 3);
+        if (geo) geo.value = (this.settings.url_geoproj ?? '');
+        if (cad) cad.value = (this.settings.url_cadastre ?? '');
+    },
+
+    async saveSettings() {
+        if (!this.isAdmin()) {
+            this.notify('Доступ запрещён', 'error');
+            return;
+        }
+        const z = document.getElementById('settings-map-zoom')?.value;
+        const lat = document.getElementById('settings-map-lat')?.value;
+        const lng = document.getElementById('settings-map-lng')?.value;
+        const len = document.getElementById('settings-cable-well-len')?.value;
+        const geo = document.getElementById('settings-url-geoproj')?.value;
+        const cad = document.getElementById('settings-url-cadastre')?.value;
+
+        const payload = {
+            map_default_zoom: z,
+            map_default_lat: lat,
+            map_default_lng: lng,
+            cable_in_well_length_m: len,
+            url_geoproj: geo,
+            url_cadastre: cad,
+        };
+
+        try {
+            const resp = await API.settings.update(payload);
+            if (resp?.success === false) {
+                this.notify(resp.message || 'Ошибка сохранения', 'error');
+                return;
+            }
+            this.notify('Настройки сохранены', 'success');
+
+            // Обновляем локально и применяем (центр/зум — для следующей инициализации карты)
+            await this.loadSettings().catch(() => {});
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка сохранения', 'error');
+        }
     },
 
     /**

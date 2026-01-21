@@ -8,6 +8,8 @@ const MapManager = {
     layers: {},
     currentCoordinateSystem: 'wgs84',
     filters: {},
+    defaultCenter: [66.10231, 76.68617],
+    defaultZoom: 14,
     
     // Режим добавления направлений
     addDirectionMode: false,
@@ -136,8 +138,8 @@ const MapManager = {
     init() {
         // Создаём карту с заданным центром/зумом по умолчанию
         this.map = L.map('map', {
-            center: [66.10231, 76.68617],
-            zoom: 14,
+            center: this.defaultCenter || [66.10231, 76.68617],
+            zoom: this.defaultZoom || 14,
             zoomControl: true,
         });
 
