@@ -521,6 +521,12 @@ a:hover {
     transform: translate(-50%, -26px); /* над колодцем, без наезда на символ */
 }
 
+/* Direction length labels (Leaflet divIcon defaults to 12x12) */
+.direction-length-label {
+    width: max-content !important;
+    height: max-content !important;
+}
+
 /* По умолчанию — без теней у объектов/подсказок */
 .leaflet-tooltip,
 .leaflet-popup-content-wrapper,
