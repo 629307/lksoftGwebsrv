@@ -59,6 +59,8 @@ class SettingsController extends BaseController
             'hotkey_add_duct_cable',
             'hotkey_add_ground_cable',
             'hotkey_add_aerial_cable',
+            // Колодцы: тип (object_kinds.code) для "точки ввода"
+            'well_entry_point_kind_code',
         ];
 
         $toSave = array_intersect_key($data, array_flip($allowed));

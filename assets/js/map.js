@@ -71,6 +71,37 @@ const MapManager = {
         return fallback;
     },
 
+    isWellEntryPoint(props) {
+        const entry = (window.App?.settings?.well_entry_point_kind_code || '').toString().trim();
+        if (!entry) return false;
+        const kindCode = (props?.kind_code || '').toString().trim();
+        return !!kindCode && kindCode === entry;
+    },
+
+    createWellMarker(latlng, props) {
+        const base = props?.type_color || this.colors.wells;
+        const color = this.getPlannedOverrideColor(props, base);
+        if (this.isWellEntryPoint(props)) {
+            const size = 16;
+            return L.marker(latlng, {
+                icon: L.divIcon({
+                    className: 'well-entry-point-icon',
+                    html: `<div style="width:${size}px;height:${size}px;background:${color};border:2px solid #fff;box-sizing:border-box;opacity:0.85;"></div>`,
+                    iconSize: [size, size],
+                    iconAnchor: [size / 2, size / 2],
+                }),
+            });
+        }
+        return L.circleMarker(latlng, {
+            radius: 8,
+            fillColor: color,
+            color: '#fff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8,
+        });
+    },
+
     rebuildWellLabelsFromWellsLayer() {
         if (!this.wellLabelsLayer) return;
         this.wellLabelsLayer.clearLayers();
@@ -268,15 +299,7 @@ const MapManager = {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
                         // Цвет символа колодца — из справочника "Виды объектов" (object_types.well.color)
-                        const color = this.getPlannedOverrideColor(feature?.properties, this.colors.wells);
-                        return L.circleMarker(latlng, {
-                            radius: 8,
-                            fillColor: color,
-                            color: '#fff',
-                            weight: 2,
-                            opacity: 1,
-                            fillOpacity: 0.8,
-                        });
+                        return this.createWellMarker(latlng, feature?.properties || {});
                     },
                     onEachFeature: (feature, layer) => {
                         const coords = layer.getLatLng();
@@ -1602,15 +1625,7 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 const addPoint = (objectType, feature, latlng) => {
                     if (objectType === 'well') {
-                        const fill = this.getPlannedOverrideColor(feature?.properties, feature?.properties?.type_color || this.colors.wells);
-                        const layer = L.circleMarker(latlng, {
-                            radius: 8,
-                            fillColor: fill,
-                            color: '#fff',
-                            weight: 2,
-                            opacity: 1,
-                            fillOpacity: 0.8,
-                        }).addTo(this.layers.wells);
+                        const layer = this.createWellMarker(latlng, feature?.properties || {}).addTo(this.layers.wells);
                         layer._igsMeta = { objectType: 'well', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);

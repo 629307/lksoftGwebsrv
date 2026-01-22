@@ -343,12 +343,14 @@ class GroupController extends BaseController
 
         // Колодцы (с фильтрацией по геометрии)
         $wells = $this->db->fetchAll(
-            "SELECT w.id, w.number, ST_AsGeoJSON(w.geom_wgs84)::json as geometry, 'well' as object_type,
+            "SELECT w.id, w.number, w.kind_id, ok.code as kind_code,
+                    ST_AsGeoJSON(w.geom_wgs84)::json as geometry, 'well' as object_type,
                     ot.color as type_color,
                     os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_wells gw
              JOIN wells w ON gw.well_id = w.id
              LEFT JOIN object_types ot ON w.type_id = ot.id
+             LEFT JOIN object_kinds ok ON w.kind_id = ok.id
              LEFT JOIN object_status os ON w.status_id = os.id
              WHERE gw.group_id = :id AND w.geom_wgs84 IS NOT NULL",
             ['id' => $groupId]

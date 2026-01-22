@@ -2883,6 +2883,7 @@ const App = {
         const len = document.getElementById('settings-cable-well-len');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
+        const entryKind = document.getElementById('settings-well-entry-kind-code');
         const hkDir = document.getElementById('settings-hotkey-add-direction');
         const hkWell = document.getElementById('settings-hotkey-add-well');
         const hkMarker = document.getElementById('settings-hotkey-add-marker');
@@ -2902,6 +2903,30 @@ const App = {
         if (hkDuct) hkDuct.value = (this.settings.hotkey_add_duct_cable ?? '');
         if (hkGround) hkGround.value = (this.settings.hotkey_add_ground_cable ?? '');
         if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
+
+        // Заполняем список "Код — точка ввода" (object_kinds.code) только для вида объекта "Колодец"
+        if (entryKind) {
+            try {
+                const [typesResp, kindsResp] = await Promise.all([
+                    API.references.all('object_types'),
+                    API.references.all('object_kinds'),
+                ]);
+                const types = typesResp?.data || [];
+                const kinds = kindsResp?.data || [];
+                const wellType = (types || []).find(t => (t.code || '') === 'well');
+                const wellTypeId = wellType?.id;
+                const filtered = wellTypeId
+                    ? (kinds || []).filter(k => String(k.object_type_id) === String(wellTypeId))
+                    : [];
+                filtered.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
+
+                entryKind.innerHTML = '<option value="">Не задано</option>' +
+                    filtered.map(k => `<option value="${this.escapeHtml(k.code || '')}">${this.escapeHtml(k.code || '')} — ${this.escapeHtml(k.name || '')}</option>`).join('');
+                entryKind.value = (this.settings.well_entry_point_kind_code ?? '');
+            } catch (_) {
+                // ignore
+            }
+        }
     },
 
     async saveSettings() {
@@ -2915,6 +2940,7 @@ const App = {
         const len = document.getElementById('settings-cable-well-len')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
+        const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
         const hkDir = document.getElementById('settings-hotkey-add-direction')?.value;
         const hkWell = document.getElementById('settings-hotkey-add-well')?.value;
         const hkMarker = document.getElementById('settings-hotkey-add-marker')?.value;
@@ -2944,6 +2970,7 @@ const App = {
             cable_in_well_length_m: len,
             url_geoproj: geo,
             url_cadastre: cad,
+            well_entry_point_kind_code: (entryKind ?? '').toString(),
         };
         try {
             payload.hotkey_add_direction = validateHotkey('Добавить направление', hkDir);

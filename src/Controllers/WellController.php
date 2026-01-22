@@ -92,7 +92,7 @@ class WellController extends BaseController
                        w.owner_id, w.type_id, w.kind_id, w.status_id,
                        o.name as owner_name,
                        ot.name as type_name, ot.color as type_color,
-                       ok.name as kind_name,
+                       ok.code as kind_code, ok.name as kind_name,
                        os.code as status_code, os.name as status_name, os.color as status_color
                 FROM wells w
                 LEFT JOIN owners o ON w.owner_id = o.id
