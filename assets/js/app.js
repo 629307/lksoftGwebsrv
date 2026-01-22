@@ -150,9 +150,40 @@ const App = {
         document.getElementById('btn-logout').addEventListener('click', () => this.handleLogout());
 
         // Навигация
+        const closeMobileSidebar = () => {
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar) sidebar.classList.remove('open');
+            if (overlay) overlay.classList.add('hidden');
+        };
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => this.switchPanel(item.dataset.panel));
+            item.addEventListener('click', () => {
+                this.switchPanel(item.dataset.panel);
+                closeMobileSidebar();
+            });
         });
+
+        // Мобильное меню (сайдбар)
+        const mobileMenuBtn = document.getElementById('btn-mobile-menu');
+        const sidebar = document.querySelector('.sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+        if (mobileMenuBtn && sidebar && overlay) {
+            const open = () => {
+                sidebar.classList.add('open');
+                overlay.classList.remove('hidden');
+            };
+            const close = () => closeMobileSidebar();
+            mobileMenuBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const isOpen = sidebar.classList.contains('open');
+                if (isOpen) close();
+                else open();
+            });
+            overlay.addEventListener('click', () => close());
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 768) close();
+            });
+        }
 
         // Переключение темы
         document.getElementById('btn-theme-dark').addEventListener('click', () => this.setTheme('dark'));

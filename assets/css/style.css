@@ -286,6 +286,21 @@ a:hover {
     justify-content: space-between;
     padding: 0 20px;
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 2002;
+}
+
+.mobile-menu-btn {
+    display: none;
+    padding: 6px 10px;
+}
+
+.sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1999;
 }
 
 .logo {
@@ -1124,12 +1139,43 @@ tr:hover {
 
 /* Responsive */
 @media (max-width: 768px) {
+    .top-bar {
+        height: auto;
+        padding: 10px 12px;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .mobile-menu-btn {
+        display: inline-flex;
+    }
+
+    .logo span {
+        display: none;
+    }
+
+    .top-bar-actions {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    #user-name {
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     .sidebar {
-        position: absolute;
+        position: fixed;
         left: -100%;
+        top: 0;
         height: 100%;
         z-index: 1000;
         transition: left 0.3s;
+        width: min(92vw, var(--sidebar-width));
     }
     
     .sidebar.open {
@@ -1143,14 +1189,41 @@ tr:hover {
     
     .map-toolbar {
         top: 5px;
-        left: 55px;
+        left: 10px;
         padding: 5px;
+        max-width: calc(100% - 20px);
+        flex-wrap: wrap;
+    }
+
+    .map-toolbar .btn {
+        padding: 8px 12px;
     }
     
     .add-mode-status {
         top: 50px;
         padding: 8px 12px;
         font-size: 12px;
+    }
+
+    .filters-row {
+        flex-wrap: wrap;
+        padding: 10px 12px;
+    }
+
+    .filters-row select,
+    .filters-row input,
+    .filters-row .btn {
+        width: 100%;
+    }
+
+    .table-container {
+        padding: 0 12px;
+    }
+
+    .reports-grid,
+    .references-grid {
+        grid-template-columns: 1fr;
+        padding: 12px;
     }
 }
 
