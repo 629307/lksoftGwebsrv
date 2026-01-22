@@ -1181,6 +1181,8 @@ tr:hover {
     
     .sidebar.open {
         left: 0;
+        top: auto;
+        height: calc(100vh - var(--topbar-height));
     }
     
     .modal-content {
