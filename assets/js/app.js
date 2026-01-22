@@ -2505,6 +2505,12 @@ const App = {
                 </div>
                 ${html}
             `;
+
+            // Если отчёт ниже карточек — прокручиваем до него (теперь #report-content скроллится)
+            try {
+                container.scrollTop = 0;
+                container.scrollIntoView({ block: 'start' });
+            } catch (_) {}
         } catch (error) {
             container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
         }
