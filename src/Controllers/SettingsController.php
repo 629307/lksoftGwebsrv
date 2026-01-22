@@ -65,6 +65,8 @@ class SettingsController extends BaseController
             'line_weight_direction',
             'line_weight_cable',
             'icon_size_well_marker',
+            'font_size_well_number_label',
+            'font_size_direction_length_label',
         ];
 
         $toSave = array_intersect_key($data, array_flip($allowed));

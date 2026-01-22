@@ -35,6 +35,9 @@ const MapManager = {
     wellLabelsEnabled: false,
     wellLabelsLayer: null,
     wellLabelsMinZoom: 14,
+    // Подписи длины направлений
+    directionLengthLabelsEnabled: false,
+    directionLengthLabelsLayer: null,
     initialViewLocked: true,
 
     // Режим группы (показываем только объекты группы)
@@ -95,6 +98,14 @@ const MapManager = {
         return Math.max(6, this.getSettingNumber('icon_size_well_marker', 24));
     },
 
+    getWellLabelFontSizePx() {
+        return Math.max(8, this.getSettingNumber('font_size_well_number_label', 12));
+    },
+
+    getDirectionLengthLabelFontSizePx() {
+        return Math.max(8, this.getSettingNumber('font_size_direction_length_label', 12));
+    },
+
     isWellEntryPoint(props) {
         // Важно: App объявлен как const в app.js и не является window.App,
         // поэтому используем доступ по идентификатору App (если определён).
@@ -148,6 +159,7 @@ const MapManager = {
         this.wellLabelsLayer.clearLayers();
 
         const labelColorDefault = this.colors.wells;
+        const fontSize = this.getWellLabelFontSizePx();
 
         const addLabel = (latlng, number, color) => {
             const label = L.marker(latlng, {
@@ -155,7 +167,7 @@ const MapManager = {
                 keyboard: false,
                 icon: L.divIcon({
                     className: 'well-number-label',
-                    html: `<div class="well-number-label-text" style="color:${color || labelColorDefault}">${number}</div>`,
+                    html: `<div class="well-number-label-text" style="color:${color || labelColorDefault}; font-size:${fontSize}px;">${number}</div>`,
                     iconAnchor: [0, 0],
                 }),
             });
@@ -233,6 +245,8 @@ const MapManager = {
 
         // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
         this.wellLabelsLayer = L.featureGroup().addTo(this.map);
+        // Отдельный слой подписей длин направлений
+        this.directionLengthLabelsLayer = L.featureGroup().addTo(this.map);
 
         // Отслеживание координат курсора
         this.map.on('mousemove', (e) => {
@@ -243,8 +257,11 @@ const MapManager = {
         // Клик по карте
         this.map.on('click', (e) => this.onMapClick(e));
 
-        // Авто-скрытие подписей колодцев по зуму
-        this.map.on('zoomend', () => this.updateWellLabelsVisibility());
+        // Авто-скрытие подписей колодцев по зуму + пересборка подписей направлений (угол зависит от зума)
+        this.map.on('zoomend', () => {
+            this.updateWellLabelsVisibility();
+            if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+        });
         this.updateWellLabelsVisibility();
 
         console.log('Карта инициализирована');
@@ -404,6 +421,98 @@ const MapManager = {
         this.setWellLabelsEnabled(!this.wellLabelsEnabled);
     },
 
+    rebuildDirectionLengthLabelsFromDirectionsLayer() {
+        if (!this.map || !this.directionLengthLabelsLayer) return;
+        this.directionLengthLabelsLayer.clearLayers();
+
+        const fontSize = this.getDirectionLengthLabelFontSizePx();
+
+        const traverse = (layer, cb) => {
+            if (!layer) return;
+            if (typeof layer.getLayers === 'function') {
+                (layer.getLayers() || []).forEach(l => traverse(l, cb));
+                return;
+            }
+            cb(layer);
+        };
+
+        const addLabelForLine = (lineLayer) => {
+            const meta = lineLayer?._igsMeta;
+            if (!meta || meta.objectType !== 'channel_direction') return;
+            const props = meta.properties || {};
+            const lenM = props.length_m;
+            if (lenM === null || lenM === undefined || lenM === '') return;
+
+            const latlngsRaw = lineLayer.getLatLngs?.();
+            if (!latlngsRaw) return;
+            const latlngs = Array.isArray(latlngsRaw[0]) ? latlngsRaw[0] : latlngsRaw;
+            if (!Array.isArray(latlngs) || latlngs.length < 2) return;
+
+            const pts = latlngs.map(ll => this.map.latLngToLayerPoint(ll));
+            let total = 0;
+            const segLens = [];
+            for (let i = 0; i < pts.length - 1; i++) {
+                const dx = pts[i + 1].x - pts[i].x;
+                const dy = pts[i + 1].y - pts[i].y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                segLens.push(d);
+                total += d;
+            }
+            if (!total) return;
+            const half = total / 2;
+            let acc = 0;
+            let idx = 0;
+            while (idx < segLens.length && acc + segLens[idx] < half) {
+                acc += segLens[idx];
+                idx++;
+            }
+            idx = Math.min(idx, segLens.length - 1);
+            const segLen = segLens[idx] || 1;
+            const t = (half - acc) / segLen;
+            const p0 = pts[idx];
+            const p1 = pts[idx + 1];
+
+            const mx = p0.x + (p1.x - p0.x) * t;
+            const my = p0.y + (p1.y - p0.y) * t;
+            const dx = p1.x - p0.x;
+            const dy = p1.y - p0.y;
+            let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            if (angle > 90 || angle < -90) angle += 180;
+
+            const nLen = Math.sqrt(dx * dx + dy * dy) || 1;
+            const nx = -dy / nLen;
+            const ny = dx / nLen;
+            const offsetPx = 10;
+            const ox = mx + nx * offsetPx;
+            const oy = my + ny * offsetPx;
+            const pos = this.map.layerPointToLatLng(L.point(ox, oy));
+
+            const text = `${Number(lenM).toFixed(2)} м`;
+            const icon = L.divIcon({
+                className: 'direction-length-label',
+                html: `<div style="transform: rotate(${angle}deg); transform-origin: center; white-space: nowrap; font-size:${fontSize}px; color:#111; background: rgba(255,255,255,0.85); border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 2px 6px;">${text}</div>`,
+                iconAnchor: [0, 0],
+            });
+            L.marker(pos, { icon, interactive: false, keyboard: false }).addTo(this.directionLengthLabelsLayer);
+        };
+
+        traverse(this.layers?.channels, addLabelForLine);
+    },
+
+    setDirectionLengthLabelsEnabled(enabled) {
+        this.directionLengthLabelsEnabled = !!enabled;
+        if (!this.map || !this.directionLengthLabelsLayer) return;
+        const has = this.map.hasLayer(this.directionLengthLabelsLayer);
+        if (this.directionLengthLabelsEnabled && !has) this.map.addLayer(this.directionLengthLabelsLayer);
+        if (!this.directionLengthLabelsEnabled && has) this.map.removeLayer(this.directionLengthLabelsLayer);
+        if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+        else this.directionLengthLabelsLayer.clearLayers();
+    },
+
+    toggleDirectionLengthLabels() {
+        this.setDirectionLengthLabelsEnabled(!this.directionLengthLabelsEnabled);
+    },
+
     /**
      * Загрузка направлений каналов
      */
@@ -455,6 +564,7 @@ const MapManager = {
                     },
                 }).addTo(this.layers.channels);
             }
+            if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
         } catch (error) {
             console.error('Ошибка загрузки направлений:', error);
         }
@@ -1716,6 +1826,7 @@ const MapManager = {
                 });
 
                 if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
+                if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
                 this.updateWellLabelsVisibility();
                 this.fitToAllObjects();
             }

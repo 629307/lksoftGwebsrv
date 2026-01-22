@@ -354,6 +354,10 @@ const App = {
             MapManager.toggleWellLabels();
             e.currentTarget.classList.toggle('active', MapManager.wellLabelsEnabled);
         });
+        document.getElementById('btn-toggle-direction-length-labels')?.addEventListener('click', (e) => {
+            MapManager.toggleDirectionLengthLabels();
+            e.currentTarget.classList.toggle('active', MapManager.directionLengthLabelsEnabled);
+        });
         document.getElementById('btn-cancel-add-mode')?.addEventListener('click', () => {
             MapManager.cancelAddDirectionMode();
             MapManager.cancelAddingObject();
@@ -2884,6 +2888,8 @@ const App = {
         const wDir = document.getElementById('settings-line-weight-direction');
         const wCable = document.getElementById('settings-line-weight-cable');
         const iconSize = document.getElementById('settings-icon-size-well-marker');
+        const fsWell = document.getElementById('settings-font-size-well-number');
+        const fsDirLen = document.getElementById('settings-font-size-direction-length');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
         const entryKind = document.getElementById('settings-well-entry-kind-code');
@@ -2901,6 +2907,8 @@ const App = {
         if (wDir) wDir.value = (this.settings.line_weight_direction ?? 3);
         if (wCable) wCable.value = (this.settings.line_weight_cable ?? 2);
         if (iconSize) iconSize.value = (this.settings.icon_size_well_marker ?? 24);
+        if (fsWell) fsWell.value = (this.settings.font_size_well_number_label ?? 12);
+        if (fsDirLen) fsDirLen.value = (this.settings.font_size_direction_length_label ?? 12);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
         if (hkDir) hkDir.value = (this.settings.hotkey_add_direction ?? '');
@@ -2947,6 +2955,8 @@ const App = {
         const wDir = document.getElementById('settings-line-weight-direction')?.value;
         const wCable = document.getElementById('settings-line-weight-cable')?.value;
         const iconSize = document.getElementById('settings-icon-size-well-marker')?.value;
+        const fsWell = document.getElementById('settings-font-size-well-number')?.value;
+        const fsDirLen = document.getElementById('settings-font-size-direction-length')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
         const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
@@ -2980,6 +2990,8 @@ const App = {
             line_weight_direction: wDir,
             line_weight_cable: wCable,
             icon_size_well_marker: iconSize,
+            font_size_well_number_label: fsWell,
+            font_size_direction_length_label: fsDirLen,
             url_geoproj: geo,
             url_cadastre: cad,
             well_entry_point_kind_code: (entryKind ?? '').toString(),

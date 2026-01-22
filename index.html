@@ -231,6 +231,9 @@
                         <button class="btn btn-sm" id="btn-toggle-well-labels" title="Подсказки (номера колодцев)">
                             <i class="fas fa-tag"></i>
                         </button>
+                        <button class="btn btn-sm" id="btn-toggle-direction-length-labels" title="Подсказки длина направления">
+                            <i class="fas fa-ruler-horizontal"></i>
+                        </button>
                     </div>
 
                     <!-- Панель подсветки кабеля -->
@@ -550,6 +553,14 @@
                                 <label>Размер иконки — Колодец/Столбик</label>
                                 <input type="number" id="settings-icon-size-well-marker" step="1" min="6" placeholder="Напр.: 24">
                                 <p class="text-muted">Размер в пикселях. Применяется к колодцам (круг/квадрат) и столбикам.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Размер шрифта — номер Колодца</label>
+                                <input type="number" id="settings-font-size-well-number" step="1" min="8" placeholder="Напр.: 12">
+                            </div>
+                            <div class="form-group">
+                                <label>Размер шрифта — длина Направления</label>
+                                <input type="number" id="settings-font-size-direction-length" step="1" min="8" placeholder="Напр.: 12">
                             </div>
                             <div class="form-group">
                                 <label>Ссылка на Ресурс для пересчёта координат</label>
