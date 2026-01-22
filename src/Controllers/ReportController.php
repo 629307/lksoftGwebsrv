@@ -275,8 +275,26 @@ class ReportController extends BaseController
      */
     public function incidents(): void
     {
-        $dateFrom = $this->request->query('date_from', date('Y-01-01'));
-        $dateTo = $this->request->query('date_to', date('Y-m-d'));
+        // В UI для фильтра чаще приходят даты без времени (YYYY-MM-DD).
+        // Для TIMESTAMP важно включать весь день, иначе при date_to=сегодня будет отсечено всё после 00:00:00.
+        $dateFrom = (string) $this->request->query('date_from', date('Y-01-01 00:00:00'));
+        $dateTo = (string) $this->request->query('date_to', date('Y-m-d H:i:s'));
+
+        $normalize = function(string $v, bool $isTo): string {
+            $v = trim($v);
+            if ($v === '') return $v;
+            // Если пришла только дата без времени — добавляем границы дня
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) {
+                return $isTo ? ($v . ' 23:59:59') : ($v . ' 00:00:00');
+            }
+            // Если HTML datetime-local (YYYY-MM-DDTHH:MM) — приводим к пробелу и секундам
+            if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $v)) {
+                return str_replace('T', ' ', $v) . ':00';
+            }
+            return $v;
+        };
+        $dateFrom = $normalize($dateFrom, false);
+        $dateTo = $normalize($dateTo, true);
 
         // По статусам
         $byStatus = $this->db->fetchAll(
