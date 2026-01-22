@@ -71,6 +71,30 @@ const MapManager = {
         return fallback;
     },
 
+    getSettingNumber(code, fallback) {
+        try {
+            if (typeof App === 'undefined') return fallback;
+            const raw = App?.settings?.[code];
+            if (raw === undefined || raw === null || raw === '') return fallback;
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : fallback;
+        } catch (_) {
+            return fallback;
+        }
+    },
+
+    getDirectionLineWeight() {
+        return Math.max(0.5, this.getSettingNumber('line_weight_direction', 3));
+    },
+
+    getCableLineWeight() {
+        return Math.max(0.5, this.getSettingNumber('line_weight_cable', 2));
+    },
+
+    getWellMarkerSizePx() {
+        return Math.max(6, this.getSettingNumber('icon_size_well_marker', 24));
+    },
+
     isWellEntryPoint(props) {
         // Важно: App объявлен как const в app.js и не является window.App,
         // поэтому используем доступ по идентификатору App (если определён).
@@ -83,8 +107,8 @@ const MapManager = {
     createWellMarker(latlng, props) {
         const base = props?.type_color || this.colors.wells;
         const color = this.getPlannedOverrideColor(props, base);
+        const size = this.getWellMarkerSizePx(); // диаметр/размер в px
         if (this.isWellEntryPoint(props)) {
-            const size = 16;
             return L.marker(latlng, {
                 icon: L.divIcon({
                     className: 'well-entry-point-icon',
@@ -94,13 +118,28 @@ const MapManager = {
                 }),
             });
         }
+        const radius = Math.max(3, size / 2);
         return L.circleMarker(latlng, {
-            radius: 8,
+            radius,
             fillColor: color,
             color: '#fff',
             weight: 2,
             opacity: 1,
             fillOpacity: 0.8,
+        });
+    },
+
+    createMarkerPostMarker(latlng, props) {
+        const base = props?.type_color || this.colors.markers;
+        const color = this.getPlannedOverrideColor(props, base);
+        const size = this.getWellMarkerSizePx();
+        return L.marker(latlng, {
+            icon: L.divIcon({
+                html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: ${size}px;"></i>`,
+                className: 'marker-post-icon',
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size],
+            }),
         });
     },
 
@@ -393,7 +432,7 @@ const MapManager = {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
                         color: this.getPlannedOverrideColor(feature?.properties, this.colors.channels),
-                        weight: 3,
+                        weight: this.getDirectionLineWeight(),
                         opacity: 0.8,
                     }),
                     onEachFeature: (feature, layer) => {
@@ -448,16 +487,7 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     pointToLayer: (feature, latlng) => {
-                        const base = feature.properties.type_color || this.colors.markers;
-                        const color = this.getPlannedOverrideColor(feature?.properties, base);
-                        return L.marker(latlng, {
-                            icon: L.divIcon({
-                                html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
-                                className: 'marker-post-icon',
-                                iconSize: [24, 24],
-                                iconAnchor: [12, 24],
-                            }),
-                        });
+                        return this.createMarkerPostMarker(latlng, feature?.properties || {});
                     },
                     onEachFeature: (feature, layer) => {
                         layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
@@ -516,7 +546,7 @@ const MapManager = {
                             feature?.properties,
                             feature.properties.object_type_color || feature.properties.status_color || color
                         ),
-                        weight: 2,
+                        weight: this.getCableLineWeight(),
                         opacity: 0.8,
                         dashArray: type === 'aerial' ? '5, 5' : null,
                     }),
@@ -1636,16 +1666,7 @@ const MapManager = {
                         return;
                     }
                     if (objectType === 'marker_post') {
-                        const base = feature?.properties?.type_color || this.colors.markers;
-                        const color = this.getPlannedOverrideColor(feature?.properties, base);
-                        const layer = L.marker(latlng, {
-                            icon: L.divIcon({
-                                html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: 24px;"></i>`,
-                                className: 'marker-post-icon',
-                                iconSize: [24, 24],
-                                iconAnchor: [12, 24],
-                            }),
-                        }).addTo(this.layers.markers);
+                        const layer = this.createMarkerPostMarker(latlng, feature?.properties || {}).addTo(this.layers.markers);
                         layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
@@ -1684,13 +1705,13 @@ const MapManager = {
                     // LineString / MultiLineString
                     const latlngs = L.GeoJSON.coordsToLatLngs(geom.coordinates, geom.type === 'MultiLineString' ? 1 : 0);
                     if (ot === 'channel_direction') {
-                        addLine(this.layers.channels, 'channel_direction', f, latlngs, { color: this.colors.channels, weight: 3, opacity: 0.8 });
+                        addLine(this.layers.channels, 'channel_direction', f, latlngs, { color: this.colors.channels, weight: this.getDirectionLineWeight(), opacity: 0.8 });
                     } else if (ot === 'ground_cable') {
-                        addLine(this.layers.groundCables, 'ground_cable', f, latlngs, { color: this.colors.groundCables, weight: 2, opacity: 0.8 });
+                        addLine(this.layers.groundCables, 'ground_cable', f, latlngs, { color: this.colors.groundCables, weight: this.getCableLineWeight(), opacity: 0.8 });
                     } else if (ot === 'aerial_cable') {
-                        addLine(this.layers.aerialCables, 'aerial_cable', f, latlngs, { color: this.colors.aerialCables, weight: 2, opacity: 0.8, dashArray: '5, 5' });
+                        addLine(this.layers.aerialCables, 'aerial_cable', f, latlngs, { color: this.colors.aerialCables, weight: this.getCableLineWeight(), opacity: 0.8, dashArray: '5, 5' });
                     } else if (ot === 'duct_cable') {
-                        addLine(this.layers.ductCables, 'duct_cable', f, latlngs, { color: this.colors.ductCables, weight: 2, opacity: 0.8 });
+                        addLine(this.layers.ductCables, 'duct_cable', f, latlngs, { color: this.colors.ductCables, weight: this.getCableLineWeight(), opacity: 0.8 });
                     }
                 });
 

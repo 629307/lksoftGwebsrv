@@ -2881,6 +2881,9 @@ const App = {
         const lat = document.getElementById('settings-map-lat');
         const lng = document.getElementById('settings-map-lng');
         const len = document.getElementById('settings-cable-well-len');
+        const wDir = document.getElementById('settings-line-weight-direction');
+        const wCable = document.getElementById('settings-line-weight-cable');
+        const iconSize = document.getElementById('settings-icon-size-well-marker');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
         const entryKind = document.getElementById('settings-well-entry-kind-code');
@@ -2895,6 +2898,9 @@ const App = {
         if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
         if (lng) lng.value = (this.settings.map_default_lng ?? (MapManager.defaultCenter?.[1] ?? 76.68617));
         if (len) len.value = (this.settings.cable_in_well_length_m ?? 3);
+        if (wDir) wDir.value = (this.settings.line_weight_direction ?? 3);
+        if (wCable) wCable.value = (this.settings.line_weight_cable ?? 2);
+        if (iconSize) iconSize.value = (this.settings.icon_size_well_marker ?? 24);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
         if (hkDir) hkDir.value = (this.settings.hotkey_add_direction ?? '');
@@ -2938,6 +2944,9 @@ const App = {
         const lat = document.getElementById('settings-map-lat')?.value;
         const lng = document.getElementById('settings-map-lng')?.value;
         const len = document.getElementById('settings-cable-well-len')?.value;
+        const wDir = document.getElementById('settings-line-weight-direction')?.value;
+        const wCable = document.getElementById('settings-line-weight-cable')?.value;
+        const iconSize = document.getElementById('settings-icon-size-well-marker')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
         const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
@@ -2968,6 +2977,9 @@ const App = {
             map_default_lat: lat,
             map_default_lng: lng,
             cable_in_well_length_m: len,
+            line_weight_direction: wDir,
+            line_weight_cable: wCable,
+            icon_size_well_marker: iconSize,
             url_geoproj: geo,
             url_cadastre: cad,
             well_entry_point_kind_code: (entryKind ?? '').toString(),
@@ -2994,6 +3006,8 @@ const App = {
 
             // Обновляем локально и применяем (центр/зум — для следующей инициализации карты)
             await this.loadSettings().catch(() => {});
+            // Применяем визуальные настройки сразу
+            try { await MapManager.loadAllLayers?.(); } catch (_) {}
         } catch (e) {
             this.notify(e?.message || 'Ошибка сохранения', 'error');
         }

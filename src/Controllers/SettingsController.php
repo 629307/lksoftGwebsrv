@@ -61,6 +61,10 @@ class SettingsController extends BaseController
             'hotkey_add_aerial_cable',
             // Колодцы: тип (object_kinds.code) для "точки ввода"
             'well_entry_point_kind_code',
+            // Стили карты
+            'line_weight_direction',
+            'line_weight_cable',
+            'icon_size_well_marker',
         ];
 
         $toSave = array_intersect_key($data, array_flip($allowed));
