@@ -1173,7 +1173,8 @@ tr:hover {
         left: -100%;
         top: 0;
         height: 100%;
-        z-index: 1000;
+        /* должно быть выше overlay, иначе клики уходят в overlay */
+        z-index: 2000;
         transition: left 0.3s;
         width: min(92vw, var(--sidebar-width));
     }
