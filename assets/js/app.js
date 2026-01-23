@@ -2691,8 +2691,7 @@ const App = {
                         Не законтрактованные Кабеля собственника контракта
                         <span class="text-muted">
                             (Количество кабелей: ${green(uncontracted.stats.count)},
-                            Общая протяженность кабелей (м) в части контракта: ${green(fmt2(uncontracted.stats.length_sum_contract_part || 0))},
-                            Стоимость за 1 метр: ${green(uncontracted.stats.cost_per_meter === null ? '-' : uncontracted.stats.cost_per_meter)})
+                            Общая протяженность кабелей (м) в части контракта: ${green(fmt2(uncontracted.stats.length_sum_contract_part || 0))})
                         </span>
                     </h4>
                     ${renderCablesTable(uncontracted.cables)}
