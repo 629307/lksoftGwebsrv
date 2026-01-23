@@ -10,18 +10,69 @@ use App\Core\Auth;
 
 class SettingsController extends BaseController
 {
+    private function defaultSettings(): array
+    {
+        return [
+            // defaults (как в ТЗ)
+            'map_default_zoom' => '14',
+            'map_default_lat' => '66.10231',
+            'map_default_lng' => '76.68617',
+            'cable_in_well_length_m' => '2', // глобально для всех, меняет только root
+            'line_weight_direction' => '2',
+            'line_weight_cable' => '1',
+            'icon_size_well_marker' => '12',
+            'font_size_well_number_label' => '12',
+            'font_size_direction_length_label' => '12',
+            'url_geoproj' => 'https://geoproj.ru/',
+            'url_cadastre' => 'https://nspd.gov.ru/map?zoom=16.801685060501118&theme_id=1&coordinate_x=8535755.537972113&coordinate_y=9908336.650357058&baseLayerId=235&is_copy_url=true',
+            'well_entry_point_kind_code' => 'input',
+            // hotkeys
+            'hotkey_add_direction' => 'a',
+            'hotkey_add_well' => 's',
+            'hotkey_add_marker' => 'd',
+            'hotkey_add_duct_cable' => 'z',
+            'hotkey_add_ground_cable' => 'x',
+            'hotkey_add_aerial_cable' => 'c',
+        ];
+    }
+
     /**
      * GET /api/settings
      * Получить настройки (map/defaults/urls)
      */
     public function index(): void
     {
+        $user = Auth::user();
+        if (!$user) {
+            Response::error('Требуется авторизация', 401);
+        }
+
         try {
+            // 1) defaults
+            $out = $this->defaultSettings();
+
+            // 2) global app_settings (fallbacks)
             $rows = $this->db->fetchAll("SELECT code, value FROM app_settings");
-            $out = [];
             foreach ($rows as $r) {
-                $out[$r['code']] = $r['value'];
+                if (!isset($r['code'])) continue;
+                $out[(string) $r['code']] = (string) ($r['value'] ?? '');
             }
+
+            // 3) per-user overrides (кроме cable_in_well_length_m)
+            try {
+                $urows = $this->db->fetchAll(
+                    "SELECT code, value FROM user_settings WHERE user_id = :uid",
+                    ['uid' => (int) $user['id']]
+                );
+                foreach ($urows as $r) {
+                    $code = (string) ($r['code'] ?? '');
+                    if ($code === '' || $code === 'cable_in_well_length_m') continue;
+                    $out[$code] = (string) ($r['value'] ?? '');
+                }
+            } catch (\PDOException $e) {
+                // user_settings может отсутствовать до применения миграции — игнорируем
+            }
+
             Response::success($out);
         } catch (\PDOException $e) {
             // Миграция может быть не применена
@@ -31,12 +82,15 @@ class SettingsController extends BaseController
 
     /**
      * PUT /api/settings
-     * Обновить настройки (только админ)
+     * Обновить настройки:
+     * - все пользователи могут сохранять персональные настройки
+     * - cable_in_well_length_m: глобальная настройка, меняет только root
      */
     public function update(): void
     {
-        if (!Auth::isAdmin()) {
-            Response::error('Доступ запрещён', 403);
+        $user = Auth::user();
+        if (!$user) {
+            Response::error('Требуется авторизация', 401);
         }
 
         // JSON body уже распарсен в Request::parseBody() при Content-Type: application/json
@@ -79,26 +133,45 @@ class SettingsController extends BaseController
             }
         }
 
+        $saved = [];
         try {
             $this->db->beginTransaction();
+
             foreach ($toSave as $code => $value) {
+                if ($code === 'cable_in_well_length_m') {
+                    if (!Auth::isRoot()) {
+                        Response::error('Доступ запрещён: изменить "Учитываемая длина кабеля в колодце (м)" может только пользователь root', 403);
+                    }
+                    $this->db->query(
+                        "INSERT INTO app_settings(code, value, updated_at)
+                         VALUES (:code, :value, NOW())
+                         ON CONFLICT (code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                        ['code' => $code, 'value' => $value]
+                    );
+                    $saved[$code] = $value;
+                    continue;
+                }
+
+                // персональные настройки
                 $this->db->query(
-                    "INSERT INTO app_settings(code, value, updated_at)
-                     VALUES (:code, :value, NOW())
-                     ON CONFLICT (code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
-                    ['code' => $code, 'value' => $value]
+                    "INSERT INTO user_settings(user_id, code, value, updated_at)
+                     VALUES (:uid, :code, :value, NOW())
+                     ON CONFLICT (user_id, code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                    ['uid' => (int) $user['id'], 'code' => $code, 'value' => $value]
                 );
+                $saved[$code] = $value;
             }
+
             $this->db->commit();
         } catch (\PDOException $e) {
             $this->db->rollback();
-            Response::error('Таблица настроек не создана. Примените миграцию database/migration_v6.sql', 500);
+            Response::error('Таблица настроек не создана. Примените миграцию database/migration_v6.sql и database/migration_v7.sql', 500);
         } catch (\Throwable $e) {
             $this->db->rollback();
             throw $e;
         }
 
-        Response::success($toSave, 'Настройки сохранены');
+        Response::success($saved, 'Настройки сохранены');
     }
 }
 

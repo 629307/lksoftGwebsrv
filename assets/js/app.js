@@ -607,6 +607,10 @@ const App = {
         return this.user?.role?.code === 'admin';
     },
 
+    isRoot() {
+        return this.user?.login === 'root';
+    },
+
     hasPermission(key) {
         const p = this.user?.permissions || {};
         return p?.all === true || p?.[key] === true;
@@ -2915,7 +2919,7 @@ const App = {
     },
 
     async loadSettingsPanel() {
-        // Панель доступна только администратору (кнопка скрыта через admin-only)
+        // Панель доступна всем пользователям (персональные настройки)
         await this.loadSettings().catch(() => {});
 
         const z = document.getElementById('settings-map-zoom');
@@ -2940,7 +2944,12 @@ const App = {
         if (z) z.value = (this.settings.map_default_zoom ?? MapManager.defaultZoom ?? 14);
         if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
         if (lng) lng.value = (this.settings.map_default_lng ?? (MapManager.defaultCenter?.[1] ?? 76.68617));
-        if (len) len.value = (this.settings.cable_in_well_length_m ?? 3);
+        if (len) {
+            len.value = (this.settings.cable_in_well_length_m ?? 2);
+            // Глобальная настройка: менять может только root
+            len.disabled = !this.isRoot();
+            if (!this.isRoot()) len.style.background = 'var(--bg-tertiary)';
+        }
         if (wDir) wDir.value = (this.settings.line_weight_direction ?? 3);
         if (wCable) wCable.value = (this.settings.line_weight_cable ?? 2);
         if (iconSize) iconSize.value = (this.settings.icon_size_well_marker ?? 24);
@@ -2981,10 +2990,6 @@ const App = {
     },
 
     async saveSettings() {
-        if (!this.isAdmin()) {
-            this.notify('Доступ запрещён', 'error');
-            return;
-        }
         const z = document.getElementById('settings-map-zoom')?.value;
         const lat = document.getElementById('settings-map-lat')?.value;
         const lng = document.getElementById('settings-map-lng')?.value;
@@ -3023,7 +3028,8 @@ const App = {
             map_default_zoom: z,
             map_default_lat: lat,
             map_default_lng: lng,
-            cable_in_well_length_m: len,
+            // глобальная настройка — только root (остальным не отправляем)
+            ...(this.isRoot() ? { cable_in_well_length_m: len } : {}),
             line_weight_direction: wDir,
             line_weight_cable: wCable,
             icon_size_well_marker: iconSize,

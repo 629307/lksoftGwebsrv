@@ -1237,6 +1237,9 @@ tr:hover {
     .references-grid {
         grid-template-columns: 1fr;
         padding: 12px;
+        flex: 1;
+        min-height: 0;
+        overflow: auto; /* скролл списка карточек */
     }
 }
 

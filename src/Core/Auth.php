@@ -164,6 +164,14 @@ class Auth
     }
 
     /**
+     * Root пользователь (технический аккаунт)
+     */
+    public static function isRoot(): bool
+    {
+        return (self::$user && (self::$user['login'] ?? '') === 'root');
+    }
+
+    /**
      * Проверка права на запись
      */
     public static function canWrite(): bool

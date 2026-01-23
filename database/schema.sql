@@ -161,6 +161,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 COMMENT ON TABLE app_settings IS 'Системные настройки приложения (key/value)';
 
+-- 1.10 Персональные настройки пользователей
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code VARCHAR(100) NOT NULL,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (user_id, code)
+);
+
+CREATE INDEX idx_user_settings_user ON user_settings(user_id);
+CREATE INDEX idx_user_settings_code ON user_settings(code);
+
+COMMENT ON TABLE user_settings IS 'Персональные настройки пользователя (key/value)';
+
 -- 1.8 Стили отображения (удалено, используем object_types + object_status)
 
 -- ============================================================
