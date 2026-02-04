@@ -1304,7 +1304,7 @@ const App = {
                     break;
                 case 'groups':
                     response = await API.groups.get(id);
-                    title = 'Редактирование группы';
+                    title = 'Редактировать карточку ТУ';
                     break;
             }
 
@@ -1599,7 +1599,7 @@ const App = {
                             <input type="text" name="name" value="${obj.name || ''}" required>
                         </div>
                         <div class="form-group">
-                            <label>Тип группы</label>
+                            <label>Тип ТУ</label>
                             <input type="text" name="group_type" value="${obj.group_type || ''}">
                         </div>
                         <div class="form-group">
@@ -1607,7 +1607,7 @@ const App = {
                             <textarea name="description" rows="3">${obj.description || ''}</textarea>
                         </div>
                         <hr>
-                        <h4>Объекты в группе (${obj.objects ? obj.objects.length : 0})</h4>
+                        <h4>Объекты в ТУ (${obj.objects ? obj.objects.length : 0})</h4>
                         <div id="group-objects-list" style="max-height: 200px; overflow-y: auto;">
                             ${obj.objects && obj.objects.length > 0 ? obj.objects.map(o => `
                                 <div class="group-object-item" style="padding: 4px 8px; display: flex; justify-content: space-between; align-items: center;">
@@ -1659,15 +1659,15 @@ const App = {
                 );
             }
 
-            // Группы, в которые входит объект (read-only)
+            // ТУ, в которые входит объект (read-only)
             if (type !== 'groups' && formHtml.includes('</form>')) {
                 formHtml = formHtml.replace(
                     '</form>',
                     `
                         <hr>
-                        <h4>Группы</h4>
+                        <h4>ТУ</h4>
                         <div class="form-group">
-                            <label>Входит в группы</label>
+                            <label>Входит в ТУ</label>
                             <div id="edit-object-groups" class="text-muted">Загрузка...</div>
                         </div>
                     </form>
@@ -3373,7 +3373,7 @@ const App = {
             channels: 'Добавить канал',
             markers: 'Добавить столбик',
             cables: 'Добавить кабель',
-            groups: 'Создать группу',
+            groups: 'Создать карточку ТУ',
             unified_cables: 'Добавить кабель',
         };
 
@@ -3560,7 +3560,7 @@ const App = {
                         <input type="text" name="name" required>
                     </div>
                     <div class="form-group">
-                        <label>Тип группы</label>
+                        <label>Тип ТУ</label>
                         <input type="text" name="group_type">
                     </div>
                     <div class="form-group">
@@ -3568,9 +3568,9 @@ const App = {
                         <textarea name="description" rows="3"></textarea>
                     </div>
                     <div class="form-group">
-                        <label>Объекты в группе</label>
+                        <label>Объекты в ТУ</label>
                         <div id="group-objects-container">
-                            <p class="text-muted">Объекты можно добавить после создания группы</p>
+                            <p class="text-muted">Объекты можно добавить после создания ТУ</p>
                         </div>
                     </div>
                 </form>

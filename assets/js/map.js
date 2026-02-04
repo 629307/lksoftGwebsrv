@@ -1042,9 +1042,9 @@ const MapManager = {
             }
         }
 
-        // Группы (подгружаем асинхронно)
+        // ТУ (подгружаем асинхронно)
         html += `<div class="info-row">
-            <span class="info-label">Группы:</span>
+            <span class="info-label">ТУ:</span>
             <span class="info-value" id="info-groups">Загрузка...</span>
         </div>`;
 
