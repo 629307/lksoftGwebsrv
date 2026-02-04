@@ -38,6 +38,11 @@ const MapManager = {
     // Подписи длины направлений
     directionLengthLabelsEnabled: false,
     directionLengthLabelsLayer: null,
+    // Легенда по собственникам (раскраска по owners.color)
+    ownersLegendEnabled: false,
+    ownersLegendEl: null,
+    _ownersLegendCache: null,
+    _lastGroupFilters: null,
     initialViewLocked: true,
 
     // Режим группы (показываем только объекты группы)
@@ -117,7 +122,10 @@ const MapManager = {
 
     createWellMarker(latlng, props) {
         const base = props?.type_color || this.colors.wells;
-        const color = this.getPlannedOverrideColor(props, base);
+        const legendColor = (props?.owner_color || '').toString().trim();
+        const color = (this.ownersLegendEnabled && legendColor)
+            ? legendColor
+            : this.getPlannedOverrideColor(props, base);
         const size = this.getWellMarkerSizePx(); // диаметр/размер в px
         if (this.isWellEntryPoint(props)) {
             return L.marker(latlng, {
@@ -133,7 +141,8 @@ const MapManager = {
         return L.circleMarker(latlng, {
             radius,
             fillColor: color,
-            color: '#fff',
+            // по ТЗ "stroke" берём из цвета собственника — делаем обводку таким же цветом
+            color: color,
             weight: 2,
             opacity: 1,
             fillOpacity: 0.8,
@@ -188,7 +197,8 @@ const MapManager = {
                 const number = props.number;
                 if (!coords || !number) return;
                 const base = props.status_color || props.type_color || this.colors.wells;
-                const color = this.getPlannedOverrideColor(props, base);
+                const legendColor = (props?.owner_color || '').toString().trim();
+                const color = (this.ownersLegendEnabled && legendColor) ? legendColor : this.getPlannedOverrideColor(props, base);
                 addLabel(coords, number, color);
             };
             Object.values(this.layers || {}).forEach(traverse);
@@ -247,6 +257,18 @@ const MapManager = {
         this.wellLabelsLayer = L.featureGroup().addTo(this.map);
         // Отдельный слой подписей длин направлений
         this.directionLengthLabelsLayer = L.featureGroup().addTo(this.map);
+
+        // Легенда по собственникам (DOM overlay поверх карты)
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                const el = document.createElement('div');
+                el.id = 'owners-legend';
+                el.className = 'owners-legend hidden';
+                host.appendChild(el);
+                this.ownersLegendEl = el;
+            }
+        } catch (_) {}
 
         // Отслеживание координат курсора
         this.map.on('mousemove', (e) => {
@@ -509,6 +531,68 @@ const MapManager = {
         this.setDirectionLengthLabelsEnabled(!this.directionLengthLabelsEnabled);
     },
 
+    async fetchOwnersLegendData() {
+        try {
+            if (this._ownersLegendCache && Array.isArray(this._ownersLegendCache)) return this._ownersLegendCache;
+            if (typeof API === 'undefined') return [];
+            const resp = await API.references.all('owners');
+            const rows = resp?.data || resp || [];
+            const out = (rows || []).map(o => ({
+                id: o.id,
+                code: o.code,
+                short_name: o.short_name || o.name || o.code || '',
+                name: o.name || '',
+                color: (o.color || '').toString().trim() || '#999999',
+            }));
+            out.sort((a, b) => String(a.short_name).localeCompare(String(b.short_name), 'ru'));
+            this._ownersLegendCache = out;
+            return out;
+        } catch (_) {
+            return [];
+        }
+    },
+
+    async renderOwnersLegend() {
+        const el = this.ownersLegendEl || document.getElementById('owners-legend');
+        if (!el) return;
+        if (!this.ownersLegendEnabled) {
+            el.classList.add('hidden');
+            el.innerHTML = '';
+            return;
+        }
+        const owners = await this.fetchOwnersLegendData();
+        el.innerHTML = `
+            <div class="owners-legend-title">Легенда по собственникам</div>
+            <div class="owners-legend-list">
+                ${(owners || []).map(o => `
+                    <div class="owners-legend-item" title="${String(o.name || o.short_name || '').replace(/"/g, '&quot;')}">
+                        <span class="owners-legend-swatch" style="background:${o.color};"></span>
+                        <span class="owners-legend-text">${String(o.short_name || o.code || '')}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        el.classList.remove('hidden');
+    },
+
+    async reloadForLegend() {
+        if (this.groupMode && this.activeGroupId) {
+            await this.loadGroup(this.activeGroupId, this._lastGroupFilters || {});
+            return;
+        }
+        await this.loadAllLayers();
+    },
+
+    async setOwnersLegendEnabled(enabled) {
+        this.ownersLegendEnabled = !!enabled;
+        await this.renderOwnersLegend();
+        await this.reloadForLegend();
+    },
+
+    toggleOwnersLegend() {
+        this.setOwnersLegendEnabled(!this.ownersLegendEnabled);
+    },
+
     /**
      * Загрузка направлений каналов
      */
@@ -536,7 +620,9 @@ const MapManager = {
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
                     style: (feature) => ({
-                        color: this.getPlannedOverrideColor(feature?.properties, this.colors.channels),
+                        color: (this.ownersLegendEnabled && feature?.properties?.owner_color)
+                            ? feature.properties.owner_color
+                            : this.getPlannedOverrideColor(feature?.properties, this.colors.channels),
                         weight: this.getDirectionLineWeight(),
                         opacity: 0.8,
                     }),
@@ -1721,6 +1807,7 @@ const MapManager = {
      */
     async loadGroup(groupId, additionalFilters = {}) {
         try {
+            this._lastGroupFilters = additionalFilters || {};
             const response = await API.groups.geojson(groupId);
             
             // Проверяем на ошибку API
@@ -1783,7 +1870,9 @@ const MapManager = {
 
                 const addLine = (layerGroup, objectType, feature, latlngs, style) => {
                     const props = feature?.properties;
-                    if (props?.status_code === 'planned' && props?.status_color) {
+                    if (this.ownersLegendEnabled && props?.owner_color) {
+                        style = { ...(style || {}), color: props.owner_color };
+                    } else if (props?.status_code === 'planned' && props?.status_color) {
                         style = { ...(style || {}), color: props.status_color };
                     } else if (props?.type_color) {
                         // для старых кабелей/направлений в группе используем цвет вида объекта
@@ -1822,6 +1911,7 @@ const MapManager = {
                 });
 
                 if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
+                if (this.ownersLegendEnabled) this.renderOwnersLegend();
                 if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
                 this.updateWellLabelsVisibility();
                 this.fitToAllObjects();

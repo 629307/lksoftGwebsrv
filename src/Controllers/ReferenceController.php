@@ -35,7 +35,7 @@ class ReferenceController extends BaseController
         ],
         'owners' => [
             'table' => 'owners',
-            'fields' => ['code', 'name', 'short_name', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
+            'fields' => ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
             'search' => ['code', 'name', 'short_name', 'inn'],
         ],
         'contracts' => [

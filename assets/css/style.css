@@ -542,6 +542,53 @@ a:hover {
     height: max-content !important;
 }
 
+/* Owners legend (map overlay) */
+.owners-legend {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 600;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 10px 12px;
+    max-width: min(520px, calc(100% - 20px));
+    max-height: 35vh;
+    overflow: auto;
+}
+.owners-legend-title {
+    font-weight: 700;
+    font-size: 12px;
+    margin-bottom: 8px;
+    opacity: 0.95;
+}
+.owners-legend-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 10px;
+}
+.owners-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owners-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.35);
+    flex: 0 0 14px;
+}
+.owners-legend-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* По умолчанию — без теней у объектов/подсказок */
 .leaflet-tooltip,
 .leaflet-popup-content-wrapper,
@@ -1210,6 +1257,10 @@ tr:hover {
 
     .map-toolbar .btn {
         padding: 8px 12px;
+    }
+
+    .owners-legend-list {
+        grid-template-columns: 1fr;
     }
     
     .add-mode-status {

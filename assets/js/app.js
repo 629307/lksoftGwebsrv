@@ -389,6 +389,10 @@ const App = {
             MapManager.toggleDirectionLengthLabels();
             e.currentTarget.classList.toggle('active', MapManager.directionLengthLabelsEnabled);
         });
+        document.getElementById('btn-toggle-owner-legend')?.addEventListener('click', (e) => {
+            MapManager.toggleOwnersLegend();
+            e.currentTarget.classList.toggle('active', MapManager.ownersLegendEnabled);
+        });
         document.getElementById('btn-cancel-add-mode')?.addEventListener('click', () => {
             MapManager.cancelAddDirectionMode();
             MapManager.cancelAddingObject();
@@ -3080,7 +3084,7 @@ const App = {
             object_types: ['code', 'name', 'description', 'icon', 'color'],
             object_kinds: ['code', 'name', 'object_type_id', 'description', 'is_default'],
             object_status: ['code', 'name', 'color', 'description', 'sort_order', 'is_default'],
-            owners: ['code', 'name', 'short_name', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
+            owners: ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
             contracts: ['number', 'name', 'owner_id', 'landlord_id', 'start_date', 'end_date', 'status', 'amount', 'notes', 'is_default'],
             cable_types: ['code', 'name', 'description', 'is_default'],
             cable_catalog: ['cable_type_id', 'fiber_count', 'marking', 'description', 'is_default'],
@@ -3093,7 +3097,7 @@ const App = {
             owners: {
                 code: 'Код', name: 'Название', short_name: 'Краткое название', inn: 'ИНН',
                 address: 'Адрес', contact_person: 'Контактное лицо', contact_phone: 'Телефон', contact_email: 'Email',
-                notes: 'Примечания', is_default: 'По умолчанию'
+                color: 'Цвет', notes: 'Примечания', is_default: 'По умолчанию'
             },
             contracts: {
                 number: 'Номер', name: 'Название', owner_id: 'Арендатор', landlord_id: 'Арендодатель',
@@ -3112,6 +3116,10 @@ const App = {
         const formatCell = (col, value, row) => {
             if (col === 'is_default') return value ? 'Да' : '-';
             if (value === null || value === undefined || value === '') return '-';
+            if (col === 'color') {
+                const c = String(value);
+                return `<span style="display:inline-flex; align-items:center; gap:8px;"><span style="width:14px;height:14px;border-radius:4px;background:${c};border:1px solid rgba(0,0,0,0.25);"></span>${this.escapeHtml(c)}</span>`;
+            }
             // FK -> название
             if (type === 'object_kinds' && col === 'object_type_id') {
                 return row?.object_type_name || String(value);
@@ -5283,6 +5291,10 @@ const App = {
                 <div class="form-group">
                     <label>Краткое название</label>
                     <input type="text" name="short_name" value="${data.short_name || ''}">
+                </div>
+                <div class="form-group">
+                    <label>Цвет</label>
+                    <input type="color" name="color" value="${data.color || '#3b82f6'}">
                 </div>
                 <div class="form-group">
                     <label>ИНН</label>

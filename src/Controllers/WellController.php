@@ -90,7 +90,7 @@ class WellController extends BaseController
         $sql = "SELECT w.id, w.number, 
                        ST_AsGeoJSON(w.geom_wgs84)::json as geometry,
                        w.owner_id, w.type_id, w.kind_id, w.status_id,
-                       o.name as owner_name,
+                       o.name as owner_name, o.short_name as owner_short_name, o.color as owner_color,
                        ot.name as type_name, ot.color as type_color,
                        ok.code as kind_code, ok.name as kind_name,
                        os.code as status_code, os.name as status_name, os.color as status_color

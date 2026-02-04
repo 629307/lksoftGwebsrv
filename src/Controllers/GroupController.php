@@ -344,11 +344,13 @@ class GroupController extends BaseController
         // Колодцы (с фильтрацией по геометрии)
         $wells = $this->db->fetchAll(
             "SELECT w.id, w.number, w.kind_id, ok.code as kind_code,
+                    w.owner_id, o.short_name as owner_short_name, o.color as owner_color,
                     ST_AsGeoJSON(w.geom_wgs84)::json as geometry, 'well' as object_type,
                     ot.color as type_color,
                     os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_wells gw
              JOIN wells w ON gw.well_id = w.id
+             LEFT JOIN owners o ON w.owner_id = o.id
              LEFT JOIN object_types ot ON w.type_id = ot.id
              LEFT JOIN object_kinds ok ON w.kind_id = ok.id
              LEFT JOIN object_status os ON w.status_id = os.id
@@ -366,10 +368,12 @@ class GroupController extends BaseController
         // Направления (с фильтрацией по геометрии)
         $directions = $this->db->fetchAll(
             "SELECT cd.id, cd.number, ST_AsGeoJSON(cd.geom_wgs84)::json as geometry, 'channel_direction' as object_type,
+                    cd.owner_id, o.short_name as owner_short_name, o.color as owner_color,
                     ot.color as type_color,
                     os.code as status_code, os.name as status_name, os.color as status_color
              FROM group_channel_directions gcd
              JOIN channel_directions cd ON gcd.channel_direction_id = cd.id
+             LEFT JOIN owners o ON cd.owner_id = o.id
              LEFT JOIN object_types ot ON cd.type_id = ot.id
              LEFT JOIN object_status os ON cd.status_id = os.id
              WHERE gcd.group_id = :id AND cd.geom_wgs84 IS NOT NULL",

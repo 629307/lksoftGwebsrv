@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS owners (
     code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
     short_name VARCHAR(100),
+    color VARCHAR(20),
     inn VARCHAR(20),
     address TEXT,
     contact_person VARCHAR(255),
