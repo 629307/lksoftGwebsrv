@@ -275,6 +275,19 @@ class GroupController extends BaseController
             Response::error('Группа не найдена', 404);
         }
 
+        // Удаляем файлы вложений (если таблица есть)
+        try {
+            $atts = $this->db->fetchAll("SELECT * FROM group_attachments WHERE group_id = :id", ['id' => $groupId]);
+            foreach ($atts as $a) {
+                $path = $a['file_path'] ?? null;
+                if ($path && file_exists($path)) {
+                    @unlink($path);
+                }
+            }
+        } catch (\Throwable $e) {
+            // миграция могла быть не применена — игнорируем
+        }
+
         $this->unlinkAllObjects($groupId);
         $this->db->delete('object_groups', 'id = :id', ['id' => $groupId]);
 

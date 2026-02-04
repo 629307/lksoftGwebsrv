@@ -518,6 +518,22 @@ CREATE INDEX idx_object_groups_name ON object_groups(name);
 
 COMMENT ON TABLE object_groups IS 'Группы объектов';
 
+-- Вложения к ТУ (документы/изображения)
+CREATE TABLE IF NOT EXISTS group_attachments (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES object_groups(id) ON DELETE CASCADE,
+    filename VARCHAR(255) NOT NULL,
+    original_filename VARCHAR(255),
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    description TEXT,
+    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_group_attachments_group_id ON group_attachments(group_id);
+
 -- Связи групп с объектами
 CREATE TABLE IF NOT EXISTS group_wells (
     group_id INTEGER NOT NULL REFERENCES object_groups(id) ON DELETE CASCADE,

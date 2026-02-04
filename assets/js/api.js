@@ -598,6 +598,21 @@ const API = {
                 body: { objects }
             });
         },
+
+        attachments(id) {
+            return API.get(`/groups/${id}/attachments`);
+        },
+
+        uploadAttachment(id, file, description = '') {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('description', description);
+            return API.upload(`/groups/${id}/attachments`, formData);
+        },
+
+        deleteAttachment(attId) {
+            return API.delete(`/groups/attachments/${attId}`);
+        },
     },
 
     // ========================

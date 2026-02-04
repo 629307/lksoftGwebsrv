@@ -1634,6 +1634,19 @@ const App = {
                         <button type="button" class="btn btn-sm btn-primary" onclick="App.startGroupPickOnMap(${obj.id})" style="margin-top: 8px; margin-left: 8px;">
                             <i class="fas fa-crosshairs"></i> Указать объект на карте
                         </button>
+                        <hr>
+                        <h4>Вложения (файлы)</h4>
+                        <div id="tu-attachments" data-group-id="${obj.id}">
+                            <div class="text-muted">Загрузка...</div>
+                        </div>
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label>Добавить файл</label>
+                            <input type="file" id="tu-attachment-file">
+                            <input type="text" id="tu-attachment-description" placeholder="Описание (необязательно)" style="margin-top: 8px;">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="App.uploadGroupAttachment(${obj.id})" style="margin-top: 8px;">
+                                <i class="fas fa-upload"></i> Загрузить
+                            </button>
+                        </div>
                     </form>
                 `;
             }
@@ -1706,6 +1719,11 @@ const App = {
             // Подгружаем фотографии (если блок есть)
             if (photoTable) {
                 this.loadObjectPhotos(photoTable, obj.id).catch(() => {});
+            }
+
+            // Подгружаем вложения ТУ (если блок есть)
+            if (type === 'groups') {
+                this.loadGroupAttachments(id).catch(() => {});
             }
 
             // Подгружаем группы (если блок есть)
@@ -1799,6 +1817,97 @@ const App = {
             }
         } catch (e) {
             this.notify('Ошибка удаления', 'error');
+        }
+    },
+
+    // ========================
+    // ТУ: вложения (файлы)
+    // ========================
+
+    async loadGroupAttachments(groupId) {
+        const container = document.getElementById('tu-attachments');
+        if (!container) return;
+        container.innerHTML = `<div class="text-muted">Загрузка...</div>`;
+
+        try {
+            const resp = await API.groups.attachments(groupId);
+            if (!resp?.success) {
+                container.innerHTML = `<div class="text-muted">Не удалось загрузить файлы</div>`;
+                return;
+            }
+            const items = resp.data || [];
+            if (!items.length) {
+                container.innerHTML = `<div class="text-muted">Файлов нет</div>`;
+                return;
+            }
+
+            const canDel = this.canDelete();
+            container.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    ${items.map(a => `
+                        <div style="display:flex; align-items:center; gap:10px; border:1px solid var(--border-color); border-radius:8px; padding:8px 10px;">
+                            <div style="flex:1; min-width:0;">
+                                <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                    ${this.escapeHtml(a.original_filename || a.filename || '')}
+                                </div>
+                                <div class="text-muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                    ${(a.description ? this.escapeHtml(a.description) : '')}
+                                    ${(a.uploaded_by_login ? ` • ${this.escapeHtml(a.uploaded_by_login)}` : '')}
+                                </div>
+                            </div>
+                            <a class="btn btn-sm btn-secondary" href="${a.url}" target="_blank" rel="noopener" download="${this.escapeHtml(a.original_filename || a.filename || 'file')}">
+                                <i class="fas fa-download"></i>
+                            </a>
+                            ${canDel ? `
+                                <button type="button" class="btn btn-sm btn-danger" onclick="App.deleteGroupAttachment(${a.id}, ${groupId})" title="Удалить">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } catch (e) {
+            container.innerHTML = `<div class="text-muted">Не удалось загрузить файлы</div>`;
+        }
+    },
+
+    async uploadGroupAttachment(groupId) {
+        const fileInput = document.getElementById('tu-attachment-file');
+        const descInput = document.getElementById('tu-attachment-description');
+        const file = fileInput?.files?.[0];
+        const desc = descInput?.value || '';
+        if (!file) {
+            this.notify('Выберите файл', 'warning');
+            return;
+        }
+        try {
+            const resp = await API.groups.uploadAttachment(groupId, file, desc);
+            if (resp?.success) {
+                if (fileInput) fileInput.value = '';
+                if (descInput) descInput.value = '';
+                this.notify('Файл загружен', 'success');
+                await this.loadGroupAttachments(groupId);
+            } else {
+                this.notify(resp?.message || 'Ошибка загрузки файла', 'error');
+            }
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка загрузки файла', 'error');
+        }
+    },
+
+    async deleteGroupAttachment(attId, groupId) {
+        if (!confirm('Удалить файл?')) return;
+        try {
+            const resp = await API.groups.deleteAttachment(attId);
+            if (resp?.success) {
+                this.notify('Файл удалён', 'success');
+                await this.loadGroupAttachments(groupId);
+            } else {
+                this.notify(resp?.message || 'Ошибка удаления файла', 'error');
+            }
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка удаления файла', 'error');
         }
     },
 
@@ -3591,6 +3700,14 @@ const App = {
                             <p class="text-muted">Объекты можно добавить после создания ТУ</p>
                         </div>
                     </div>
+                    <hr>
+                    <h4>Вложения (файлы)</h4>
+                    <div class="form-group">
+                        <label>Добавить файлы</label>
+                        <input type="file" id="tu-attachments-files" multiple>
+                        <div id="tu-attachments-pending" class="text-muted" style="margin-top: 8px;">Файлы не выбраны</div>
+                        <p class="text-muted" style="margin-top: 8px;">Файлы будут загружены после создания ТУ</p>
+                    </div>
                 </form>
             `;
         } else if (type === 'unified_cables') {
@@ -3666,6 +3783,24 @@ const App = {
         `;
 
         this.showModal(titles[type] || 'Добавить объект', formHtml, footer);
+
+        // ТУ: сохраняем выбранные вложения до создания
+        if (type === 'groups') {
+            this._pendingGroupAttachments = [];
+            const fileInput = document.getElementById('tu-attachments-files');
+            const pendingEl = document.getElementById('tu-attachments-pending');
+            if (fileInput) {
+                fileInput.addEventListener('change', () => {
+                    const files = Array.from(fileInput.files || []);
+                    this._pendingGroupAttachments = files;
+                    if (pendingEl) {
+                        pendingEl.textContent = files.length
+                            ? `Выбрано файлов: ${files.length} (${files.map(f => f.name).join(', ')})`
+                            : 'Файлы не выбраны';
+                    }
+                });
+            }
+        }
         
         // Загружаем справочники для селектов
         this.loadModalSelects(type);
@@ -4015,6 +4150,30 @@ const App = {
             }
 
             if (response && response.success) {
+                // ТУ: загружаем выбранные вложения сразу после создания
+                if (type === 'groups') {
+                    const groupId = response?.data?.id || response?.data?.group_id || response?.id;
+                    const files = Array.isArray(this._pendingGroupAttachments) ? this._pendingGroupAttachments : [];
+                    if (groupId && files.length) {
+                        let ok = 0;
+                        let failed = 0;
+                        for (const f of files) {
+                            try {
+                                const r = await API.groups.uploadAttachment(groupId, f, '');
+                                if (r?.success) ok += 1;
+                                else failed += 1;
+                            } catch (e) {
+                                failed += 1;
+                            }
+                        }
+                        this._pendingGroupAttachments = [];
+                        if (failed) {
+                            this.notify(`Вложения: загружено ${ok}, ошибок ${failed}`, 'warning');
+                        } else if (ok) {
+                            this.notify(`Вложения: загружено ${ok}`, 'success');
+                        }
+                    }
+                }
                 this.hideModal();
                 this.notify('Объект создан', 'success');
                 this.loadObjects();

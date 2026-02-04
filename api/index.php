@@ -111,6 +111,7 @@ use App\Controllers\MarkerPostController;
 use App\Controllers\IncidentController;
 use App\Controllers\IncidentDocumentController;
 use App\Controllers\GroupController;
+use App\Controllers\GroupAttachmentController;
 use App\Controllers\ImportController;
 use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
@@ -258,6 +259,9 @@ $router->put('/api/groups/{id}', [GroupController::class, 'update'], ['auth']);
 $router->delete('/api/groups/{id}', [GroupController::class, 'destroy'], ['auth']);
 $router->post('/api/groups/{id}/objects', [GroupController::class, 'addObjects'], ['auth']);
 $router->delete('/api/groups/{id}/objects', [GroupController::class, 'removeObjects'], ['auth']);
+$router->get('/api/groups/{id}/attachments', [GroupAttachmentController::class, 'byGroup'], ['auth']);
+$router->post('/api/groups/{id}/attachments', [GroupAttachmentController::class, 'upload'], ['auth']);
+$router->delete('/api/groups/attachments/{id}', [GroupAttachmentController::class, 'destroy'], ['auth']);
 
 // Импорт
 $router->post('/api/import/csv', [ImportController::class, 'importCsv'], ['auth']);
