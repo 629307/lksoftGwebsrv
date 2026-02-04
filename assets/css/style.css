@@ -546,7 +546,8 @@ a:hover {
 .owners-legend {
     position: absolute;
     left: 10px;
-    bottom: 10px;
+    /* keep above cursor coordinates (#cursor-coordinates) */
+    bottom: 54px;
     z-index: 600;
     background: rgba(0, 0, 0, 0.6);
     color: #fff;
