@@ -4076,10 +4076,27 @@ const App = {
             }
             
             if (statuses.success && document.getElementById('modal-status-select')) {
-                document.getElementById('modal-status-select').innerHTML = 
+                const statusSelect = document.getElementById('modal-status-select');
+                statusSelect.innerHTML = 
                     '<option value="">Выберите...</option>' +
-                    statuses.data.map(s => `<option value="${s.id}" data-is-default="${s.is_default ? 1 : 0}">${s.name}</option>`).join('');
-                pickDefault(document.getElementById('modal-status-select'));
+                    statuses.data.map(s => `<option value="${s.id}" data-code="${s.code || ''}" data-is-default="${s.is_default ? 1 : 0}">${s.name}</option>`).join('');
+                // Режим ТУ: по умолчанию planned
+                const canAutoPlanned =
+                    !!this.tuModeEnabled &&
+                    !!this.tuModeGroupId &&
+                    !statusSelect.dataset?.value &&
+                    !statusSelect.value;
+                if (canAutoPlanned) {
+                    const planned = Array.from(statusSelect.options).find(o => (o?.dataset?.code || '') === 'planned' && o.value);
+                    if (planned) {
+                        statusSelect.value = planned.value;
+                        statusSelect.dispatchEvent(new Event('change'));
+                    } else {
+                        pickDefault(statusSelect);
+                    }
+                } else {
+                    pickDefault(statusSelect);
+                }
             }
 
             // Контракты (для кабеля при редактировании)
@@ -4308,6 +4325,26 @@ const App = {
                             this.notify(`Вложения: загружено ${ok}, ошибок ${failed}`, 'warning');
                         } else if (ok) {
                             this.notify(`Вложения: загружено ${ok}`, 'success');
+                        }
+                    }
+                }
+
+                // Режим ТУ: автоматически прикрепляем созданный объект к выбранному ТУ
+                if (this.tuModeEnabled && this.tuModeGroupId && type !== 'groups') {
+                    const createdId = response?.data?.id || response?.id;
+                    const idNum = createdId ? parseInt(createdId, 10) : null;
+                    const typeMap = {
+                        wells: 'well',
+                        directions: 'channel_direction',
+                        markers: 'marker_post',
+                        unified_cables: 'unified_cable',
+                    };
+                    const groupObjType = typeMap[type] || null;
+                    if (idNum && groupObjType) {
+                        try {
+                            await API.groups.addObjects(this.tuModeGroupId, [{ type: groupObjType, id: idNum }]);
+                        } catch (_) {
+                            // ignore
                         }
                     }
                 }
