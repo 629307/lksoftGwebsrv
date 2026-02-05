@@ -376,12 +376,44 @@ const MapManager = {
             return;
         }
         el.classList.remove('hidden');
+        // позиционируем под панелью инструментов карты (чтобы не пересекалось с легендой собственников)
+        try { this.positionMapDefaultsPanel(); } catch (_) {}
         // отрисовка в App (чтобы переиспользовать API/настройки)
         try { App?.renderMapDefaultsPanel?.(el); } catch (_) {}
     },
 
     toggleMapDefaults() {
         this.setMapDefaultsEnabled(!this.mapDefaultsEnabled);
+    },
+
+    positionMapDefaultsPanel() {
+        const el = this.mapDefaultsEl || document.getElementById('map-defaults');
+        const host = this.map?.getContainer?.();
+        const toolbar = document.getElementById('map-toolbar');
+        if (!el || !host || !toolbar) return;
+
+        const hostRect = host.getBoundingClientRect();
+        const tbRect = toolbar.getBoundingClientRect();
+
+        const margin = 8;
+        const top = Math.max(0, Math.round(tbRect.bottom - hostRect.top + margin));
+
+        // Reset anchors
+        el.style.bottom = 'auto';
+        el.style.top = `${top}px`;
+        el.style.left = '';
+        el.style.right = '';
+
+        // Align to toolbar side (left on desktop, right on mobile)
+        const tbLeft = Math.round(tbRect.left - hostRect.left);
+        const tbRight = Math.round(hostRect.right - tbRect.right);
+
+        if (tbRight <= tbLeft) {
+            // toolbar is closer to right edge
+            el.style.right = `${Math.max(0, tbRight)}px`;
+        } else {
+            el.style.left = `${Math.max(0, tbLeft)}px`;
+        }
     },
 
     startIncidentSelectMode() {

@@ -596,8 +596,9 @@ a:hover {
 /* Map defaults panel (map overlay) */
 .map-defaults {
     position: absolute;
-    left: 10px;
-    bottom: 54px; /* above cursor coordinates */
+    left: 60px; /* по умолчанию рядом с панелью инструментов */
+    top: 58px;  /* под панелью инструментов (точно позиционируется JS-ом) */
+    bottom: auto;
     z-index: 650;
     background: rgba(0, 0, 0, 0.62);
     color: #fff;
@@ -1297,6 +1298,13 @@ tr:hover {
         /* оставляем место слева под zoom-кнопки Leaflet */
         max-width: calc(100% - 90px);
         flex-wrap: wrap;
+    }
+
+    /* map-defaults: базово под тулбаром справа (точно позиционируется JS-ом) */
+    .map-defaults {
+        left: auto;
+        right: 10px;
+        top: 70px;
     }
 
     .map-toolbar .btn {
