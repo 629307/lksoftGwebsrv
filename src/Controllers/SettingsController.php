@@ -25,6 +25,13 @@ class SettingsController extends BaseController
             'font_size_direction_length_label' => '12',
             'url_geoproj' => 'https://geoproj.ru/',
             'url_cadastre' => 'https://nspd.gov.ru/map?zoom=16.801685060501118&theme_id=1&coordinate_x=8535755.537972113&coordinate_y=9908336.650357058&baseLayerId=235&is_copy_url=true',
+            // WMTS (спутник) настройки
+            'wmts_url_template' => 'https://karta.yanao.ru/ags1/rest/services/basemap/ags1_Imagery_bpla/MapServer/WMTS/tile/1.0.0/basemap_ags1_Imagery_bpla/{Style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}',
+            'wmts_style' => 'default',
+            'wmts_tilematrixset' => 'GoogleMapsCompatible',
+            'wmts_tilematrix' => '{z}',
+            'wmts_tilerow' => '{y}',
+            'wmts_tilecol' => '{x}',
             'well_entry_point_kind_code' => 'input',
             // hotkeys
             'hotkey_add_direction' => 'a',
@@ -106,6 +113,13 @@ class SettingsController extends BaseController
             'cable_in_well_length_m',
             'url_geoproj',
             'url_cadastre',
+            // WMTS (спутник)
+            'wmts_url_template',
+            'wmts_style',
+            'wmts_tilematrixset',
+            'wmts_tilematrix',
+            'wmts_tilerow',
+            'wmts_tilecol',
             // Hotkeys: Alt + <символ> для инструментов карты
             'hotkey_add_direction',
             'hotkey_add_well',

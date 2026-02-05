@@ -191,6 +191,30 @@ const MapManager = {
         }
     },
 
+    buildWmtsTileUrlTemplateFromSettings() {
+        const s = (typeof App !== 'undefined' ? (App?.settings || {}) : {}) || {};
+        const url = (s.wmts_url_template || '').toString().trim();
+        const style = (s.wmts_style || 'default').toString().trim();
+        const tms = (s.wmts_tilematrixset || 'GoogleMapsCompatible').toString().trim();
+        const tm = (s.wmts_tilematrix || '{z}').toString().trim();
+        const tr = (s.wmts_tilerow || '{y}').toString().trim();
+        const tc = (s.wmts_tilecol || '{x}').toString().trim();
+
+        // если пользователь удалил URL — используем дефолт
+        const fallback =
+            'https://karta.yanao.ru/ags1/rest/services/basemap/ags1_Imagery_bpla/MapServer/WMTS/tile/1.0.0/' +
+            'basemap_ags1_Imagery_bpla/{Style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}';
+
+        const tpl = (url || fallback)
+            .replaceAll('{Style}', style || 'default')
+            .replaceAll('{TileMatrixSet}', tms || 'GoogleMapsCompatible')
+            .replaceAll('{TileMatrix}', tm || '{z}')
+            .replaceAll('{TileRow}', tr || '{y}')
+            .replaceAll('{TileCol}', tc || '{x}');
+
+        return tpl;
+    },
+
     rebuildWellLabelsFromWellsLayer() {
         if (!this.wellLabelsLayer) return;
         this.wellLabelsLayer.clearLayers();
@@ -271,14 +295,8 @@ const MapManager = {
             maxZoom: 19,
         }).addTo(this.map);
 
-        // Спутник: WMTS ЯНАО (GoogleMapsCompatible)
-        // Capabilities:
-        // - Style: default
-        // - TileMatrixSet: GoogleMapsCompatible
-        // - TileMatrix/Row/Col подставляются автоматически по z/y/x
-        const wmtsTemplate =
-            'https://karta.yanao.ru/ags1/rest/services/basemap/ags1_Imagery_bpla/MapServer/WMTS/tile/1.0.0/' +
-            'basemap_ags1_Imagery_bpla/default/GoogleMapsCompatible/{z}/{y}/{x}';
+        // Спутник: WMTS (настраивается в "Настройки -> Настройка слоя WMTS")
+        const wmtsTemplate = this.buildWmtsTileUrlTemplateFromSettings();
         this.wmtsSatelliteLayer = L.tileLayer(wmtsTemplate, {
             maxZoom: 22,
             attribution: '&copy; ЯНАО',

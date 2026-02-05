@@ -3199,6 +3199,12 @@ const App = {
         const fsDirLen = document.getElementById('settings-font-size-direction-length');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
+        const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template');
+        const wmtsStyle = document.getElementById('settings-wmts-style');
+        const wmtsTms = document.getElementById('settings-wmts-tilematrixset');
+        const wmtsTm = document.getElementById('settings-wmts-tilematrix');
+        const wmtsTr = document.getElementById('settings-wmts-tilerow');
+        const wmtsTc = document.getElementById('settings-wmts-tilecol');
         const entryKind = document.getElementById('settings-well-entry-kind-code');
         const hkDir = document.getElementById('settings-hotkey-add-direction');
         const hkWell = document.getElementById('settings-hotkey-add-well');
@@ -3223,6 +3229,12 @@ const App = {
         if (fsDirLen) fsDirLen.value = (this.settings.font_size_direction_length_label ?? 12);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
+        if (wmtsUrlTmpl) wmtsUrlTmpl.value = (this.settings.wmts_url_template ?? '');
+        if (wmtsStyle) wmtsStyle.value = (this.settings.wmts_style ?? 'default');
+        if (wmtsTms) wmtsTms.value = (this.settings.wmts_tilematrixset ?? 'GoogleMapsCompatible');
+        if (wmtsTm) wmtsTm.value = (this.settings.wmts_tilematrix ?? '{z}');
+        if (wmtsTr) wmtsTr.value = (this.settings.wmts_tilerow ?? '{y}');
+        if (wmtsTc) wmtsTc.value = (this.settings.wmts_tilecol ?? '{x}');
         if (hkDir) hkDir.value = (this.settings.hotkey_add_direction ?? '');
         if (hkWell) hkWell.value = (this.settings.hotkey_add_well ?? '');
         if (hkMarker) hkMarker.value = (this.settings.hotkey_add_marker ?? '');
@@ -3267,6 +3279,12 @@ const App = {
         const fsDirLen = document.getElementById('settings-font-size-direction-length')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
+        const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template')?.value;
+        const wmtsStyle = document.getElementById('settings-wmts-style')?.value;
+        const wmtsTms = document.getElementById('settings-wmts-tilematrixset')?.value;
+        const wmtsTm = document.getElementById('settings-wmts-tilematrix')?.value;
+        const wmtsTr = document.getElementById('settings-wmts-tilerow')?.value;
+        const wmtsTc = document.getElementById('settings-wmts-tilecol')?.value;
         const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
         const hkDir = document.getElementById('settings-hotkey-add-direction')?.value;
         const hkWell = document.getElementById('settings-hotkey-add-well')?.value;
@@ -3303,6 +3321,12 @@ const App = {
             font_size_direction_length_label: fsDirLen,
             url_geoproj: geo,
             url_cadastre: cad,
+            wmts_url_template: wmtsUrlTmpl,
+            wmts_style: wmtsStyle,
+            wmts_tilematrixset: wmtsTms,
+            wmts_tilematrix: wmtsTm,
+            wmts_tilerow: wmtsTr,
+            wmts_tilecol: wmtsTc,
             well_entry_point_kind_code: (entryKind ?? '').toString(),
         };
         try {
@@ -3327,6 +3351,22 @@ const App = {
 
             // Обновляем локально и применяем (центр/зум — для следующей инициализации карты)
             await this.loadSettings().catch(() => {});
+            // Пересоздаём WMTS слой из настроек (если включён/выключен не меняем)
+            try {
+                if (MapManager?.map && MapManager?.wmtsSatelliteLayer) {
+                    const enabled = !!MapManager.wmtsSatelliteEnabled;
+                    try { MapManager.map.removeLayer(MapManager.wmtsSatelliteLayer); } catch (_) {}
+                    MapManager.wmtsSatelliteLayer = null;
+                    // пересоздаём через init-логику, но без полного init()
+                    const tmpl = MapManager.buildWmtsTileUrlTemplateFromSettings?.();
+                    if (tmpl) {
+                        MapManager.wmtsSatelliteLayer = L.tileLayer(tmpl, { maxZoom: 22, attribution: '&copy; ЯНАО' });
+                        if (enabled) {
+                            MapManager.setWmtsSatelliteEnabled(true);
+                        }
+                    }
+                }
+            } catch (_) {}
             // Применяем визуальные настройки сразу
             try { await MapManager.loadAllLayers?.(); } catch (_) {}
         } catch (e) {

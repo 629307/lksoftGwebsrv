@@ -595,6 +595,37 @@
                             </div>
 
                             <hr style="margin: 18px 0;">
+                            <h3 style="margin: 0 0 10px 0;">Настройка слоя WMTS</h3>
+                            <div class="form-group">
+                                <label>URL шаблон</label>
+                                <input type="url" id="settings-wmts-url-template">
+                                <p class="text-muted">Поддерживаемые плейсхолдеры: <strong>{Style}</strong>, <strong>{TileMatrixSet}</strong>, <strong>{TileMatrix}</strong>, <strong>{TileRow}</strong>, <strong>{TileCol}</strong>.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>{Style}</label>
+                                <input type="text" id="settings-wmts-style">
+                            </div>
+                            <div class="form-group">
+                                <label>{TileMatrixSet}</label>
+                                <input type="text" id="settings-wmts-tilematrixset">
+                            </div>
+                            <div class="form-group">
+                                <label>{TileMatrix}</label>
+                                <input type="text" id="settings-wmts-tilematrix">
+                                <p class="text-muted">Обычно это <strong>{z}</strong> для GoogleMapsCompatible.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>{TileRow}</label>
+                                <input type="text" id="settings-wmts-tilerow">
+                                <p class="text-muted">Обычно это <strong>{y}</strong>.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>{TileCol}</label>
+                                <input type="text" id="settings-wmts-tilecol">
+                                <p class="text-muted">Обычно это <strong>{x}</strong>.</p>
+                            </div>
+
+                            <hr style="margin: 18px 0;">
                             <h3 style="margin: 0 0 10px 0;">Hotkey (Alt + клавиша) для панели инструментов карты</h3>
                             <p class="text-muted" style="margin-top: 0;">Укажите одну цифру или латинскую букву. Пример: <strong>A</strong> означает горячую клавишу <strong>Alt + A</strong>. Оставьте пустым, чтобы отключить.</p>
 
@@ -651,8 +682,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.2.3"></script>
-    <script src="assets/js/map.js?v=2.2.3"></script>
-    <script src="assets/js/app.js?v=2.2.3"></script>
+    <script src="assets/js/api.js?v=2.2.4"></script>
+    <script src="assets/js/map.js?v=2.2.4"></script>
+    <script src="assets/js/app.js?v=2.2.4"></script>
 </body>
 </html>
