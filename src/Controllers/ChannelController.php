@@ -10,9 +10,31 @@ use App\Core\Auth;
 
 class ChannelController extends BaseController
 {
-    private function getDefaultChannelKindId(): ?int
+    private function getDefaultChannelKindId(?int $userId = null): ?int
     {
         try {
+            // 1) Персональный дефолт из "Настройки по умолчанию" (map-defaults)
+            if (!empty($userId)) {
+                $rowU = $this->db->fetch(
+                    "SELECT value FROM user_settings WHERE user_id = :uid AND code = 'default_ref_channel' LIMIT 1",
+                    ['uid' => (int) $userId]
+                );
+                $raw = $rowU ? (string) ($rowU['value'] ?? '') : '';
+                $id = (int) $raw;
+                if ($id > 0) {
+                    $ok = $this->db->fetch(
+                        "SELECT ok.id
+                         FROM object_kinds ok
+                         JOIN object_types ot ON ok.object_type_id = ot.id
+                         WHERE ok.id = :id AND ot.code = 'channel'
+                         LIMIT 1",
+                        ['id' => $id]
+                    );
+                    if ($ok) return (int) $ok['id'];
+                }
+            }
+
+            // 2) Системный дефолт (is_default=1) для вида объекта channel
             $row = $this->db->fetch(
                 "SELECT ok.id
                  FROM object_kinds ok
@@ -314,7 +336,7 @@ class ChannelController extends BaseController
             $id = $stmt->fetchColumn();
 
             // Автоматически создаём каналы (1..N) по умолчанию (диаметр 110)
-            $defaultKindId = $this->getDefaultChannelKindId();
+            $defaultKindId = $this->getDefaultChannelKindId((int) ($user['id'] ?? 0));
             $defaultStatusId = $this->getDefaultStatusId();
             for ($i = 1; $i <= $channelCount; $i++) {
                 $this->db->insert('cable_channels', [
@@ -445,7 +467,8 @@ class ChannelController extends BaseController
             $data['channel_number'] = $count['cnt'] + 1;
         }
         if (empty($data['kind_id'])) {
-            $data['kind_id'] = $this->getDefaultChannelKindId();
+            $user = Auth::user();
+            $data['kind_id'] = $this->getDefaultChannelKindId((int) ($user['id'] ?? 0));
         }
         if (empty($data['status_id'])) {
             $data['status_id'] = $this->getDefaultStatusId();
@@ -509,7 +532,7 @@ class ChannelController extends BaseController
         }
 
         $user = Auth::user();
-        $defaultKindId = $this->getDefaultChannelKindId();
+        $defaultKindId = $this->getDefaultChannelKindId((int) ($user['id'] ?? 0));
         $defaultStatusId = $this->getDefaultStatusId();
 
         try {
