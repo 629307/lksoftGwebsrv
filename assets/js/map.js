@@ -202,7 +202,6 @@ const MapManager = {
             this.externalWmtsLayer = new YandexSatLayer(template, {
                 pane: this.externalWmtsPaneName,
                 maxZoom: 22,
-                crossOrigin: true,
                 attribution: '&copy; Yandex',
             });
         }
