@@ -166,6 +166,17 @@ class SettingsController extends BaseController
 
         $toSave = array_intersect_key($data, array_flip($allowed));
 
+        // Динамические персональные дефолты по видам объектов (ключи вида default_ref_<object_type_code>)
+        // Например: default_ref_well, default_ref_channel, default_ref_marker, default_ref_cable_ground
+        foreach ($data as $k => $v) {
+            if (!is_string($k)) continue;
+            if (substr($k, 0, 12) === 'default_ref_') {
+                // ограничим длину ключа, чтобы не принимать мусор
+                if (strlen($k) > 80) continue;
+                $toSave[$k] = $v;
+            }
+        }
+
         foreach ($toSave as $k => $v) {
             if ($v === null) $toSave[$k] = '';
             if (is_bool($v) || is_int($v) || is_float($v)) $toSave[$k] = (string) $v;

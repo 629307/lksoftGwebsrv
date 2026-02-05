@@ -20,7 +20,7 @@ class ReferenceController extends BaseController
         'object_types' => [
             'table' => 'object_types',
             // "Виды объектов": default отключён по ТЗ (значение не выставляется через UI/API)
-            'fields' => ['code', 'name', 'description', 'icon', 'color'],
+            'fields' => ['code', 'name', 'description', 'reference_table', 'icon', 'color'],
             'search' => ['code', 'name'],
         ],
         'object_kinds' => [
@@ -324,9 +324,9 @@ class ReferenceController extends BaseController
 
         $data = $this->request->only($config['fields']);
 
-        // Для видов объектов разрешаем редактировать только название/описание/иконку/цвет
+        // Для видов объектов разрешаем редактировать только название/описание/иконку/цвет/справочную таблицу
         if ($type === 'object_types') {
-            $data = array_intersect_key($data, array_flip(['name', 'description', 'icon', 'color']));
+            $data = array_intersect_key($data, array_flip(['name', 'description', 'reference_table', 'icon', 'color']));
         }
         // Для справочника "Собственники" запрещаем редактировать код (используется во всех номерах)
         if ($type === 'owners') {

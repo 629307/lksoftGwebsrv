@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS object_types (
     code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL,
     description TEXT,
+    -- Справочник, содержащий справочную информацию для этого вида объектов (например, object_kinds / cable_types)
+    reference_table VARCHAR(100),
     icon VARCHAR(100),
     color VARCHAR(20),
     is_default BOOLEAN NOT NULL DEFAULT FALSE,

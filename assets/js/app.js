@@ -3459,12 +3459,12 @@ const App = {
      */
     renderReferenceTable(data) {
         if (!data || data.length === 0) {
-            document.getElementById('ref-table-body').innerHTML = '<tr><td colspan="5">Нет данных</td></tr>';
+            document.getElementById('ref-table-body').innerHTML = '<tr><td colspan="100">Нет данных</td></tr>';
             return;
         }
 
         const columnsByType = {
-            object_types: ['code', 'name', 'description', 'icon', 'color'],
+            object_types: ['code', 'name', 'description', 'reference_table', 'icon', 'color'],
             object_kinds: ['code', 'name', 'object_type_id', 'description', 'is_default'],
             object_status: ['code', 'name', 'color', 'description', 'sort_order', 'is_default'],
             owners: ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
@@ -3474,7 +3474,7 @@ const App = {
         };
 
         const labelByType = {
-            object_types: { code: 'Код', name: 'Название', description: 'Описание', icon: 'Иконка', color: 'Цвет' },
+            object_types: { code: 'Код', name: 'Название', description: 'Описание', reference_table: 'Справочная таблица', icon: 'Иконка', color: 'Цвет' },
             object_kinds: { code: 'Код', name: 'Название', object_type_id: 'Вид объекта', description: 'Описание', is_default: 'По умолчанию' },
             object_status: { code: 'Код', name: 'Название', color: 'Цвет', description: 'Описание', sort_order: 'Порядок', is_default: 'По умолчанию' },
             owners: {
@@ -3499,6 +3499,15 @@ const App = {
         const formatCell = (col, value, row) => {
             if (col === 'is_default') return value ? 'Да' : '-';
             if (value === null || value === undefined || value === '') return '-';
+            if (col === 'reference_table') {
+                const v = String(value || '');
+                const map = {
+                    object_kinds: 'Типы объектов',
+                    cable_types: 'Типы кабелей',
+                    cable_catalog: 'Каталог кабелей',
+                };
+                return map[v] || v;
+            }
             if (col === 'color') {
                 const c = String(value);
                 return `<span style="display:inline-flex; align-items:center; gap:8px;"><span style="width:14px;height:14px;border-radius:4px;background:${c};border:1px solid rgba(0,0,0,0.25);"></span>${this.escapeHtml(c)}</span>`;
@@ -3916,29 +3925,11 @@ const App = {
 
         const { objectTypes, objectKinds, statuses, owners, cableTypes, cableCatalog } = this._mapDefaultsCache;
 
-        // Направление/Колодец/Столбик: берём из "Типы объектов" (object_kinds),
-        // фильтруем по object_types.code (channel/well/marker)
-        const typeIdByCode = {};
-        (objectTypes || []).forEach(t => { if (t?.code) typeIdByCode[String(t.code)] = t.id; });
-        const kindsByTypeCode = (typeCode) => {
-            const typeId = typeIdByCode[String(typeCode || '')];
-            if (!typeId) return [];
-            return (objectKinds || []).filter(k => String(k.object_type_id) === String(typeId));
-        };
-
         const getDefaultByIsDefault = (arr) => (arr || []).find(x => !!x.is_default)?.id || '';
         const getCurrent = (key, fallbackId) => {
             const v = (this.settings?.[key] ?? '').toString();
             return v ? v : (fallbackId ? String(fallbackId) : '');
         };
-
-        const curDirectionKind = getCurrent('default_kind_id_direction', getDefaultByIsDefault(kindsByTypeCode('channel')));
-        const curWellKind = getCurrent('default_kind_id_well', getDefaultByIsDefault(kindsByTypeCode('well')));
-        const curMarkerKind = getCurrent('default_kind_id_marker', getDefaultByIsDefault(kindsByTypeCode('marker')));
-        const curStatus = getCurrent('default_status_id', getDefaultByIsDefault(statuses));
-        const curOwner = getCurrent('default_owner_id', getDefaultByIsDefault(owners));
-        const curCableType = getCurrent('default_cable_type_id', getDefaultByIsDefault(cableTypes));
-        const curCableCatalog = getCurrent('default_cable_catalog_id', getDefaultByIsDefault(cableCatalog));
 
         const options = (arr, current, labelFn) => {
             const list = (arr || []).slice();
@@ -3950,20 +3941,80 @@ const App = {
             }).join('');
         };
 
+        // "Тип по умолчанию" по видам объектов — динамически из справочника "Виды объектов"
+        // object_types.reference_table:
+        // - object_kinds -> берём из "Типы объектов" (object_kinds) в рамках object_type_id
+        // - cable_types  -> берём из "Типы кабелей" (cable_types)
+        const normalizeRefTable = (ot) => {
+            const rt = (ot?.reference_table || '').toString().trim();
+            if (rt) return rt;
+            // fallback, если БД ещё без миграции
+            const code = (ot?.code || '').toString();
+            if (code === 'well' || code === 'channel' || code === 'marker') return 'object_kinds';
+            if (code.startsWith('cable_')) return 'cable_types';
+            return '';
+        };
+
+        const getRefOptions = (ot) => {
+            const rt = normalizeRefTable(ot);
+            if (rt === 'object_kinds') {
+                const id = ot?.id;
+                if (!id) return [];
+                return (objectKinds || []).filter(k => String(k.object_type_id) === String(id));
+            }
+            if (rt === 'cable_types') return (cableTypes || []);
+            return [];
+        };
+
+        const getLegacyFallbackSetting = (ot, rt) => {
+            const code = (ot?.code || '').toString();
+            if (rt === 'object_kinds') {
+                if (code === 'well') return this.settings?.default_kind_id_well;
+                if (code === 'marker') return this.settings?.default_kind_id_marker;
+                if (code === 'channel') return this.settings?.default_kind_id_direction;
+            }
+            if (rt === 'cable_types') return this.settings?.default_cable_type_id;
+            return '';
+        };
+
+        const typeDefaultsObjectTypes = (objectTypes || [])
+            .filter(ot => {
+                const rt = normalizeRefTable(ot);
+                return rt === 'object_kinds' || rt === 'cable_types';
+            })
+            .slice()
+            .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'ru'));
+
+        const safeDomId = (s) => String(s || '').replace(/[^0-9A-Za-z_-]/g, '_');
+
+        const renderTypeDefaultsBlock = () => {
+            if (!typeDefaultsObjectTypes.length) return '';
+            return typeDefaultsObjectTypes.map(ot => {
+                const rt = normalizeRefTable(ot);
+                const code = (ot?.code || '').toString();
+                const key = `default_ref_${code}`;
+                const list = getRefOptions(ot);
+                const fallbackId = getDefaultByIsDefault(list);
+                const legacy = (getLegacyFallbackSetting(ot, rt) ?? '').toString();
+                const current = getCurrent(key, legacy || fallbackId);
+                return `
+                    <div class="form-group">
+                        <label>${this.escapeHtml(ot?.name || ot?.code || '—')}</label>
+                        <select id="md-ref-${safeDomId(code)}" data-setting-key="${this.escapeHtml(key)}">
+                            ${options(list, current, x => x.name || x.code || x.id)}
+                        </select>
+                    </div>
+                `;
+            }).join('');
+        };
+
+        const curStatus = getCurrent('default_status_id', getDefaultByIsDefault(statuses));
+        const curOwner = getCurrent('default_owner_id', getDefaultByIsDefault(owners));
+        const curCableCatalog = getCurrent('default_cable_catalog_id', getDefaultByIsDefault(cableCatalog));
+
         el.innerHTML = `
             <div class="map-defaults-title">Настройки по умолчанию</div>
-            <div class="form-group">
-                <label>Направление</label>
-                <select id="md-direction-kind">${options(kindsByTypeCode('channel'), curDirectionKind, x => x.name || x.code || x.id)}</select>
-            </div>
-            <div class="form-group">
-                <label>Колодец</label>
-                <select id="md-well-kind">${options(kindsByTypeCode('well'), curWellKind, x => x.name || x.code || x.id)}</select>
-            </div>
-            <div class="form-group">
-                <label>Столбик</label>
-                <select id="md-marker-kind">${options(kindsByTypeCode('marker'), curMarkerKind, x => x.name || x.code || x.id)}</select>
-            </div>
+            ${renderTypeDefaultsBlock()}
             <div class="form-group">
                 <label>Состояние</label>
                 <select id="md-status">${options(statuses, curStatus, x => x.name || x.code || x.id)}</select>
@@ -3971,10 +4022,6 @@ const App = {
             <div class="form-group">
                 <label>Собственник</label>
                 <select id="md-owner">${options(owners, curOwner, x => x.name || x.code || x.id)}</select>
-            </div>
-            <div class="form-group">
-                <label>Тип кабеля</label>
-                <select id="md-cable-type">${options(cableTypes, curCableType, x => x.name || x.code || x.id)}</select>
             </div>
             <div class="form-group">
                 <label>Кабель</label>
@@ -4000,12 +4047,25 @@ const App = {
             });
         };
 
-        bindSave('md-direction-kind', 'default_kind_id_direction');
-        bindSave('md-well-kind', 'default_kind_id_well');
-        bindSave('md-marker-kind', 'default_kind_id_marker');
+        // Динамические поля по видам объектов
+        el.querySelectorAll('select[id^="md-ref-"][data-setting-key]').forEach((s) => {
+            s.addEventListener('change', async () => {
+                const key = s.getAttribute('data-setting-key') || '';
+                if (!key) return;
+                const value = s.value || '';
+                try {
+                    const resp = await API.settings.update({ [key]: value });
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                    await this.loadSettings().catch(() => {});
+                    this.notify('Сохранено', 'success');
+                } catch (e) {
+                    this.notify(e?.message || 'Ошибка сохранения', 'error');
+                }
+            });
+        });
+
         bindSave('md-status', 'default_status_id');
         bindSave('md-owner', 'default_owner_id');
-        bindSave('md-cable-type', 'default_cable_type_id');
         bindSave('md-cable-catalog', 'default_cable_catalog_id');
     },
 
@@ -4488,14 +4548,17 @@ const App = {
                     pickDefault(document.getElementById('modal-kind-select'));
                 }
 
-                // Персональные дефолты по "Тип" (object_kinds) для Колодец/Столбик/Направление
+                // Персональные дефолты по "Тип" (object_kinds):
+                // - новый формат: default_ref_<object_type_code> (например default_ref_well)
+                // - fallback: старые ключи default_kind_id_*
                 const kindSelect = document.getElementById('modal-kind-select');
-                const byObjKind = {
+                const byObjKindLegacy = {
                     wells: this.settings?.default_kind_id_well,
                     markers: this.settings?.default_kind_id_marker,
                     directions: this.settings?.default_kind_id_direction,
                 };
-                const udefKind = byObjKind[objectType] || '';
+                const refKey = objectTypeCode ? `default_ref_${String(objectTypeCode)}` : '';
+                const udefKind = (refKey && this.settings?.[refKey]) ? this.settings?.[refKey] : (byObjKindLegacy[objectType] || '');
                 if (kindSelect) {
                     if (!pickUserDefault(kindSelect, udefKind)) pickDefault(kindSelect);
                 }
@@ -5209,6 +5272,23 @@ const App = {
         
         const geomBlock = document.getElementById('cable-geometry-block');
         const routeBlock = document.getElementById('cable-route-block');
+
+        // Персональный дефолт типа кабеля зависит от выбранного вида объекта кабеля (cable_ground/cable_aerial/cable_duct)
+        // Ключ настроек: default_ref_<object_type_code> (fallback: default_cable_type_id)
+        try {
+            const cableTypeSelect = document.getElementById('modal-cable-type-select');
+            if (cableTypeSelect && !cableTypeSelect.dataset?.value) {
+                const refKey = objectTypeCode ? `default_ref_${String(objectTypeCode)}` : '';
+                const udef = (refKey && this.settings?.[refKey]) ? String(this.settings?.[refKey]) : String(this.settings?.default_cable_type_id || '');
+                if (udef) {
+                    const exists = Array.from(cableTypeSelect.options).some(o => String(o.value) === String(udef));
+                    if (exists) {
+                        cableTypeSelect.value = String(udef);
+                        this.onCableTypeChange().catch(() => {});
+                    }
+                }
+            }
+        } catch (_) {}
         
         if (objectTypeCode === 'cable_duct') {
             // Кабель в канализации - показываем маршрут
@@ -6030,6 +6110,16 @@ const App = {
                 <div class="form-group">
                     <label>Описание</label>
                     <textarea name="description" rows="2">${data.description || ''}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Справочная таблица</label>
+                    <select name="reference_table">
+                        <option value="" ${!data.reference_table ? 'selected' : ''}>(не указано)</option>
+                        <option value="object_kinds" ${(data.reference_table === 'object_kinds') ? 'selected' : ''}>Типы объектов</option>
+                        <option value="cable_types" ${(data.reference_table === 'cable_types') ? 'selected' : ''}>Типы кабелей</option>
+                        <option value="cable_catalog" ${(data.reference_table === 'cable_catalog') ? 'selected' : ''}>Каталог кабелей</option>
+                    </select>
+                    <p class="text-muted">Определяет, из какого справочника брать варианты "типа" для данного вида объектов (используется в "Настройки по умолчанию" на карте).</p>
                 </div>
                 <div class="form-group">
                     <label>Иконка</label>
