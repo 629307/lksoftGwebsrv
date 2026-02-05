@@ -593,6 +593,36 @@ a:hover {
     text-overflow: ellipsis;
 }
 
+/* Map defaults panel (map overlay) */
+.map-defaults {
+    position: absolute;
+    left: 10px;
+    bottom: 54px; /* above cursor coordinates */
+    z-index: 650;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 10px 12px;
+    max-width: min(520px, calc(100% - 20px));
+    max-height: 45vh;
+    overflow: auto;
+}
+.map-defaults-title {
+    font-weight: 700;
+    font-size: 12px;
+    margin-bottom: 8px;
+    opacity: 0.95;
+}
+.map-defaults .form-group { margin-bottom: 10px; }
+.map-defaults .form-group label { color: rgba(255,255,255,0.85); }
+.map-defaults select, .map-defaults input {
+    background: rgba(0,0,0,0.25);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.18);
+}
+.map-defaults .text-muted { color: rgba(255,255,255,0.65); }
+
 /* По умолчанию — без теней у объектов/подсказок */
 .leaflet-tooltip,
 .leaflet-popup-content-wrapper,

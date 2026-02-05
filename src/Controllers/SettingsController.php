@@ -32,6 +32,14 @@ class SettingsController extends BaseController
             'wmts_tilematrix' => '{z}',
             'wmts_tilerow' => '{y}',
             'wmts_tilecol' => '{x}',
+            // Персональные значения по умолчанию (карта)
+            'default_type_id_direction' => '',
+            'default_type_id_well' => '',
+            'default_type_id_marker' => '',
+            'default_status_id' => '',
+            'default_owner_id' => '',
+            'default_cable_type_id' => '',
+            'default_cable_catalog_id' => '',
             'well_entry_point_kind_code' => 'input',
             // hotkeys
             'hotkey_add_direction' => 'a',
@@ -120,6 +128,14 @@ class SettingsController extends BaseController
             'wmts_tilematrix',
             'wmts_tilerow',
             'wmts_tilecol',
+            // Персональные значения по умолчанию (карта)
+            'default_type_id_direction',
+            'default_type_id_well',
+            'default_type_id_marker',
+            'default_status_id',
+            'default_owner_id',
+            'default_cable_type_id',
+            'default_cable_catalog_id',
             // Hotkeys: Alt + <символ> для инструментов карты
             'hotkey_add_direction',
             'hotkey_add_well',

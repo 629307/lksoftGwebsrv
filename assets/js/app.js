@@ -15,6 +15,7 @@ const App = {
     incidentDraftRelatedObjects: [],
     selectedObjectIds: new Set(),
     _contractsPanelLoaded: false,
+    _mapDefaultsCache: null,
 
     // ТУ режим (на карте): создаваемые объекты -> planned + автопривязка к выбранному ТУ
     tuModeEnabled: false,
@@ -409,6 +410,10 @@ const App = {
         document.getElementById('btn-toggle-owner-legend')?.addEventListener('click', (e) => {
             MapManager.toggleOwnersLegend();
             e.currentTarget.classList.toggle('active', MapManager.ownersLegendEnabled);
+        });
+        document.getElementById('btn-map-defaults')?.addEventListener('click', (e) => {
+            MapManager.toggleMapDefaults();
+            e.currentTarget.classList.toggle('active', MapManager.mapDefaultsEnabled);
         });
         document.getElementById('btn-tu-mode')?.addEventListener('click', () => {
             this.openTuModeModal().catch(() => {});
@@ -3799,6 +3804,129 @@ const App = {
         try { this.loadObjects?.(); } catch (_) {}
     },
 
+    // ========================
+    // Карта: "Настройки по умолчанию" (персональные дефолты)
+    // ========================
+
+    async renderMapDefaultsPanel(hostEl) {
+        const el = hostEl || document.getElementById('map-defaults');
+        if (!el) return;
+
+        // Загружаем справочники (кеш)
+        if (!this._mapDefaultsCache) {
+            try {
+                const [typesResp, statusesResp, ownersResp, cableTypesResp, cableCatalogResp] = await Promise.all([
+                    API.references.all('object_types'),
+                    API.references.all('object_status'),
+                    API.references.all('owners'),
+                    API.references.all('cable_types'),
+                    API.references.all('cable_catalog'),
+                ]);
+                this._mapDefaultsCache = {
+                    types: typesResp?.data || [],
+                    statuses: statusesResp?.data || [],
+                    owners: ownersResp?.data || [],
+                    cableTypes: cableTypesResp?.data || [],
+                    cableCatalog: cableCatalogResp?.data || [],
+                };
+            } catch (_) {
+                this._mapDefaultsCache = { types: [], statuses: [], owners: [], cableTypes: [], cableCatalog: [] };
+            }
+        }
+
+        const { types, statuses, owners, cableTypes, cableCatalog } = this._mapDefaultsCache;
+
+        const filterTypes = (kind) => {
+            const t = (types || []);
+            if (kind === 'direction') return t.filter(x => (x.code || '') === 'channel' || String(x.name || '').toLowerCase().includes('направ'));
+            if (kind === 'well') return t.filter(x => (x.code || '') === 'well' || String(x.name || '').toLowerCase().includes('колод'));
+            if (kind === 'marker') return t.filter(x => (x.code || '') === 'marker' || String(x.name || '').toLowerCase().includes('столб'));
+            return t;
+        };
+
+        const getDefaultByIsDefault = (arr) => (arr || []).find(x => !!x.is_default)?.id || '';
+        const getCurrent = (key, fallbackId) => {
+            const v = (this.settings?.[key] ?? '').toString();
+            return v ? v : (fallbackId ? String(fallbackId) : '');
+        };
+
+        const curDirectionType = getCurrent('default_type_id_direction', getDefaultByIsDefault(filterTypes('direction')));
+        const curWellType = getCurrent('default_type_id_well', getDefaultByIsDefault(filterTypes('well')));
+        const curMarkerType = getCurrent('default_type_id_marker', getDefaultByIsDefault(filterTypes('marker')));
+        const curStatus = getCurrent('default_status_id', getDefaultByIsDefault(statuses));
+        const curOwner = getCurrent('default_owner_id', getDefaultByIsDefault(owners));
+        const curCableType = getCurrent('default_cable_type_id', getDefaultByIsDefault(cableTypes));
+        const curCableCatalog = getCurrent('default_cable_catalog_id', getDefaultByIsDefault(cableCatalog));
+
+        const options = (arr, current, labelFn) => {
+            const list = (arr || []).slice();
+            list.sort((a, b) => String(labelFn(a)).localeCompare(String(labelFn(b)), 'ru'));
+            return `<option value="">(пусто)</option>` + list.map(x => {
+                const id = String(x.id);
+                const sel = (id === String(current)) ? 'selected' : '';
+                return `<option value="${id}" ${sel}>${this.escapeHtml(labelFn(x))}</option>`;
+            }).join('');
+        };
+
+        el.innerHTML = `
+            <div class="map-defaults-title">Настройки по умолчанию</div>
+            <div class="form-group">
+                <label>Направление</label>
+                <select id="md-direction-type">${options(filterTypes('direction'), curDirectionType, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Колодец</label>
+                <select id="md-well-type">${options(filterTypes('well'), curWellType, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Столбик</label>
+                <select id="md-marker-type">${options(filterTypes('marker'), curMarkerType, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Состояние</label>
+                <select id="md-status">${options(statuses, curStatus, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Собственник</label>
+                <select id="md-owner">${options(owners, curOwner, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Тип кабеля</label>
+                <select id="md-cable-type">${options(cableTypes, curCableType, x => x.name || x.code || x.id)}</select>
+            </div>
+            <div class="form-group">
+                <label>Кабель</label>
+                <select id="md-cable-catalog">${options(cableCatalog, curCableCatalog, x => (x.marking ? `${x.marking} (${x.fiber_count || '-'} вол.)` : (x.id || '')))}</select>
+            </div>
+            <div class="text-muted">Изменения сохраняются персонально для текущего пользователя.</div>
+        `;
+
+        const bindSave = (selectId, key) => {
+            const s = document.getElementById(selectId);
+            if (!s) return;
+            s.addEventListener('change', async () => {
+                const value = s.value || '';
+                try {
+                    const resp = await API.settings.update({ [key]: value });
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                    // обновим локально
+                    await this.loadSettings().catch(() => {});
+                    this.notify('Сохранено', 'success');
+                } catch (e) {
+                    this.notify(e?.message || 'Ошибка сохранения', 'error');
+                }
+            });
+        };
+
+        bindSave('md-direction-type', 'default_type_id_direction');
+        bindSave('md-well-type', 'default_type_id_well');
+        bindSave('md-marker-type', 'default_type_id_marker');
+        bindSave('md-status', 'default_status_id');
+        bindSave('md-owner', 'default_owner_id');
+        bindSave('md-cable-type', 'default_cable_type_id');
+        bindSave('md-cable-catalog', 'default_cable_catalog_id');
+    },
+
     /**
      * Модальное окно добавления объекта
      */
@@ -4174,6 +4302,18 @@ const App = {
                 }
             };
 
+            const pickUserDefault = (selectEl, value) => {
+                if (!selectEl) return false;
+                if (selectEl.dataset?.value) return false; // edit form value wins
+                if (selectEl.value) return false;
+                if (!value) return false;
+                const exists = Array.from(selectEl.options).some(o => String(o.value) === String(value));
+                if (!exists) return false;
+                selectEl.value = String(value);
+                selectEl.dispatchEvent(new Event('change'));
+                return true;
+            };
+
             // Определяем код вида объекта из скрытого поля
             const objectTypeCode = document.querySelector('input[name="object_type_code"]')?.value;
 
@@ -4181,7 +4321,9 @@ const App = {
                 document.getElementById('modal-owner-select').innerHTML = 
                     '<option value="">Выберите...</option>' +
                     owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}" data-is-default="${o.is_default ? 1 : 0}">${o.name}</option>`).join('');
-                pickDefault(document.getElementById('modal-owner-select'));
+                const sel = document.getElementById('modal-owner-select');
+                const udef = this.settings?.default_owner_id || '';
+                if (!pickUserDefault(sel, udef)) pickDefault(sel);
             }
 
             // Обновление префикса номера по выбранному собственнику
@@ -4212,12 +4354,20 @@ const App = {
                     `<option value="${t.id}" data-code="${t.code}" data-is-default="${t.is_default ? 1 : 0}">${t.name}</option>`
                 ).join('');
                 
-                // Автоматически выбираем вид объекта по коду
-                if (objectTypeCode) {
+                // Персональные дефолты по "Вид" (object_types)
+                const byObj = {
+                    wells: this.settings?.default_type_id_well,
+                    markers: this.settings?.default_type_id_marker,
+                    directions: this.settings?.default_type_id_direction,
+                };
+                const udefType = byObj[objectType] || '';
+                if (pickUserDefault(typeSelect, udefType)) {
+                    this.filterKindsByType(typeSelect.value, kinds.data);
+                } else if (objectTypeCode) {
+                    // Автоматически выбираем вид объекта по коду
                     const matchingType = types.data.find(t => t.code === objectTypeCode);
                     if (matchingType) {
                         typeSelect.value = matchingType.id;
-                        // Обновляем список типов (kinds) для выбранного вида
                         this.filterKindsByType(matchingType.id, kinds.data);
                     }
                 } else {
@@ -4274,10 +4424,12 @@ const App = {
                         statusSelect.value = planned.value;
                         statusSelect.dispatchEvent(new Event('change'));
                     } else {
-                        pickDefault(statusSelect);
+                        const udef = this.settings?.default_status_id || '';
+                        if (!pickUserDefault(statusSelect, udef)) pickDefault(statusSelect);
                     }
                 } else {
-                    pickDefault(statusSelect);
+                    const udef = this.settings?.default_status_id || '';
+                    if (!pickUserDefault(statusSelect, udef)) pickDefault(statusSelect);
                 }
             }
 
@@ -4363,10 +4515,15 @@ const App = {
                         '<option value="">Выберите тип...</option>' +
                         cableTypesResponse.data.map(ct => `<option value="${ct.id}" data-is-default="${ct.is_default ? 1 : 0}">${ct.name}</option>`).join('');
                     const sel = document.getElementById('modal-cable-type-select');
+                    const udefCt = this.settings?.default_cable_type_id || '';
                     if (sel && !sel.value) {
-                        const def = (cableTypesResponse.data || []).find(ct => ct.is_default);
-                        if (def) {
-                            sel.value = String(def.id);
+                        if (!pickUserDefault(sel, udefCt)) {
+                            const def = (cableTypesResponse.data || []).find(ct => ct.is_default);
+                            if (def) {
+                                sel.value = String(def.id);
+                                this.onCableTypeChange().catch(() => {});
+                            }
+                        } else {
                             this.onCableTypeChange().catch(() => {});
                         }
                     }
@@ -5001,7 +5158,17 @@ const App = {
                 catalogSelect.innerHTML = '<option value="">Выберите марку кабеля...</option>' +
                     filteredCables.map(c => `<option value="${c.id}" data-is-default="${c.is_default ? 1 : 0}">${c.marking} (${c.fiber_count} жил)</option>`).join('');
 
-                // Автовыбор значения по умолчанию (если ничего не выбрано / новая запись)
+                // Персональный дефолт каталога кабелей (если это новая запись)
+                const udef = this.settings?.default_cable_catalog_id || '';
+                if (udef && !catalogSelect.dataset?.value && !catalogSelect.value) {
+                    const exists = (filteredCables || []).some(c => String(c.id) === String(udef));
+                    if (exists) {
+                        catalogSelect.value = String(udef);
+                        return;
+                    }
+                }
+
+                // Автовыбор значения по умолчанию из справочника (если ничего не выбрано / новая запись)
                 if (!catalogSelect.value) {
                     const def = (filteredCables || []).find(c => c.is_default);
                     if (def) catalogSelect.value = String(def.id);

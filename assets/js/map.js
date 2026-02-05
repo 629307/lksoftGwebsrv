@@ -43,6 +43,9 @@ const MapManager = {
     ownersLegendEl: null,
     _ownersLegendCache: null,
     _lastGroupFilters: null,
+    // Панель "Настройки по умолчанию" (персональные дефолты)
+    mapDefaultsEnabled: false,
+    mapDefaultsEl: null,
     // Множественный выбор объектов на карте
     multiSelected: new Map(), // key => { objectType, properties }
     // Базовые слои карты: OSM (по умолчанию) + Спутник (WMTS ЯНАО)
@@ -332,6 +335,18 @@ const MapManager = {
             }
         } catch (_) {}
 
+        // Панель "Настройки по умолчанию" (DOM overlay поверх карты)
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                const el = document.createElement('div');
+                el.id = 'map-defaults';
+                el.className = 'map-defaults hidden';
+                host.appendChild(el);
+                this.mapDefaultsEl = el;
+            }
+        } catch (_) {}
+
         // Отслеживание координат курсора
         this.map.on('mousemove', (e) => {
             this.updateCursorCoordinates(e);
@@ -349,6 +364,24 @@ const MapManager = {
         this.updateWellLabelsVisibility();
 
         console.log('Карта инициализирована');
+    },
+
+    setMapDefaultsEnabled(enabled) {
+        this.mapDefaultsEnabled = !!enabled;
+        const el = this.mapDefaultsEl || document.getElementById('map-defaults');
+        if (!el) return;
+        if (!this.mapDefaultsEnabled) {
+            el.classList.add('hidden');
+            el.innerHTML = '';
+            return;
+        }
+        el.classList.remove('hidden');
+        // отрисовка в App (чтобы переиспользовать API/настройки)
+        try { App?.renderMapDefaultsPanel?.(el); } catch (_) {}
+    },
+
+    toggleMapDefaults() {
+        this.setMapDefaultsEnabled(!this.mapDefaultsEnabled);
     },
 
     startIncidentSelectMode() {
