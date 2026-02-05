@@ -4533,7 +4533,9 @@ const App = {
                     const kindSelect = document.getElementById('modal-kind-select');
                     kindSelect.innerHTML = '<option value="">Выберите...</option>' +
                         filtered.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
-                    pickDefault(kindSelect);
+                    // Персональный дефолт для каналов берём из map-defaults: default_ref_channel
+                    const udef = this.settings?.default_ref_channel || '';
+                    if (!pickUserDefault(kindSelect, udef)) pickDefault(kindSelect);
                     kindsHandled = true;
                 }
 
@@ -4557,7 +4559,10 @@ const App = {
                     markers: this.settings?.default_kind_id_marker,
                     directions: this.settings?.default_kind_id_direction,
                 };
-                const refKey = objectTypeCode ? `default_ref_${String(objectTypeCode)}` : '';
+                // Для "Каналы" (cable_channels) используем фиксированный ключ default_ref_channel
+                const refKey = (objectType === 'channels')
+                    ? 'default_ref_channel'
+                    : (objectTypeCode ? `default_ref_${String(objectTypeCode)}` : '');
                 const udefKind = (refKey && this.settings?.[refKey]) ? this.settings?.[refKey] : (byObjKindLegacy[objectType] || '');
                 if (kindSelect) {
                     if (!pickUserDefault(kindSelect, udefKind)) pickDefault(kindSelect);

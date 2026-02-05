@@ -344,6 +344,19 @@ const MapManager = {
                 el.className = 'map-defaults hidden';
                 host.appendChild(el);
                 this.mapDefaultsEl = el;
+                // Важно: если курсор над панелью — колесо мыши скроллит панель, а не зумит карту
+                try {
+                    if (typeof L !== 'undefined' && L?.DomEvent) {
+                        L.DomEvent.disableScrollPropagation(el);
+                        L.DomEvent.disableClickPropagation(el);
+                    }
+                } catch (_) {}
+                // Доп. страховка для wheel (некоторые браузеры/сборки Leaflet)
+                try {
+                    el.addEventListener('wheel', (e) => {
+                        try { e.stopPropagation(); } catch (_) {}
+                    }, { passive: true });
+                } catch (_) {}
             }
         } catch (_) {}
 
