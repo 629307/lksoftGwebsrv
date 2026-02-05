@@ -43,10 +43,10 @@ const MapManager = {
     ownersLegendEl: null,
     _ownersLegendCache: null,
     _lastGroupFilters: null,
-    // Внешний растровый слой (спутник Yandex)
-    externalWmtsEnabled: false,
-    externalWmtsLayer: null,
-    externalWmtsPaneName: 'external-wmts',
+    // Базовые слои Yandex (схема/спутник)
+    yandexBaseLayer: null,
+    yandexSatLayer: null,
+    yandexSatelliteEnabled: false,
     initialViewLocked: true,
 
     // Режим группы (показываем только объекты группы)
@@ -167,65 +167,27 @@ const MapManager = {
         });
     },
 
-    async setExternalWmtsEnabled(enabled) {
-        this.externalWmtsEnabled = !!enabled;
+    setYandexSatelliteEnabled(enabled) {
+        this.yandexSatelliteEnabled = !!enabled;
         if (!this.map) return;
+        if (!this.yandexBaseLayer || !this.yandexSatLayer) return;
 
-        if (!this.externalWmtsEnabled) {
-            if (this.externalWmtsLayer) {
-                try { this.map.removeLayer(this.externalWmtsLayer); } catch (_) {}
-            }
-            return;
-        }
-
-        const template = 'https://core-sat.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}';
-        if (!this.externalWmtsLayer) {
-            // Важно: тайлы спутника Yandex используют TMS (ось Y инвертирована относительно XYZ).
-            // В некоторых окружениях опция Leaflet `tms:true` не применяется как ожидается,
-            // поэтому инвертируем Y явно через кастомный TileLayer.
-            const YandexSatLayer = L.TileLayer.extend({
-                getTileUrl: function (coords) {
-                    const z = this._getZoomForUrl();
-                    const x = coords.x;
-                    const max = Math.pow(2, z) - 1;
-                    const y = max - coords.y;
-                    return L.Util.template(this._url, {
-                        r: (L.Browser.retina ? '@2x' : ''),
-                        s: this._getSubdomain(coords),
-                        x,
-                        y,
-                        z,
-                    });
-                },
-            });
-
-            this.externalWmtsLayer = new YandexSatLayer(template, {
-                pane: this.externalWmtsPaneName,
-                maxZoom: 22,
-                attribution: '&copy; Yandex',
-            });
-        }
         try {
-            this.externalWmtsLayer.addTo(this.map);
-            // на всякий случай вниз под векторные слои
-            this.externalWmtsLayer.bringToBack?.();
+            if (this.yandexSatelliteEnabled) {
+                if (this.map.hasLayer(this.yandexBaseLayer)) this.map.removeLayer(this.yandexBaseLayer);
+                if (!this.map.hasLayer(this.yandexSatLayer)) this.map.addLayer(this.yandexSatLayer);
+            } else {
+                if (this.map.hasLayer(this.yandexSatLayer)) this.map.removeLayer(this.yandexSatLayer);
+                if (!this.map.hasLayer(this.yandexBaseLayer)) this.map.addLayer(this.yandexBaseLayer);
+            }
         } catch (_) {}
     },
 
-    async toggleExternalWmtsLayer() {
-        try {
-            await this.setExternalWmtsEnabled(!this.externalWmtsEnabled);
-            if (typeof App !== 'undefined') {
-                App.notify(this.externalWmtsEnabled ? 'Спутниковый слой включён' : 'Спутниковый слой выключен', 'info');
-            }
-        } catch (e) {
-            if (typeof App !== 'undefined') {
-                App.notify('Не удалось включить спутниковый слой', 'error');
-            }
-            this.externalWmtsEnabled = false;
-            if (this.externalWmtsLayer) {
-                try { this.map?.removeLayer?.(this.externalWmtsLayer); } catch (_) {}
-            }
+    toggleExternalWmtsLayer() {
+        // историческое имя метода — используем как тумблер "Схема/Спутник"
+        this.setYandexSatelliteEnabled(!this.yandexSatelliteEnabled);
+        if (typeof App !== 'undefined') {
+            App.notify(this.yandexSatelliteEnabled ? 'Спутник включён' : 'Схема включена', 'info');
         }
     },
 
@@ -303,17 +265,19 @@ const MapManager = {
             zoomControl: true,
         });
 
-        // Базовый слой OpenStreetMap (светлая тема по умолчанию)
-        this.baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-            maxZoom: 19,
+        // Базовые слои: Yandex схема (по умолчанию) и Yandex спутник
+        // Оба работают в WebMercator и должны совпадать с геометрией (WGS84 -> EPSG:3857 в Leaflet)
+        this.yandexBaseLayer = L.tileLayer('https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}', {
+            maxZoom: 22,
+            attribution: '&copy; Yandex',
         }).addTo(this.map);
 
-        // Панель для внешнего WMTS (ниже векторных объектов)
-        try {
-            const pane = this.map.createPane(this.externalWmtsPaneName);
-            pane.style.zIndex = 200; // tile < overlays
-        } catch (_) {}
+        this.yandexSatLayer = L.tileLayer('https://core-sat.maps.yandex.net/tiles?l=sat&x={x}&y={y}&z={z}', {
+            maxZoom: 22,
+            attribution: '&copy; Yandex',
+        });
+
+        this.yandexSatelliteEnabled = false;
 
         // Инициализируем пустые слои
         this.layers = {
