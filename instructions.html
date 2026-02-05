@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Инструкция — ИГС lksoftGwebsrv</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.2.4" />
+    <style>
+        .help-wrap { max-width: 1100px; margin: 0 auto; padding: 18px 16px 60px; }
+        .help-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 14px; }
+        .help-title { display:flex; align-items:center; gap:10px; }
+        .help-title h1 { font-size: 20px; margin: 0; }
+        .help-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 14px 14px; box-shadow: var(--shadow); }
+        .help-grid { display:grid; grid-template-columns: 1fr; gap: 12px; }
+        .help-card h2 { font-size: 15px; margin: 0 0 8px; }
+        .help-card h3 { font-size: 13px; margin: 10px 0 6px; color: var(--text-secondary); }
+        .help-card p { margin: 6px 0; }
+        .help-card ul { margin: 6px 0 0 18px; }
+        .help-card li { margin: 4px 0; }
+        .kbd { display:inline-block; padding:2px 6px; border:1px solid var(--border-color); border-radius:6px; background: rgba(255,255,255,0.04); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
+        .muted { color: var(--text-muted); }
+        .toc { display:flex; flex-wrap:wrap; gap:8px; margin-top: 10px; }
+        .toc a { display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:10px; border:1px solid var(--border-color); background: rgba(255,255,255,0.03); }
+        .toc a:hover { text-decoration:none; background: rgba(255,255,255,0.06); }
+        .hr { height:1px; background: var(--border-color); margin: 10px 0; opacity: 0.7; }
+        @media (min-width: 900px) {
+            .help-grid { grid-template-columns: 1fr 1fr; }
+            .help-card.wide { grid-column: 1 / -1; }
+        }
+        @media print {
+            .help-header .btn { display:none; }
+            body { background: #fff; color: #000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="help-wrap">
+        <div class="help-header">
+            <div class="help-title">
+                <i class="fas fa-circle-info" style="color: var(--accent-color);"></i>
+                <div>
+                    <h1>Инструкция — ИГС lksoftGwebsrv</h1>
+                    <div class="muted">Описание функций и порядок работы по основным разделам системы.</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button class="btn btn-secondary btn-sm" onclick="window.print()"><i class="fas fa-print"></i> Печать</button>
+                <button class="btn btn-secondary btn-sm" onclick="window.close()"><i class="fas fa-times"></i> Закрыть</button>
+            </div>
+        </div>
+
+        <div class="help-card wide">
+            <h2><i class="fas fa-list"></i> Быстрый переход</h2>
+            <div class="toc">
+                <a href="#map"><i class="fas fa-map"></i> Карта</a>
+                <a href="#toolbar"><i class="fas fa-screwdriver-wrench"></i> Панель инструментов</a>
+                <a href="#layers"><i class="fas fa-layer-group"></i> Слои и фильтры</a>
+                <a href="#objects"><i class="fas fa-database"></i> Объекты</a>
+                <a href="#tu"><i class="fas fa-clipboard-list"></i> ТУ</a>
+                <a href="#incidents"><i class="fas fa-exclamation-triangle"></i> Инциденты</a>
+                <a href="#contracts"><i class="fas fa-file-contract"></i> Контракты</a>
+                <a href="#reports"><i class="fas fa-chart-bar"></i> Отчёты</a>
+                <a href="#references"><i class="fas fa-book"></i> Справочники</a>
+                <a href="#settings"><i class="fas fa-sliders-h"></i> Настройки</a>
+                <a href="#hotkeys"><i class="fas fa-keyboard"></i> Горячие клавиши</a>
+                <a href="#roles"><i class="fas fa-user-shield"></i> Роли</a>
+            </div>
+        </div>
+
+        <div class="help-grid">
+            <div class="help-card wide" id="map">
+                <h2><i class="fas fa-map"></i> Карта</h2>
+                <p>Карта — основной рабочий экран для просмотра объектов ИГС и работы с ними.</p>
+                <ul>
+                    <li><strong>Навигация</strong>: колесо мыши — масштаб, зажатая левая кнопка — перемещение.</li>
+                    <li><strong>Координаты курсора</strong>: отображаются в левом нижнем углу в WGS84.</li>
+                    <li><strong>Информация об объекте</strong>: клик по объекту открывает карточку справа.</li>
+                </ul>
+                <div class="hr"></div>
+                <p class="muted">Примечание: отображение объектов зависит от выбранных слоёв и фильтров.</p>
+            </div>
+
+            <div class="help-card" id="toolbar">
+                <h2><i class="fas fa-screwdriver-wrench"></i> Панель инструментов карты</h2>
+                <ul>
+                    <li><strong>Добавить направление</strong>: выберите 2 колодца.</li>
+                    <li><strong>Добавить колодец</strong>: кликните на карте и заполните форму.</li>
+                    <li><strong>Добавить столбик</strong>: кликните на карте и заполните форму.</li>
+                    <li><strong>Добавить кабель</strong>: грунт/воздух — ломаная по точкам; канализация — выбор каналов маршрута.</li>
+                    <li><strong>Подсказки</strong>: номера колодцев / длины направлений (вкл/выкл).</li>
+                    <li><strong>Легенда по собственникам</strong>: перекрашивает колодцы/направления по цвету собственника и показывает легенду.</li>
+                    <li><strong>Режим ТУ</strong>: выбор ТУ и автопривязка создаваемых объектов (если включено).</li>
+                    <li><strong>Спутник (WMTS)</strong>: переключает базовый слой OSM ↔ спутник.</li>
+                </ul>
+                <p class="muted">Поддерживается отмена режимов и подсветок клавишей <span class="kbd">Esc</span>.</p>
+            </div>
+
+            <div class="help-card" id="layers">
+                <h2><i class="fas fa-layer-group"></i> Слои и фильтры</h2>
+                <h3>Слои</h3>
+                <p>В боковой панели можно включать/выключать слои: Колодцы, Направления, Столбики, Кабели (грунт/воздух/канализация).</p>
+                <h3>Фильтры</h3>
+                <ul>
+                    <li><strong>ТУ</strong>: показать объекты выбранного ТУ.</li>
+                    <li><strong>Собственник</strong>: фильтрация по собственнику.</li>
+                    <li><strong>Состояние</strong>: фильтрация по статусу.</li>
+                    <li><strong>Контракт</strong>: фильтрация по контракту (показываются соответствующие кабели).</li>
+                    <li><strong>Сброс</strong>: возвращает настройки фильтров и слоёв к значениям по умолчанию.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="objects">
+                <h2><i class="fas fa-database"></i> Объекты</h2>
+                <p>Раздел содержит вкладки: Колодцы, Направления, Каналы, Столбики, Кабели, ТУ.</p>
+                <ul>
+                    <li><strong>Добавить</strong>: создаёт объект выбранного типа.</li>
+                    <li><strong>Редактировать</strong>: открывает форму редактирования.</li>
+                    <li><strong>Удалить</strong>: удаляет запись (если есть права).</li>
+                    <li><strong>Показать на карте</strong>: центрирует карту на объекте и подсвечивает его (для поддерживаемых типов).</li>
+                    <li><strong>Фото</strong>: если у объекта есть фото — отображается кнопка просмотра миниатюр.</li>
+                </ul>
+                <p class="muted">Для каналов удаление доступно только для последнего канала в направлении.</p>
+            </div>
+
+            <div class="help-card" id="tu">
+                <h2><i class="fas fa-clipboard-list"></i> ТУ (карточки)</h2>
+                <p>ТУ — карточка, объединяющая объекты (колодцы, направления, кабели, столбики и т.д.).</p>
+                <ul>
+                    <li><strong>Поля ТУ</strong>: Номер (авто), Дата (необяз.), Основание (Запрос) (необяз.), Название, Тип ТУ, Описание.</li>
+                    <li><strong>Вложения</strong>: можно прикреплять документы/изображения к ТУ (загрузка/скачивание/удаление).</li>
+                    <li><strong>Режим ТУ</strong> на карте: выберите ТУ → создаваемые объекты получают статус <strong>planned</strong> и автоматически прикрепляются к выбранному ТУ.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="incidents">
+                <h2><i class="fas fa-exclamation-triangle"></i> Инциденты</h2>
+                <ul>
+                    <li><strong>Создание</strong>: заполните карточку инцидента, при необходимости привяжите объекты.</li>
+                    <li><strong>История</strong>: можно добавлять записи в историю.</li>
+                    <li><strong>Вложения</strong>: документы/фото инцидента отображаются в карточке и доступны для скачивания.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="contracts">
+                <h2><i class="fas fa-file-contract"></i> Контракты</h2>
+                <p>Контракты — отдельный раздел (не в справочниках).</p>
+                <ul>
+                    <li><strong>Арендатор</strong> и <strong>Арендодатель</strong> выбираются из справочника собственников.</li>
+                    <li>В отчёте по контрактам доступны расчёты и таблицы по выбранному контракту.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="reports">
+                <h2><i class="fas fa-chart-bar"></i> Отчёты</h2>
+                <ul>
+                    <li>Доступны отчёты по объектам, контрактам, собственникам, инцидентам.</li>
+                    <li>Отчёты прокручиваются внутри панели.</li>
+                    <li>Кнопка <strong>Выгрузить</strong> позволяет скачать отчёт (где доступно) с выбором разделителя.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="references">
+                <h2><i class="fas fa-book"></i> Справочники</h2>
+                <p>Справочники содержат типы/виды объектов, статусы, собственников, типы кабелей, каталог кабелей и др.</p>
+                <ul>
+                    <li>Права на изменение справочников зависят от роли.</li>
+                    <li>В справочнике собственников можно задавать цвет для легенды.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="settings">
+                <h2><i class="fas fa-sliders-h"></i> Настройки</h2>
+                <ul>
+                    <li><strong>Персональные настройки</strong>: большинство настроек сохраняются для текущего пользователя.</li>
+                    <li><strong>Глобальная настройка</strong>: “Учитываемая длина кабеля в колодце” может менять только root.</li>
+                    <li><strong>WMTS</strong>: в разделе “Настройка слоя WMTS” задаётся шаблон URL и параметры подстановки для спутникового слоя.</li>
+                </ul>
+            </div>
+
+            <div class="help-card" id="hotkeys">
+                <h2><i class="fas fa-keyboard"></i> Горячие клавиши</h2>
+                <p>В настройках можно задать hotkey для инструментов карты в формате <strong>Alt + клавиша</strong> (одна цифра или латинская буква).</p>
+                <p>Пример: если задано <strong>a</strong>, то нажмите <span class="kbd">Alt</span> + <span class="kbd">A</span>.</p>
+            </div>
+
+            <div class="help-card wide" id="roles">
+                <h2><i class="fas fa-user-shield"></i> Роли и права</h2>
+                <ul>
+                    <li><strong>Администратор</strong>: полный доступ.</li>
+                    <li><strong>Пользователь</strong>: ограничение на управление справочниками и пользователями (зависит от настроек RBAC).</li>
+                    <li><strong>Только чтение</strong>: просмотр без возможности создавать/редактировать/удалять.</li>
+                </ul>
+                <p class="muted">Если кнопки/действия недоступны — проверьте роль пользователя.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
