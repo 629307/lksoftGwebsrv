@@ -203,7 +203,7 @@ const App = {
         document.getElementById('btn-toggle-wmts')?.addEventListener('click', async (e) => {
             try {
                 MapManager.toggleExternalWmtsLayer();
-                e.currentTarget.classList.toggle('active', !!MapManager.yandexSatelliteEnabled);
+                e.currentTarget.classList.toggle('active', !!MapManager.wmtsSatelliteEnabled);
             } catch (_) {
                 // ignore
             }
