@@ -396,6 +396,7 @@ class WellController extends BaseController
             $xMsk86 = $this->request->input('x_msk86');
             $yMsk86 = $this->request->input('y_msk86');
 
+            $coordsChanged = false;
             if ($longitude && $latitude) {
                 // PostgreSQL PDO не поддерживает повторное использование именованных параметров
                 $this->db->query(
@@ -406,6 +407,7 @@ class WellController extends BaseController
                      WHERE wells.id = :id",
                     ['lon' => $longitude, 'lat' => $latitude, 'id' => $wellId]
                 );
+                $coordsChanged = true;
             } elseif ($xMsk86 && $yMsk86) {
                 // PostgreSQL PDO не поддерживает повторное использование именованных параметров
                 $this->db->query(
@@ -416,11 +418,29 @@ class WellController extends BaseController
                      WHERE wells.id = :id",
                     ['x' => $xMsk86, 'y' => $yMsk86, 'id' => $wellId]
                 );
+                $coordsChanged = true;
             }
 
             // Обновляем остальные поля
             if (!empty($data)) {
                 $this->db->update('wells', $data, 'id = :id', ['id' => $wellId]);
+            }
+
+            // Если изменились координаты колодца — пересчитываем геометрию и длину направлений, которые на него ссылаются
+            if (!empty($coordsChanged)) {
+                $this->db->query(
+                    "UPDATE channel_directions cd
+                     SET geom_wgs84 = ST_MakeLine(sw.geom_wgs84, ew.geom_wgs84),
+                         geom_msk86 = ST_MakeLine(sw.geom_msk86, ew.geom_msk86),
+                         length_m = ROUND(ST_Length(ST_MakeLine(sw.geom_wgs84, ew.geom_wgs84)::geography)::numeric, 2),
+                         updated_by = :uid,
+                         updated_at = NOW()
+                     FROM wells sw, wells ew
+                     WHERE cd.start_well_id = sw.id
+                       AND cd.end_well_id = ew.id
+                       AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
+                    ['uid' => (int) ($user['id'] ?? 0), 'wid' => $wellId]
+                );
             }
 
             // Если изменён номер колодца — обновляем номера направлений, где он участвует
