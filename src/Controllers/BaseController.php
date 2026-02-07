@@ -262,13 +262,26 @@ abstract class BaseController
         ];
     }
 
+    protected function getObjectKindCodeById(int $kindId): string
+    {
+        $row = $this->db->fetch(
+            "SELECT code FROM object_kinds WHERE id = :id",
+            ['id' => (int) $kindId]
+        );
+        if (!$row) {
+            Response::error('Тип объекта не найден', 404);
+        }
+        return (string) ($row['code'] ?? '');
+    }
+
     protected function buildAutoNumber(
         string $table,
         int $typeId,
         int $ownerId,
         ?int $manualSeq,
         ?string $suffix,
-        ?int $excludeId = null
+        ?int $excludeId = null,
+        int $minSeq = 1
     ): string {
         // Whitelist, чтобы нельзя было подсунуть произвольную таблицу
         $allowedTables = ['wells', 'marker_posts', 'cables'];
@@ -298,6 +311,7 @@ abstract class BaseController
 
         // 3-я часть: минимальное целое положительное (>=1), уникальное для уже существующих номеров
         // сквозное в рамках конкретного вида объекта (typeColumn = typeId), независимо от собственника.
+        $minSeq = max(1, (int) $minSeq);
         $row = $this->db->fetch(
             "WITH used AS (
                 SELECT DISTINCT (split_part(number, '-', 3))::int AS n
@@ -309,7 +323,7 @@ abstract class BaseController
                 SELECT COALESCE(MAX(n), 0) AS m FROM used
             ),
             gs AS (
-                SELECT generate_series(1, (SELECT m + 1 FROM mx)) AS n
+                SELECT generate_series(:min_seq, GREATEST(:min_seq, (SELECT m + 1 FROM mx))) AS n
             )
             SELECT gs.n AS n
             FROM gs
@@ -317,7 +331,7 @@ abstract class BaseController
             WHERE u.n IS NULL
             ORDER BY gs.n
             LIMIT 1",
-            ['type_id' => (int) $typeId]
+            ['type_id' => (int) $typeId, 'min_seq' => $minSeq]
         );
         $seq = (int) ($row['n'] ?? 0);
         if ($seq <= 0) {

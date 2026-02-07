@@ -3284,6 +3284,7 @@ const App = {
         const hkDuct = document.getElementById('settings-hotkey-add-duct-cable');
         const hkGround = document.getElementById('settings-hotkey-add-ground-cable');
         const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable');
+        const inputStart = document.getElementById('settings-input-well-number-start');
 
         if (z) z.value = (this.settings.map_default_zoom ?? MapManager.defaultZoom ?? 14);
         if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
@@ -3293,6 +3294,12 @@ const App = {
             // Глобальная настройка: менять может только root
             len.disabled = !this.isRoot();
             if (!this.isRoot()) len.style.background = 'var(--bg-tertiary)';
+        }
+        if (inputStart) {
+            inputStart.value = (this.settings.input_well_number_start ?? 1);
+            // Глобальная настройка: менять может только root
+            inputStart.disabled = !this.isRoot();
+            if (!this.isRoot()) inputStart.style.background = 'var(--bg-tertiary)';
         }
         if (wDir) wDir.value = (this.settings.line_weight_direction ?? 3);
         if (wCable) wCable.value = (this.settings.line_weight_cable ?? 2);
@@ -3364,6 +3371,7 @@ const App = {
         const hkDuct = document.getElementById('settings-hotkey-add-duct-cable')?.value;
         const hkGround = document.getElementById('settings-hotkey-add-ground-cable')?.value;
         const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable')?.value;
+        const inputStart = document.getElementById('settings-input-well-number-start')?.value;
 
         const normalizeHotkey = (v) => {
             const s = (v ?? '').toString().trim();
@@ -3385,7 +3393,7 @@ const App = {
             map_default_lat: lat,
             map_default_lng: lng,
             // глобальная настройка — только root (остальным не отправляем)
-            ...(this.isRoot() ? { cable_in_well_length_m: len } : {}),
+            ...(this.isRoot() ? { cable_in_well_length_m: len, input_well_number_start: inputStart } : {}),
             line_weight_direction: wDir,
             line_weight_cable: wCable,
             icon_size_well_marker: iconSize,
@@ -4727,8 +4735,24 @@ const App = {
                     document.getElementById('modal-cable-object-type').innerHTML = 
                         '<option value="">Выберите вид...</option>' +
                         cableObjectTypesResponse.data.map(ot => 
-                            `<option value="${ot.id}" data-code="${ot.code}" data-number-code="${ot.number_code || ot.code || ''}">${ot.name}</option>`
+                            `<option value="${ot.id}" data-code="${ot.code}" data-number-code="${ot.number_code || ot.code || ''}" data-is-default="${ot.is_default ? 1 : 0}">${ot.name}</option>`
                         ).join('');
+
+                    // Выбираем дефолтный вид кабеля (is_default=1), иначе первый доступный
+                    const sel = document.getElementById('modal-cable-object-type');
+                    if (sel && !sel.value) {
+                        const def = Array.from(sel.options).find(o => o?.dataset?.isDefault === '1' && o.value);
+                        if (def) {
+                            sel.value = def.value;
+                            sel.dispatchEvent(new Event('change'));
+                        } else {
+                            const first = Array.from(sel.options).find(o => o.value);
+                            if (first) {
+                                sel.value = first.value;
+                                sel.dispatchEvent(new Event('change'));
+                            }
+                        }
+                    }
                 }
             }
         } catch (error) {

@@ -18,6 +18,7 @@ class SettingsController extends BaseController
             'map_default_lat' => '66.10231',
             'map_default_lng' => '76.68617',
             'cable_in_well_length_m' => '2', // глобально для всех, меняет только root
+            'input_well_number_start' => '1', // глобально: начало нумерации для "вводных" колодцев
             'line_weight_direction' => '2',
             'line_weight_cable' => '1',
             'icon_size_well_marker' => '12',
@@ -125,6 +126,7 @@ class SettingsController extends BaseController
             'map_default_lat',
             'map_default_lng',
             'cable_in_well_length_m',
+            'input_well_number_start',
             'url_geoproj',
             'url_cadastre',
             'map_layers',
@@ -190,9 +192,12 @@ class SettingsController extends BaseController
             $this->db->beginTransaction();
 
             foreach ($toSave as $code => $value) {
-                if ($code === 'cable_in_well_length_m') {
+            if ($code === 'cable_in_well_length_m' || $code === 'input_well_number_start') {
                     if (!Auth::isRoot()) {
+                    if ($code === 'cable_in_well_length_m') {
                         Response::error('Доступ запрещён: изменить "Учитываемая длина кабеля в колодце (м)" может только пользователь root', 403);
+                    }
+                    Response::error('Доступ запрещён: изменить "Начало нумерации Объектов колодец вводной" может только пользователь root', 403);
                     }
                     $this->db->query(
                         "INSERT INTO app_settings(code, value, updated_at)

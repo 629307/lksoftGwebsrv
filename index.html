@@ -549,6 +549,7 @@
                     </div>
                     <div class="table-container">
                         <form id="settings-form" style="max-width: 720px;">
+                            <h3 style="margin: 0 0 10px 0;">Настройка данных ГИС</h3>
                             <div class="form-group">
                                 <label>Зум карты по умолчанию</label>
                                 <input type="number" id="settings-map-zoom" min="1" max="22" step="1">
@@ -565,6 +566,14 @@
                                 <label>Учитываемая длина кабеля в колодце (м)</label>
                                 <input type="number" id="settings-cable-well-len" step="0.01" min="0">
                             </div>
+                            <div class="form-group">
+                                <label>Начало нумерации Объектов колодец вводной</label>
+                                <input type="number" id="settings-input-well-number-start" step="1" min="1" placeholder="Напр.: 1000">
+                                <p class="text-muted">Используется для автоматической нумерации колодцев типа "Ввод в здание".</p>
+                            </div>
+
+                            <hr style="margin: 18px 0;">
+                            <h3 style="margin: 0 0 10px 0;">Настройка интерфейса карты ГИС</h3>
                             <div class="form-group">
                                 <label>Толщина линий — Направление</label>
                                 <input type="number" id="settings-line-weight-direction" step="0.1" min="0.5" placeholder="Напр.: 3">
@@ -587,20 +596,22 @@
                                 <input type="number" id="settings-font-size-direction-length" step="1" min="8" placeholder="Напр.: 12">
                             </div>
                             <div class="form-group">
+                                <label>Код — точка ввода (Тип объекта колодца)</label>
+                                <select id="settings-well-entry-kind-code">
+                                    <option value="">Не задано</option>
+                                </select>
+                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец".</p>
+                            </div>
+
+                            <hr style="margin: 18px 0;">
+                            <h3 style="margin: 0 0 10px 0;">Настройка ссылок меню</h3>
+                            <div class="form-group">
                                 <label>Ссылка на Ресурс для пересчёта координат</label>
                                 <input type="url" id="settings-url-geoproj" placeholder="https://geoproj.ru/">
                             </div>
                             <div class="form-group">
                                 <label>Ссылка на Публичную кадастровую карту</label>
                                 <input type="url" id="settings-url-cadastre" placeholder="https://nspd.gov.ru/...">
-                            </div>
-
-                            <div class="form-group">
-                                <label>Код — точка ввода (Тип объекта колодца)</label>
-                                <select id="settings-well-entry-kind-code">
-                                    <option value="">Не задано</option>
-                                </select>
-                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец".</p>
                             </div>
 
                             <hr style="margin: 18px 0;">

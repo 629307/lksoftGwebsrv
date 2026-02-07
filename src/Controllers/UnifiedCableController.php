@@ -673,9 +673,10 @@ class UnifiedCableController extends BaseController
     public function objectTypes(): void
     {
         $types = $this->db->fetchAll(
-            "SELECT id, code, name, color, COALESCE(NULLIF(number_code,''), code) as number_code
+            "SELECT id, code, name, color, is_default, COALESCE(NULLIF(number_code,''), code) as number_code
              FROM object_types
-             WHERE code IN ('cable_ground', 'cable_aerial', 'cable_duct')"
+             WHERE code IN ('cable_ground', 'cable_aerial', 'cable_duct')
+             ORDER BY is_default DESC, id"
         );
         Response::success($types);
     }
@@ -746,21 +747,26 @@ class UnifiedCableController extends BaseController
      */
     private function updateDuctCableLength(int $cableId): void
     {
-        // Длина кабеля в канализации: сумма длин направлений + 3 * количество уникальных колодцев маршрута
+        // Длина кабеля в канализации:
+        // сумма длин всех направлений маршрута + (кол-во уникальных направлений) * K,
+        // где K = настройка "cable_in_well_length_m" (учитываемая длина кабеля в колодце)
+        $k = (float) $this->getAppSetting('cable_in_well_length_m', 2);
         $this->db->query(
-            "UPDATE cables SET length_calculated = (
-                (SELECT COALESCE(SUM(DISTINCT cd.length_m), 0)
-                 FROM cable_route_channels crc
-                 JOIN cable_channels cc ON crc.cable_channel_id = cc.id
-                 JOIN channel_directions cd ON cc.direction_id = cd.id
-                 WHERE crc.cable_id = :cable_id)
-                +
-                (SELECT 3 * COALESCE(COUNT(DISTINCT crw.well_id), 0)
-                 FROM cable_route_wells crw
-                 WHERE crw.cable_id = :cable_id)
-            )
-            WHERE id = :cable_id",
-            ['cable_id' => $cableId]
+            "UPDATE cables
+             SET length_calculated = (
+                WITH dirs AS (
+                    SELECT DISTINCT cd.id as dir_id,
+                           COALESCE(cd.length_m, 0) as len_m
+                    FROM cable_route_channels crc
+                    JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+                    JOIN channel_directions cd ON cc.direction_id = cd.id
+                    WHERE crc.cable_id = :cable_id
+                )
+                SELECT COALESCE(SUM(len_m), 0) + (:k * COALESCE(COUNT(*), 0))
+                FROM dirs
+             )
+             WHERE id = :cable_id",
+            ['cable_id' => $cableId, 'k' => $k]
         );
     }
 

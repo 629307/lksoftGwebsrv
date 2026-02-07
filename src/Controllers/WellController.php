@@ -208,14 +208,28 @@ class WellController extends BaseController
             'depth', 'material', 'installation_date', 'notes'
         ]);
 
-        // Формирование номера (авто по диапазону собственника + опциональный суффикс)
+        // Формирование номера:
+        // <Код номера>-<Код собственника>-<seq>(-суффикс)
+        // Исключение: для "вводных" колодцев (kind.code = 'input') seq начинается с настройки input_well_number_start
         $suffix = $this->request->input('number_suffix');
+        $minSeq = 1;
+        try {
+            $kindCode = $this->getObjectKindCodeById((int) ($data['kind_id'] ?? 0));
+            if (strtolower(trim($kindCode)) === 'input') {
+                $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
+            }
+        } catch (\Throwable $e) {
+            // если не удалось определить kind — используем дефолт
+            $minSeq = 1;
+        }
         $data['number'] = $this->buildAutoNumber(
             'wells',
             (int) ($data['type_id'] ?? 0),
             (int) ($data['owner_id'] ?? 0),
             null,
-            ($suffix !== null) ? (string) $suffix : null
+            ($suffix !== null) ? (string) $suffix : null,
+            null,
+            $minSeq
         );
 
         // Убедиться, что все необязательные поля присутствуют (даже если null)
