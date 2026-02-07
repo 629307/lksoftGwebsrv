@@ -5237,7 +5237,8 @@ const App = {
             const opt = Array.from(typeSelect.options).find(o => o.dataset && o.dataset.code === objectTypeCode);
             if (opt) {
                 typeSelect.value = opt.value;
-                this.onCableObjectTypeChange();
+                // важно: триггерим change, чтобы обновился префикс номера + переключились блоки формы
+                typeSelect.dispatchEvent(new Event('change'));
             }
         }
 
@@ -5272,7 +5273,8 @@ const App = {
             const opt = Array.from(typeSelect.options).find(o => o.dataset && o.dataset.code === 'cable_duct');
             if (opt) {
                 typeSelect.value = opt.value;
-                this.onCableObjectTypeChange();
+                // важно: триггерим change, чтобы обновился префикс номера + переключились блоки формы
+                typeSelect.dispatchEvent(new Event('change'));
             }
         }
 

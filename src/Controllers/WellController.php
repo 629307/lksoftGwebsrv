@@ -415,6 +415,40 @@ class WellController extends BaseController
                        AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
                     ['uid' => (int) ($user['id'] ?? 0), 'wid' => $wellId]
                 );
+
+                // Пересчитываем "Длина расч. (м)" для duct-кабелей, маршрут которых содержит затронутые направления.
+                // Формула: SUM(длин направлений) + K * COUNT(уникальных направлений), K = настройка cable_in_well_length_m
+                $k = (float) $this->getAppSetting('cable_in_well_length_m', 2);
+                $this->db->query(
+                    "WITH affected_cables AS (
+                        SELECT DISTINCT crc.cable_id
+                        FROM channel_directions cd
+                        JOIN cable_channels ch ON ch.direction_id = cd.id
+                        JOIN cable_route_channels crc ON crc.cable_channel_id = ch.id
+                        WHERE (cd.start_well_id = :wid OR cd.end_well_id = :wid)
+                    ),
+                    dirs AS (
+                        SELECT DISTINCT crc.cable_id,
+                               cd.id as dir_id,
+                               COALESCE(cd.length_m, 0) as len_m
+                        FROM affected_cables ac
+                        JOIN cable_route_channels crc ON crc.cable_id = ac.cable_id
+                        JOIN cable_channels ch ON crc.cable_channel_id = ch.id
+                        JOIN channel_directions cd ON ch.direction_id = cd.id
+                    ),
+                    agg AS (
+                        SELECT cable_id,
+                               COALESCE(SUM(len_m), 0) as sum_len,
+                               COALESCE(COUNT(*), 0) as cnt_dirs
+                        FROM dirs
+                        GROUP BY cable_id
+                    )
+                    UPDATE cables c
+                    SET length_calculated = (a.sum_len + (:k * a.cnt_dirs))
+                    FROM agg a
+                    WHERE c.id = a.cable_id",
+                    ['wid' => $wellId, 'k' => $k]
+                );
             }
 
             $this->db->commit();
