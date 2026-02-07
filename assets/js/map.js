@@ -472,6 +472,10 @@ const MapManager = {
         // Если активен режим группы — слои загружаются через loadGroup()
         if (this.groupMode) return;
 
+        // Сохраняем текущий вид карты (чтобы обновление слоёв не влияло на зум/центр)
+        const curCenter = this.map ? this.map.getCenter() : null;
+        const curZoom = this.map ? this.map.getZoom() : null;
+
         // Фильтр по контракту: показываем только колодцы + кабели (направления/столбики не показываем)
         const contractOnly = !!this.filters?.contract_id;
         if (contractOnly) {
@@ -499,6 +503,11 @@ const MapManager = {
         console.log(`Загружено слоёв: ${loaded}/${results.length}`);
         
         // Не подгоняем автоматически (фиксированный стартовый зум/центр по ТЗ)
+        try {
+            if (this.map && curCenter && typeof curZoom === 'number') {
+                this.map.setView(curCenter, curZoom, { animate: false });
+            }
+        } catch (_) {}
     },
 
     /**

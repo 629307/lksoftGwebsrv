@@ -76,7 +76,9 @@ class MarkerPostController extends BaseController
         if ($where) {
             $sql .= " WHERE {$where}";
         }
-        $sql .= " ORDER BY mp.number LIMIT :limit OFFSET :offset";
+        $order = strtolower((string) $this->request->query('order', 'asc'));
+        if (!in_array($order, ['asc', 'desc'], true)) $order = 'asc';
+        $sql .= " ORDER BY mp.number {$order} LIMIT :limit OFFSET :offset";
         
         $params['limit'] = $pagination['limit'];
         $params['offset'] = $pagination['offset'];

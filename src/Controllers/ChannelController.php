@@ -141,7 +141,9 @@ class ChannelController extends BaseController
         if ($where) {
             $sql .= " WHERE {$where}";
         }
-        $sql .= " ORDER BY cd.number LIMIT :limit OFFSET :offset";
+        $order = strtolower((string) $this->request->query('order', 'asc'));
+        if (!in_array($order, ['asc', 'desc'], true)) $order = 'asc';
+        $sql .= " ORDER BY cd.number {$order} LIMIT :limit OFFSET :offset";
         
         $params['limit'] = $pagination['limit'];
         $params['offset'] = $pagination['offset'];
@@ -1108,6 +1110,8 @@ class ChannelController extends BaseController
         
         $filters = $this->buildFilters([
             'direction_id' => 'cc.direction_id',
+            'owner_id' => 'cd.owner_id',
+            'type_id' => 'cd.type_id',
             'kind_id' => 'cc.kind_id',
             'status_id' => 'cc.status_id',
             '_search' => ['cc.channel_number::text', 'cc.notes', 'cd.number'],
@@ -1143,7 +1147,9 @@ class ChannelController extends BaseController
         if ($where) {
             $sql .= " WHERE {$where}";
         }
-        $sql .= " ORDER BY cd.number, cc.channel_number LIMIT :limit OFFSET :offset";
+        $order = strtolower((string) $this->request->query('order', 'asc'));
+        if (!in_array($order, ['asc', 'desc'], true)) $order = 'asc';
+        $sql .= " ORDER BY cd.number {$order}, cc.channel_number {$order} LIMIT :limit OFFSET :offset";
         
         $params['limit'] = $pagination['limit'];
         $params['offset'] = $pagination['offset'];

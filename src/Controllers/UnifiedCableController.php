@@ -63,7 +63,9 @@ class UnifiedCableController extends BaseController
         if ($where) {
             $sql .= " WHERE {$where}";
         }
-        $sql .= " ORDER BY c.number LIMIT :limit OFFSET :offset";
+        $order = strtolower((string) $this->request->query('order', 'asc'));
+        if (!in_array($order, ['asc', 'desc'], true)) $order = 'asc';
+        $sql .= " ORDER BY c.number {$order} LIMIT :limit OFFSET :offset";
         
         $params['limit'] = $pagination['limit'];
         $params['offset'] = $pagination['offset'];

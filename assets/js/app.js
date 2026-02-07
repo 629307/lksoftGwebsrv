@@ -12,6 +12,7 @@ const App = {
     lastReferenceInReferencesPanel: null,
     settings: {},
     pagination: { page: 1, limit: 50, total: 0 },
+    objectsOrder: 'asc', // A-Z по умолчанию
     incidentDraftRelatedObjects: [],
     selectedObjectIds: new Set(),
     _contractsPanelLoaded: false,
@@ -358,6 +359,14 @@ const App = {
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
         document.getElementById('btn-export').addEventListener('click', () => this.exportObjects());
         document.getElementById('btn-delete-selected')?.addEventListener('click', () => this.deleteSelectedObjects());
+        document.getElementById('objects-filter-owner')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
+        document.getElementById('objects-filter-type')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
 
         // Инциденты
         document.getElementById('btn-add-incident').addEventListener('click', () => this.showAddIncidentModal());
@@ -1003,6 +1012,16 @@ const App = {
             }
         }
 
+        // Фильтры для остальных вкладок
+        const objFiltersRow = document.getElementById('objects-filters-row');
+        if (objFiltersRow) {
+            const show = tab !== 'unified_cables' && tab !== 'groups';
+            objFiltersRow.classList.toggle('hidden', !show);
+            if (show) {
+                this.loadObjectsListFilters(tab).catch(() => {});
+            }
+        }
+
         // Кнопка "Загрузить" доступна только для вкладки "Колодцы"
         const importBtn = document.getElementById('btn-import');
         if (importBtn) {
@@ -1010,6 +1029,52 @@ const App = {
         }
 
         this.loadObjects();
+    },
+
+    async loadObjectsListFilters(tab) {
+        const typeSelect = document.getElementById('objects-filter-type');
+        const ownerSelect = document.getElementById('objects-filter-owner');
+        if (!typeSelect || !ownerSelect) return;
+
+        // если уже заполнено — не перезагружаем
+        if (ownerSelect.options.length > 1 && typeSelect.options.length > 1 && typeSelect.dataset?.forTab === tab) return;
+
+        typeSelect.dataset.forTab = tab;
+        typeSelect.innerHTML = '<option value="">Вид объекта: все</option>';
+        ownerSelect.innerHTML = '<option value="">Собственник: все</option>';
+
+        try {
+            const [ownersResp, typesResp, kindsResp] = await Promise.all([
+                API.references.all('owners'),
+                API.references.all('object_types'),
+                API.references.all('object_kinds'),
+            ]);
+
+            if (ownersResp?.success) {
+                ownerSelect.innerHTML = '<option value="">Собственник: все</option>' +
+                    ownersResp.data.map(o => `<option value="${o.id}">${this.escapeHtml(o.name || '')}</option>`).join('');
+            }
+
+            const objectTypes = typesResp?.data || [];
+            const kinds = kindsResp?.data || [];
+
+            // Для вкладок: фильтр "Вид объекта" трактуем как "Тип" (object_kinds) для конкретного вида (object_types.code)
+            let objTypeCode = '';
+            if (tab === 'wells') objTypeCode = 'well';
+            else if (tab === 'directions') objTypeCode = 'channel';
+            else if (tab === 'channels') objTypeCode = 'channel';
+            else if (tab === 'markers') objTypeCode = 'marker';
+
+            const ot = (objectTypes || []).find(t => String(t.code || '') === objTypeCode);
+            const otId = ot?.id;
+            const filteredKinds = otId ? (kinds || []).filter(k => String(k.object_type_id) === String(otId)) : [];
+            filteredKinds.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
+
+            typeSelect.innerHTML = '<option value="">Вид объекта: все</option>' +
+                filteredKinds.map(k => `<option value="${k.id}">${this.escapeHtml(k.name || '')}</option>`).join('');
+        } catch (_) {
+            // ignore
+        }
     },
 
     async loadCableListFilters() {
@@ -1053,6 +1118,11 @@ const App = {
             page: this.pagination.page,
             limit: this.pagination.limit,
         };
+
+        // Сортировка (A-Z / Z-A) — бэкенд сортирует по основному полю таба
+        if (this.objectsOrder) {
+            params.order = this.objectsOrder;
+        }
         
         // Добавляем search только если он не пустой
         if (search) {
@@ -1067,6 +1137,20 @@ const App = {
             if (ot) params.object_type_id = ot;
             if (owner) params.owner_id = owner;
             if (contract) params.contract_id = contract;
+        } else if (this.currentTab !== 'groups') {
+            // Общие фильтры по вкладкам (кроме кабелей/ТУ)
+            const owner = document.getElementById('objects-filter-owner')?.value;
+            const kind = document.getElementById('objects-filter-type')?.value;
+            if (owner) params.owner_id = owner;
+            if (kind) {
+                // Для большинства вкладок фильтруем по kind_id (object_kinds)
+                if (this.currentTab === 'wells' || this.currentTab === 'markers' || this.currentTab === 'channels') {
+                    params.kind_id = kind;
+                } else if (this.currentTab === 'directions') {
+                    // У направлений нет kind_id — используем type_id (object_types), но список формируется из object_kinds,
+                    // поэтому здесь фильтр не применяем.
+                }
+            }
         }
 
         try {
@@ -1409,6 +1493,15 @@ const App = {
         const { page, pages, total } = this.pagination;
 
         let html = '';
+
+        const limit = parseInt(this.pagination.limit || 50, 10) || 50;
+        const order = (this.objectsOrder === 'desc') ? 'desc' : 'asc';
+        const limits = [20, 50, 100, 200];
+        const limitOptions = limits.map(v => `<option value="${v}" ${v === limit ? 'selected' : ''}>${v}</option>`).join('');
+        const orderOptions = `
+            <option value="asc" ${order === 'asc' ? 'selected' : ''}>A-Z</option>
+            <option value="desc" ${order === 'desc' ? 'selected' : ''}>Z-A</option>
+        `;
         
         if (page > 1) {
             html += `<button type="button" onclick="App.goToPage(${page - 1}); return false;"><i class="fas fa-chevron-left"></i></button>`;
@@ -1422,7 +1515,42 @@ const App = {
             html += `<button type="button" onclick="App.goToPage(${page + 1}); return false;"><i class="fas fa-chevron-right"></i></button>`;
         }
 
-        container.innerHTML = html;
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <div style="display:flex; gap:6px; align-items:center;">
+                    ${html}
+                </div>
+                <div style="margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:6px; color: var(--text-secondary);">
+                        Сортировка
+                        <select id="objects-order-select" onchange="App.setObjectsOrder(this.value)">
+                            ${orderOptions}
+                        </select>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; color: var(--text-secondary);">
+                        На странице
+                        <select id="objects-limit-select" onchange="App.setObjectsLimit(this.value)">
+                            ${limitOptions}
+                        </select>
+                    </label>
+                </div>
+            </div>
+        `;
+    },
+
+    setObjectsLimit(value) {
+        const v = parseInt(value || 50, 10);
+        if (!v || v < 1) return;
+        this.pagination.limit = v;
+        this.pagination.page = 1;
+        this.loadObjects();
+    },
+
+    setObjectsOrder(value) {
+        const v = (String(value || 'asc').toLowerCase() === 'desc') ? 'desc' : 'asc';
+        this.objectsOrder = v;
+        this.pagination.page = 1;
+        this.loadObjects();
     },
 
     /**
