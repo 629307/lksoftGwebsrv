@@ -395,22 +395,6 @@ class MarkerPostController extends BaseController
                 $this->db->update('marker_posts', $data, 'id = :id', ['id' => $postId]);
             }
 
-            // Если изменён собственник — обновляем номер по новой схеме (сохраняем seq/суффикс, если возможно)
-            if (array_key_exists('owner_id', $data) && (int) $data['owner_id'] !== (int) $oldPost['owner_id']) {
-                $suffix = $this->parseNumberSuffixOnly((string) ($oldPost['number'] ?? ''));
-                $typeId = (int) ($oldPost['type_id'] ?? ($data['type_id'] ?? 0));
-
-                $newNumber = $this->buildAutoNumber(
-                    'marker_posts',
-                    $typeId,
-                    (int) $data['owner_id'],
-                    null,
-                    $suffix ? (string) $suffix : null,
-                    $postId
-                );
-                $this->db->update('marker_posts', ['number' => $newNumber], 'id = :id', ['id' => $postId]);
-            }
-
             $this->db->commit();
         } catch (\PDOException $e) {
             $this->db->rollback();

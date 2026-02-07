@@ -1037,6 +1037,8 @@ const MapManager = {
 
         // "Набить колодец": выбираем направление
         if (this.stuffWellMode) {
+            // запоминаем координаты клика, чтобы новый колодец создавался в точке клика
+            try { this.lastClickLatLng = e?.latlng || null; } catch (_) { this.lastClickLatLng = null; }
             const pick = (h) => {
                 if (!h) return;
                 if (h.objectType !== 'channel_direction') {
@@ -1046,7 +1048,10 @@ const MapManager = {
                 this.stuffWellMode = false;
                 if (this.map) this.map.getContainer().style.cursor = '';
                 document.getElementById('btn-stuff-well-map')?.classList?.toggle('active', false);
-                try { App.openStuffWellFromDirection?.(h.properties); } catch (_) {}
+                try {
+                    const props = Object.assign({}, (h.properties || {}), { __clickLatLng: this.lastClickLatLng });
+                    App.openStuffWellFromDirection?.(props);
+                } catch (_) {}
             };
 
             if (hits.length <= 1) {
@@ -1099,7 +1104,10 @@ const MapManager = {
         this.stuffWellMode = false;
         if (this.map) this.map.getContainer().style.cursor = '';
         document.getElementById('btn-stuff-well-map')?.classList?.toggle('active', false);
-        try { App.openStuffWellFromDirection?.(h.properties); } catch (_) {}
+        try {
+            const props = Object.assign({}, (h.properties || {}), { __clickLatLng: this.lastClickLatLng || null });
+            App.openStuffWellFromDirection?.(props);
+        } catch (_) {}
     },
 
     toggleStuffWellMode() {

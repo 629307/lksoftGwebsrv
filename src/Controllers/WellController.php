@@ -337,8 +337,9 @@ class WellController extends BaseController
             Response::error('Колодец не найден', 404);
         }
 
+        // Номер при редактировании не изменяем
         $data = $this->request->only([
-            'number', 'owner_id', 'type_id', 'kind_id', 'status_id',
+            'owner_id', 'type_id', 'kind_id', 'status_id',
             'depth', 'material', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);
@@ -348,36 +349,6 @@ class WellController extends BaseController
 
         try {
             $this->db->beginTransaction();
-
-            // Номер колодца (новая схема):
-            // <Код номера (object_types.number_code)>-<Код собственника>-<число>(-суффикс)
-            $ownerIdOld = (int) ($oldWell['owner_id'] ?? 0);
-            $ownerIdNew = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : $ownerIdOld;
-            $typeId = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldWell['type_id'] ?? 0);
-
-            $suffixIncoming = $this->request->input('number_suffix');
-            $numberIncoming = array_key_exists('number', $data) ? trim((string) $data['number']) : null;
-
-            $suffix =
-                ($suffixIncoming !== null && $suffixIncoming !== '')
-                    ? (string) $suffixIncoming
-                    : $this->parseNumberSuffixOnly((string) ($oldWell['number'] ?? ''));
-
-            $shouldRebuildNumber =
-                ($ownerIdNew > 0 && $ownerIdNew !== $ownerIdOld) ||
-                ($suffixIncoming !== null) ||
-                ($numberIncoming !== null);
-
-            if ($shouldRebuildNumber) {
-                $data['number'] = $this->buildAutoNumber(
-                    'wells',
-                    $typeId,
-                    $ownerIdNew,
-                    null,
-                    $suffix !== '' ? (string) $suffix : null,
-                    $wellId
-                );
-            }
 
             // Обновляем координаты если переданы
             $longitude = $this->request->input('longitude');
@@ -429,21 +400,6 @@ class WellController extends BaseController
                        AND cd.end_well_id = ew.id
                        AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
                     ['uid' => (int) ($user['id'] ?? 0), 'wid' => $wellId]
-                );
-            }
-
-            // Если изменён номер колодца — обновляем номера направлений, где он участвует
-            $newNumber = $data['number'] ?? ($oldWell['number'] ?? null);
-            if ($newNumber !== null && (string) $newNumber !== (string) ($oldWell['number'] ?? '')) {
-                $this->db->query(
-                    "UPDATE channel_directions cd
-                     SET number = CONCAT(sw.number, '-', ew.number),
-                         updated_by = :uid
-                     FROM wells sw, wells ew
-                     WHERE cd.start_well_id = sw.id
-                       AND cd.end_well_id = ew.id
-                       AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
-                    ['uid' => $user['id'], 'wid' => $wellId]
                 );
             }
 

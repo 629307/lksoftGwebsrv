@@ -1448,20 +1448,13 @@ const App = {
             let formHtml = '';
 
             if (type === 'wells') {
-                const rawNumber = (obj.number || '').toString();
-                const parts = rawNumber.split('-');
-                const sfx = (parts[3] || '').toString();
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <div style="display:flex; gap:8px; align-items:center;">
-                                <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
-                                <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" value="${this.escapeHtml(sfx)}" placeholder="Суффикс (до 5)" style="flex: 1;">
-                            </div>
-                            <div id="well-number-hint" class="text-muted" style="margin-top:6px;"></div>
+                            <input type="text" value="${this.escapeHtml(obj.number || '')}" disabled style="background: var(--bg-tertiary);">
+                            <p class="text-muted">Номер не изменяется при редактировании.</p>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1496,20 +1489,13 @@ const App = {
                     </form>
                 `;
             } else if (type === 'markers') {
-                const rawNumber = (obj.number || '').toString();
-                const parts = rawNumber.split('-');
-                const sfx = (parts[3] || '').toString();
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <div style="display:flex; gap:8px; align-items:center;">
-                                <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
-                                <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" value="${this.escapeHtml(sfx)}" placeholder="Суффикс (до 5)" style="flex: 1;">
-                            </div>
-                            <p class="text-muted">Номер пересобирается автоматически при смене собственника (суффикс сохраняется).</p>
+                            <input type="text" value="${this.escapeHtml(obj.number || '')}" disabled style="background: var(--bg-tertiary);">
+                            <p class="text-muted">Номер не изменяется при редактировании.</p>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1826,10 +1812,7 @@ const App = {
             // Загружаем справочники и устанавливаем значения
             await this.loadModalSelectsWithValues(type);
 
-            // Подсказка/валидация номера колодца при редактировании (уникальность)
-            if (type === 'wells') {
-                this.setupWellEditNumberValidation(id);
-            }
+            // Номер при редактировании не меняется (валидация не требуется)
 
             // Подгружаем фотографии (если блок есть)
             if (photoTable) {
@@ -4557,6 +4540,8 @@ const App = {
                     if (matchingType) {
                         typeSelect.value = matchingType.id;
                         this.filterKindsByType(matchingType.id, kinds.data);
+                        // важно: инициируем обновление UI (в т.ч. префикса номера)
+                        typeSelect.dispatchEvent(new Event('change'));
                     }
                 } else {
                     pickDefault(typeSelect);
@@ -4906,15 +4891,21 @@ const App = {
      * Карта: "Набить колодец" по выбранному направлению
      */
     async openStuffWellFromDirection(directionProps) {
-        const directionId = directionProps?.id;
+        // directionProps может прийти как properties GeoJSON или иной объект
+        const rawId =
+            (directionProps && (directionProps.id ?? directionProps.direction_id ?? directionProps.directionId)) ??
+            directionProps;
+        const directionId = parseInt(rawId || 0, 10);
         if (!directionId) {
             this.notify('Не удалось определить направление', 'error');
             return;
         }
 
         // Открываем модалку создания колодца, но в footer вызываем специальный submit
-        this._stuffWellDirectionId = parseInt(directionId, 10);
-        this.showAddObjectModal('wells');
+        this._stuffWellDirectionId = directionId;
+        const lat = directionProps?.__clickLatLng?.lat ?? null;
+        const lng = directionProps?.__clickLatLng?.lng ?? null;
+        this.showAddObjectModal('wells', lat, lng);
 
         // Подменяем footer кнопки
         const footer = document.getElementById('modal-footer');

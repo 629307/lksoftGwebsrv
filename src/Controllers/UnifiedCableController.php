@@ -615,22 +615,6 @@ class UnifiedCableController extends BaseController
                 $this->db->update('cables', $data, 'id = :id', ['id' => $cableId]);
             }
 
-            // Если изменён собственник — обновляем номер по новой схеме (сохраняем seq/суффикс, если возможно)
-            if (array_key_exists('owner_id', $data) && (int) $data['owner_id'] !== (int) ($oldCable['owner_id'] ?? 0)) {
-                $suffix = $this->parseNumberSuffixOnly((string) ($oldCable['number'] ?? ''));
-                $typeId = (int) ($oldCable['object_type_id'] ?? 0);
-
-                $newNumber = $this->buildAutoNumber(
-                    'cables',
-                    $typeId,
-                    (int) $data['owner_id'],
-                    null,
-                    $suffix ? (string) $suffix : null,
-                    $cableId
-                );
-                $this->db->update('cables', ['number' => $newNumber], 'id = :id', ['id' => $cableId]);
-            }
-
             $this->db->commit();
 
             $cable = $this->db->fetch(
