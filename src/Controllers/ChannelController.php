@@ -218,6 +218,205 @@ class ChannelController extends BaseController
     }
 
     /**
+     * GET /api/channel-directions/geojson-by-ids?ids=1,2,3
+     * GeoJSON направлений по списку id (для подсветки)
+     */
+    public function geojsonByIds(): void
+    {
+        $raw = (string) $this->request->query('ids', '');
+        $ids = array_values(array_filter(array_map('intval', preg_split('/\s*,\s*/', trim($raw))), fn($v) => $v > 0));
+        if (!$ids) {
+            Response::geojson([], ['layer' => 'channel_directions', 'count' => 0]);
+        }
+
+        $user = Auth::user();
+        $uid = (int) ($user['id'] ?? 0);
+
+        $sql = "SELECT cd.id, cd.number,
+                       ST_AsGeoJSON(cd.geom_wgs84)::json as geometry,
+                       cd.owner_id, cd.type_id, cd.status_id, cd.length_m,
+                       o.name as owner_name, o.short_name as owner_short_name, COALESCE(uoc.color, o.color) as owner_color,
+                       ot.name as type_name, ot.color as type_color,
+                       os.code as status_code, os.name as status_name, os.color as status_color,
+                       sw.number as start_well,
+                       ew.number as end_well,
+                       (SELECT COUNT(*) FROM cable_channels WHERE direction_id = cd.id) as channels
+                FROM channel_directions cd
+                LEFT JOIN owners o ON cd.owner_id = o.id
+                LEFT JOIN user_owner_colors uoc ON uoc.owner_id = o.id AND uoc.user_id = :uid
+                LEFT JOIN object_types ot ON cd.type_id = ot.id
+                LEFT JOIN object_status os ON cd.status_id = os.id
+                LEFT JOIN wells sw ON cd.start_well_id = sw.id
+                LEFT JOIN wells ew ON cd.end_well_id = ew.id
+                WHERE cd.geom_wgs84 IS NOT NULL
+                  AND cd.id IN (" . implode(',', $ids) . ")";
+
+        $data = $this->db->fetchAll($sql, ['uid' => $uid]);
+
+        $features = [];
+        foreach ($data as $row) {
+            $geometry = is_string($row['geometry']) ? json_decode($row['geometry'], true) : $row['geometry'];
+            unset($row['geometry']);
+            if (empty($geometry) || !isset($geometry['type'])) continue;
+            $features[] = [
+                'type' => 'Feature',
+                'geometry' => $geometry,
+                'properties' => $row,
+            ];
+        }
+
+        Response::geojson($features, ['layer' => 'channel_directions', 'count' => count($features)]);
+    }
+
+    /**
+     * GET /api/channel-directions/shortest-path?start_well_id=..&end_well_id=..
+     * Рассчитать кратчайший путь по графу направлений (вес = length_m)
+     */
+    public function shortestPath(): void
+    {
+        $start = (int) $this->request->query('start_well_id', 0);
+        $end = (int) $this->request->query('end_well_id', 0);
+        if ($start <= 0 || $end <= 0) {
+            Response::error('Не заданы start_well_id / end_well_id', 422);
+        }
+        if ($start === $end) {
+            Response::success([
+                'start_well_id' => $start,
+                'end_well_id' => $end,
+                'direction_ids' => [],
+                'directions' => [],
+                'total_length_m' => 0,
+            ]);
+        }
+
+        $rows = $this->db->fetchAll(
+            "SELECT id, start_well_id, end_well_id,
+                    COALESCE(length_m, ROUND(ST_Length(geom_wgs84::geography)::numeric, 2), 0) as w
+             FROM channel_directions
+             WHERE start_well_id IS NOT NULL AND end_well_id IS NOT NULL"
+        );
+
+        // adjacency list
+        $adj = [];
+        foreach ($rows as $r) {
+            $dirId = (int) ($r['id'] ?? 0);
+            $a = (int) ($r['start_well_id'] ?? 0);
+            $b = (int) ($r['end_well_id'] ?? 0);
+            $w = (float) ($r['w'] ?? 0);
+            if ($dirId <= 0 || $a <= 0 || $b <= 0) continue;
+            if ($w <= 0) $w = 0.0001; // чтобы не ломать алгоритм
+            $adj[$a][] = ['to' => $b, 'dir_id' => $dirId, 'w' => $w];
+            $adj[$b][] = ['to' => $a, 'dir_id' => $dirId, 'w' => $w];
+        }
+
+        if (empty($adj[$start]) || empty($adj[$end])) {
+            Response::error('Путь не найден', 404);
+        }
+
+        $dist = [];
+        $prev = []; // node => ['node'=>prevNode, 'dir_id'=>dirId]
+        $visited = [];
+
+        $pq = new \SplPriorityQueue();
+        $pq->setExtractFlags(\SplPriorityQueue::EXTR_BOTH);
+        $dist[$start] = 0.0;
+        $pq->insert($start, 0.0);
+
+        while (!$pq->isEmpty()) {
+            $cur = $pq->extract();
+            $u = (int) $cur['data'];
+            if (isset($visited[$u])) continue;
+            $visited[$u] = true;
+            if ($u === $end) break;
+            $du = (float) ($dist[$u] ?? INF);
+            foreach (($adj[$u] ?? []) as $e) {
+                $v = (int) $e['to'];
+                if (isset($visited[$v])) continue;
+                $alt = $du + (float) $e['w'];
+                if (!isset($dist[$v]) || $alt < (float) $dist[$v]) {
+                    $dist[$v] = $alt;
+                    $prev[$v] = ['node' => $u, 'dir_id' => (int) $e['dir_id']];
+                    // SplPriorityQueue — max-heap, поэтому используем отрицательное расстояние
+                    $pq->insert($v, -$alt);
+                }
+            }
+        }
+
+        if (!isset($dist[$end]) || !isset($prev[$end])) {
+            Response::error('Путь не найден', 404);
+        }
+
+        // reconstruct direction ids
+        $directionIdsRev = [];
+        $node = $end;
+        while ($node !== $start) {
+            $p = $prev[$node] ?? null;
+            if (!$p) break;
+            $directionIdsRev[] = (int) ($p['dir_id'] ?? 0);
+            $node = (int) ($p['node'] ?? 0);
+            if ($node <= 0) break;
+        }
+        $directionIds = array_values(array_filter(array_reverse($directionIdsRev), fn($v) => $v > 0));
+        if (!$directionIds) {
+            Response::error('Путь не найден', 404);
+        }
+
+        // direction details
+        $dirMap = [];
+        $dirRows = $this->db->fetchAll(
+            "SELECT cd.id, cd.number, cd.length_m, cd.start_well_id, cd.end_well_id
+             FROM channel_directions cd
+             WHERE cd.id IN (" . implode(',', array_map('intval', $directionIds)) . ")"
+        );
+        foreach ($dirRows as $dr) {
+            $dirMap[(int) $dr['id']] = $dr;
+        }
+
+        // channels per direction
+        $chRows = $this->db->fetchAll(
+            "SELECT cc.id, cc.direction_id, cc.channel_number
+             FROM cable_channels cc
+             WHERE cc.direction_id IN (" . implode(',', array_map('intval', $directionIds)) . ")
+             ORDER BY cc.direction_id, cc.channel_number"
+        );
+        $channelsByDir = [];
+        foreach ($chRows as $cr) {
+            $did = (int) ($cr['direction_id'] ?? 0);
+            if ($did <= 0) continue;
+            if (!isset($channelsByDir[$did])) $channelsByDir[$did] = [];
+            $channelsByDir[$did][] = [
+                'id' => (int) ($cr['id'] ?? 0),
+                'channel_number' => (int) ($cr['channel_number'] ?? 0),
+            ];
+        }
+
+        $directionsOut = [];
+        $total = 0.0;
+        foreach ($directionIds as $did) {
+            $row = $dirMap[$did] ?? null;
+            if (!$row) continue;
+            $len = (float) ($row['length_m'] ?? 0);
+            $total += $len;
+            $directionsOut[] = [
+                'id' => (int) $row['id'],
+                'number' => (string) ($row['number'] ?? ''),
+                'length_m' => $len,
+                'start_well_id' => (int) ($row['start_well_id'] ?? 0),
+                'end_well_id' => (int) ($row['end_well_id'] ?? 0),
+                'channels' => $channelsByDir[$did] ?? [],
+            ];
+        }
+
+        Response::success([
+            'start_well_id' => $start,
+            'end_well_id' => $end,
+            'direction_ids' => $directionIds,
+            'directions' => $directionsOut,
+            'total_length_m' => round($total, 2),
+        ]);
+    }
+
+    /**
      * GET /api/channel-directions/{id}
      * Получение направления
      */

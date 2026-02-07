@@ -489,6 +489,10 @@ const App = {
                         mm.toggleRelocateDuctCableMode?.();
                         document.getElementById('btn-relocate-duct-cable-map')?.classList?.toggle('active', false);
                     }
+                    if (mm.shortestDuctCableMode) {
+                        mm.toggleShortestDuctCableMode?.();
+                        document.getElementById('btn-add-duct-cable-shortest-map')?.classList?.toggle('active', false);
+                    }
                 } catch (_) {}
             });
         }
@@ -543,6 +547,12 @@ const App = {
         document.getElementById('btn-add-ground-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_ground'));
         document.getElementById('btn-add-aerial-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_aerial'));
         document.getElementById('btn-add-duct-cable-map')?.addEventListener('click', () => MapManager.startAddDuctCableMode());
+        document.getElementById('btn-add-duct-cable-shortest-map')?.addEventListener('click', (e) => {
+            try {
+                MapManager.toggleShortestDuctCableMode?.();
+                e.currentTarget?.classList?.toggle('active', !!MapManager.shortestDuctCableMode);
+            } catch (_) {}
+        });
         document.getElementById('btn-relocate-duct-cable-map')?.addEventListener('click', (e) => {
             try {
                 MapManager.toggleRelocateDuctCableMode?.();
@@ -1647,6 +1657,9 @@ const App = {
                                 const lastNumber = channels.length ? channels[channels.length - 1].channel_number : null;
                                 return channels.length > 0 ? channels.map(ch => `
                                     <div class="channel-item" style="padding: 8px; border-bottom: 1px solid var(--border-color); display:flex; gap:8px; align-items:center;">
+                                        <button type="button" class="btn btn-sm btn-primary" title="Редактировать канал" onclick="App.showEditObjectModal('channels', ${ch.id})">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
                                         ${lastNumber !== null && ch.channel_number === lastNumber ? `
                                             <button type="button" class="btn btn-sm btn-danger" title="Удалить канал" onclick="App.deleteLastChannelFromDirection(${obj.id}, ${ch.id})">
                                                 <i class="fas fa-trash"></i>
@@ -4016,6 +4029,112 @@ const App = {
 
         if (results.failed) this.notify(`Удалено: ${results.ok}, ошибок: ${results.failed}`, 'warning');
         else this.notify(`Удалено: ${results.ok}`, 'success');
+    },
+
+    async previewShortestDuctCablePath(startWell, endWell) {
+        const sId = parseInt(startWell?.id || 0, 10);
+        const eId = parseInt(endWell?.id || 0, 10);
+        if (!sId || !eId) return;
+
+        try {
+            const resp = await API.channelDirections.shortestPath(sId, eId);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const data = resp?.data || resp || {};
+            const ids = Array.isArray(data.direction_ids) ? data.direction_ids : [];
+
+            // Подсветим путь
+            try {
+                if (ids.length) {
+                    const fc = await API.channelDirections.geojsonByIds(ids);
+                    if (fc && fc.type === 'FeatureCollection') {
+                        MapManager.highlightFeatureCollection(fc);
+                    }
+                } else {
+                    MapManager.clearHighlight?.();
+                }
+            } catch (_) {}
+
+            const total = Number(data.total_length_m || 0).toFixed(2);
+            const dirsCount = (Array.isArray(data.directions) ? data.directions.length : 0);
+            const content = `
+                <div class="info-row"><span class="info-label">Старт:</span> <span class="info-value">${this.escapeHtml(startWell?.number || String(sId))}</span></div>
+                <div class="info-row"><span class="info-label">Конец:</span> <span class="info-value">${this.escapeHtml(endWell?.number || String(eId))}</span></div>
+                <div class="info-row"><span class="info-label">Направлений:</span> <span class="info-value">${dirsCount}</span></div>
+                <div class="info-row"><span class="info-label">Длина (м):</span> <span class="info-value">${total}</span></div>
+                <p class="text-muted" style="margin-top:10px;">Путь подсвечен на карте. Нажмите “Создать”, чтобы выбрать каналы и открыть создание кабеля.</p>
+            `;
+            const footer = `
+                <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="App.createDuctCableFromShortestPath()">
+                    <i class="fas fa-plus"></i> Создать кабель
+                </button>
+            `;
+            this._shortestDuctCablePath = data;
+            this.showModal('Кабель в канализации по кратчайшему пути', content, footer);
+        } catch (e) {
+            this.notify(e?.message || 'Не удалось рассчитать путь', 'error');
+        }
+    },
+
+    async createDuctCableFromShortestPath() {
+        const data = this._shortestDuctCablePath || null;
+        if (!data) return;
+        const dirs = Array.isArray(data.directions) ? data.directions : [];
+        if (!dirs.length) {
+            this.notify('Путь пустой', 'warning');
+            return;
+        }
+
+        // Канал на каждое направление
+        const selected = [];
+        for (const d of dirs) {
+            const chs = Array.isArray(d.channels) ? d.channels : [];
+            if (!chs.length) {
+                this.notify(`У направления ${d.number || d.id} нет каналов`, 'error');
+                return;
+            }
+            if (chs.length === 1) {
+                selected.push(parseInt(chs[0].id, 10));
+                continue;
+            }
+
+            const picked = await new Promise((resolve) => {
+                this._resolveShortestChannelPick = resolve;
+                const content = `
+                    <div class="text-muted" style="margin-bottom:8px;">Направление: <strong>${this.escapeHtml(d.number || String(d.id))}</strong></div>
+                    <div style="max-height: 60vh; overflow:auto;">
+                        ${(chs || []).map(ch => `
+                            <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="App.pickShortestPathChannel(${parseInt(ch.id, 10)})">
+                                Канал ${ch.channel_number}
+                            </button>
+                        `).join('')}
+                    </div>
+                `;
+                const footer = `<button class="btn btn-secondary" onclick="App.cancelShortestPathChannelPick()">Отмена</button>`;
+                this.showModal('Выберите канал направления', content, footer);
+            });
+            if (!picked) return; // cancelled
+            selected.push(parseInt(picked, 10));
+        }
+
+        this.hideModal();
+        this._shortestDuctCablePath = null;
+        this._resolveShortestChannelPick = null;
+        await this.showAddDuctCableModalFromMap(selected);
+    },
+
+    pickShortestPathChannel(id) {
+        const fn = this._resolveShortestChannelPick;
+        this._resolveShortestChannelPick = null;
+        this.hideModal();
+        if (typeof fn === 'function') fn(parseInt(id, 10));
+    },
+
+    cancelShortestPathChannelPick() {
+        const fn = this._resolveShortestChannelPick;
+        this._resolveShortestChannelPick = null;
+        this.hideModal();
+        if (typeof fn === 'function') fn(null);
     },
 
     // ========================

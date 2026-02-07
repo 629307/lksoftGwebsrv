@@ -193,6 +193,8 @@ $router->delete('/api/wells/{id}', [WellController::class, 'destroy'], ['auth'])
 // Направления каналов
 $router->get('/api/channel-directions', [ChannelController::class, 'index'], ['auth']);
 $router->get('/api/channel-directions/geojson', [ChannelController::class, 'geojson'], ['auth']);
+$router->get('/api/channel-directions/shortest-path', [ChannelController::class, 'shortestPath'], ['auth']);
+$router->get('/api/channel-directions/geojson-by-ids', [ChannelController::class, 'geojsonByIds'], ['auth']);
 $router->get('/api/channel-directions/export', [ChannelController::class, 'exportDirections'], ['auth']);
 $router->get('/api/channel-directions/{id}', [ChannelController::class, 'show'], ['auth']);
 $router->post('/api/channel-directions', [ChannelController::class, 'store'], ['auth']);

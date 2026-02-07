@@ -78,6 +78,11 @@ const MapManager = {
     movePointMarker: null,
     movePointPickCandidates: [],
 
+    // Режим "Создать кабель в канализации по кратчайшему пути"
+    shortestDuctCableMode: false,
+    shortestDuctCableStartWell: null, // { id, number }
+    shortestDuctCableEndWell: null,   // { id, number }
+
     // Цвета для слоёв
     colors: {
         wells: '#fa00fa',
@@ -1048,6 +1053,60 @@ const MapManager = {
             return;
         }
 
+        // "Создать кабель в канализации по кратчайшему пути"
+        if (this.shortestDuctCableMode) {
+            const wellHits = (hits || []).filter(h => h?.objectType === 'well');
+            const pickWell = (h) => {
+                if (!h) return;
+                const wid = parseInt(h?.properties?.id || 0, 10);
+                if (!wid) return;
+                const num = (h?.properties?.number || '').toString();
+                if (!this.shortestDuctCableStartWell) {
+                    this.shortestDuctCableStartWell = { id: wid, number: num };
+                    App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+                    return;
+                }
+                if (!this.shortestDuctCableEndWell) {
+                    if (wid === this.shortestDuctCableStartWell.id) {
+                        App.notify('Конечный колодец должен отличаться от начального', 'warning');
+                        return;
+                    }
+                    this.shortestDuctCableEndWell = { id: wid, number: num };
+                    // строим маршрут
+                    try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
+                    return;
+                }
+                // если уже выбраны оба — начинаем заново с нового старта
+                this.shortestDuctCableStartWell = { id: wid, number: num };
+                this.shortestDuctCableEndWell = null;
+                try { this.clearHighlight(); } catch (_) {}
+                App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+            };
+
+            if (wellHits.length <= 1) {
+                if (!wellHits.length) {
+                    App.notify('Выберите колодец', 'warning');
+                    return;
+                }
+                pickWell(wellHits[0]);
+                return;
+            }
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(wellHits || []).map((h, idx) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectShortestPathWellFromHits(${idx})">
+                            ${h.title}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите колодец.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            this._shortestWellHits = wellHits;
+            App.showModal('Выберите колодец', content, footer);
+            return;
+        }
+
         // "Переложить кабель в канализации"
         if (this.relocateDuctCableMode) {
             // шаг 1: выбрать кабель в канализации
@@ -1366,6 +1425,54 @@ const MapManager = {
             });
             App.notify('Перетащите маркер в новое место и нажмите Enter или кнопку перемещения ещё раз', 'info');
         } catch (_) {}
+    },
+
+    selectShortestPathWellFromHits(idx) {
+        const h = (this._shortestWellHits || [])[idx];
+        if (!h) return;
+        App.hideModal();
+        // делегируем обратно в handleObjectsClick через прямую обработку
+        try {
+            // имитируем клик по выбранному объекту
+            const wid = parseInt(h?.properties?.id || 0, 10);
+            const num = (h?.properties?.number || '').toString();
+            if (!wid) return;
+            if (!this.shortestDuctCableStartWell) {
+                this.shortestDuctCableStartWell = { id: wid, number: num };
+                App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+                return;
+            }
+            if (!this.shortestDuctCableEndWell) {
+                if (wid === this.shortestDuctCableStartWell.id) {
+                    App.notify('Конечный колодец должен отличаться от начального', 'warning');
+                    return;
+                }
+                this.shortestDuctCableEndWell = { id: wid, number: num };
+                try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
+                return;
+            }
+            this.shortestDuctCableStartWell = { id: wid, number: num };
+            this.shortestDuctCableEndWell = null;
+            try { this.clearHighlight(); } catch (_) {}
+            App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+        } catch (_) {}
+    },
+
+    toggleShortestDuctCableMode() {
+        this.shortestDuctCableMode = !this.shortestDuctCableMode;
+        if (this.shortestDuctCableMode) {
+            this.shortestDuctCableStartWell = null;
+            this.shortestDuctCableEndWell = null;
+            this._shortestWellHits = [];
+            if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+            App.notify('Кратчайший путь: выберите стартовый колодец', 'info');
+        } else {
+            this.shortestDuctCableStartWell = null;
+            this.shortestDuctCableEndWell = null;
+            this._shortestWellHits = [];
+            if (this.map) this.map.getContainer().style.cursor = '';
+            try { this.clearHighlight(); } catch (_) {}
+        }
     },
 
     async _relocateSelectCableHit(h) {
@@ -2009,6 +2116,19 @@ const MapManager = {
             this.highlightLayer = null;
         }
         this.setHighlightBarVisible(false);
+    },
+
+    highlightFeatureCollection(fc) {
+        try {
+            this.clearHighlight();
+            if (!fc || fc.type !== 'FeatureCollection') return;
+            this.highlightLayer = L.geoJSON(fc, {
+                style: () => ({ color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' })
+            }).addTo(this.map);
+            this.setHighlightBarVisible(true);
+        } catch (e) {
+            console.error('Ошибка подсветки (FeatureCollection):', e);
+        }
     },
 
     highlightCableGeometryFromLayer(cableId) {

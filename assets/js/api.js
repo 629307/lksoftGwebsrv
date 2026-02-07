@@ -368,6 +368,15 @@ const API = {
         stuffWell(directionId, data) {
             return API.post(`/channel-directions/${directionId}/stuff-well`, data);
         },
+
+        shortestPath(start_well_id, end_well_id) {
+            return API.get('/channel-directions/shortest-path', { start_well_id, end_well_id });
+        },
+
+        geojsonByIds(ids = []) {
+            const list = Array.isArray(ids) ? ids : [];
+            return API.get('/channel-directions/geojson-by-ids', { ids: list.join(',') });
+        },
     },
 
     // ========================
