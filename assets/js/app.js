@@ -1450,7 +1450,6 @@ const App = {
             if (type === 'wells') {
                 const rawNumber = (obj.number || '').toString();
                 const parts = rawNumber.split('-');
-                const seq = (parts[2] && /^[0-9]+$/.test(parts[2])) ? parts[2] : '';
                 const sfx = (parts[3] || '').toString();
                 formHtml = `
                     <form id="edit-object-form">
@@ -1459,7 +1458,7 @@ const App = {
                             <label>Номер *</label>
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                                <input type="number" name="number_seq" id="modal-number-seq" min="1" step="1" value="${this.escapeHtml(seq)}" style="flex: 0 0 140px;">
+                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
                                 <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" value="${this.escapeHtml(sfx)}" placeholder="Суффикс (до 5)" style="flex: 1;">
                             </div>
                             <div id="well-number-hint" class="text-muted" style="margin-top:6px;"></div>
@@ -1499,7 +1498,6 @@ const App = {
             } else if (type === 'markers') {
                 const rawNumber = (obj.number || '').toString();
                 const parts = rawNumber.split('-');
-                const seq = (parts[2] && /^[0-9]+$/.test(parts[2])) ? parts[2] : '';
                 const sfx = (parts[3] || '').toString();
                 formHtml = `
                     <form id="edit-object-form">
@@ -1508,10 +1506,10 @@ const App = {
                             <label>Номер *</label>
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                                <input type="number" name="number_seq" id="modal-number-seq" min="1" step="1" value="${this.escapeHtml(seq)}" style="flex: 0 0 140px;">
+                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
                                 <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" value="${this.escapeHtml(sfx)}" placeholder="Суффикс (до 5)" style="flex: 1;">
                             </div>
-                            <p class="text-muted">Если у собственника диапазон 0-0 — номер можно менять вручную.</p>
+                            <p class="text-muted">Номер пересобирается автоматически при смене собственника (суффикс сохраняется).</p>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -2243,10 +2241,9 @@ const App = {
     setupWellEditNumberValidation(wellId) {
         const ownerSelect = document.getElementById('modal-owner-select');
         const prefixInput = document.getElementById('modal-number-prefix');
-        const seqInput = document.getElementById('modal-number-seq');
         const suffixInput = document.getElementById('modal-number-suffix');
         const hint = document.getElementById('well-number-hint');
-        if (!suffixInput && !seqInput) return;
+        if (!suffixInput) return;
 
         const lightGreen = 'rgba(34, 197, 94, 0.15)';
         const lightRed = 'rgba(239, 68, 68, 0.15)';
@@ -2274,11 +2271,11 @@ const App = {
 
         const buildNumber = () => {
             const prefix = (prefixInput?.value || '').toString();
-            const seq = (seqInput?.value || '').toString();
             const suffix = (suffixInput?.value || '').toString().trim();
             const cleanSuffix = suffix.replace(/[^0-9A-Za-zА-Яа-яЁё_]/g, '').slice(0, 5);
-            if (!prefix || !seq) return '';
-            return `${prefix}${seq}${cleanSuffix ? '-' + cleanSuffix : ''}`.trim();
+            if (!prefix) return '';
+            // seq подбирается сервером, поэтому проверяем только суффикс на допустимые символы/длину
+            return `${prefix}...${cleanSuffix ? '-' + cleanSuffix : ''}`.trim();
         };
 
         const check = async () => {
@@ -2287,10 +2284,8 @@ const App = {
             lastChecked = number;
 
             try {
-                const resp = await API.wells.existsNumber(number, wellId);
-                const exists = !!(resp?.data?.exists);
-                if (exists) setBad();
-                else setOk();
+                // seq вычисляется сервером, клиентская проверка полного номера не применяется
+                setOk();
             } catch (_) {
                 clear();
             }
@@ -2303,7 +2298,6 @@ const App = {
 
         // Доп. обработчик поверх существующего (который обновляет префикс)
         if (ownerSelect) ownerSelect.addEventListener('change', schedule);
-        seqInput?.addEventListener('input', schedule);
         suffixInput?.addEventListener('input', schedule);
 
         // стартовая проверка
@@ -3482,7 +3476,7 @@ const App = {
             object_types: ['code', 'name', 'description', 'reference_table', 'number_code', 'icon', 'color'],
             object_kinds: ['code', 'name', 'object_type_id', 'description', 'is_default'],
             object_status: ['code', 'name', 'color', 'description', 'sort_order', 'is_default'],
-            owners: ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'range_from', 'range_to', 'is_default'],
+            owners: ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
             contracts: ['number', 'name', 'owner_id', 'landlord_id', 'start_date', 'end_date', 'status', 'amount', 'notes', 'is_default'],
             cable_types: ['code', 'name', 'description', 'is_default'],
             cable_catalog: ['cable_type_id', 'fiber_count', 'marking', 'description', 'is_default'],
@@ -3495,7 +3489,7 @@ const App = {
             owners: {
                 code: 'Код', name: 'Название', short_name: 'Краткое название', inn: 'ИНН',
                 address: 'Адрес', contact_person: 'Контактное лицо', contact_phone: 'Телефон', contact_email: 'Email',
-                color: 'Цвет', notes: 'Примечания', range_from: 'Значение С', range_to: 'Значение ДО', is_default: 'По умолчанию'
+                color: 'Цвет', notes: 'Примечания', is_default: 'По умолчанию'
             },
             contracts: {
                 number: 'Номер', name: 'Название', owner_id: 'Арендатор', landlord_id: 'Арендодатель',
@@ -4115,11 +4109,11 @@ const App = {
                     <div class="form-group">
                         <label>Номер *</label>
                         <div style="display:flex; gap:8px; align-items:center;">
-                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                            <input type="number" name="number_seq" id="modal-number-seq" min="1" step="1" placeholder="Авто" style="flex: 0 0 140px;">
+                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 240px; background: var(--bg-tertiary);" value="...">
+                            <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
                             <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;">
                         </div>
-                        <p class="text-muted">Номер формируется автоматически по собственнику и виду объекта. Если у собственника диапазон 0-0 — номер можно ввести вручную.</p>
+                        <p class="text-muted">Номер формируется автоматически: <код номера>-<код собственника>-<минимальный свободный номер>(-суффикс).</p>
                     </div>
                     <div id="coords-wgs84-inputs">
                         <div class="form-group">
@@ -4160,11 +4154,11 @@ const App = {
                     <div class="form-group">
                         <label>Номер *</label>
                         <div style="display:flex; gap:8px; align-items:center;">
-                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 200px; background: var(--bg-tertiary);" value="...">
-                            <input type="number" name="number_seq" id="modal-number-seq" min="1" step="1" placeholder="Авто" style="flex: 0 0 140px;">
+                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 240px; background: var(--bg-tertiary);" value="...">
+                            <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
                             <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;">
                         </div>
-                        <p class="text-muted">Номер формируется автоматически по собственнику и виду объекта. Если у собственника диапазон 0-0 — номер можно ввести вручную.</p>
+                        <p class="text-muted">Номер формируется автоматически: <код номера>-<код собственника>-<минимальный свободный номер>(-суффикс).</p>
                     </div>
                     <div id="coords-wgs84-inputs">
                         <div class="form-group">
@@ -4322,11 +4316,11 @@ const App = {
                     <div class="form-group">
                         <label>Номер *</label>
                         <div style="display:flex; gap:8px; align-items:center;">
-                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 220px; background: var(--bg-tertiary);" value="...">
-                            <input type="number" name="number_seq" id="modal-number-seq" min="1" step="1" placeholder="Авто" style="flex: 0 0 140px;">
+                            <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 260px; background: var(--bg-tertiary);" value="...">
+                            <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="Авто">
                             <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;">
                         </div>
-                        <p class="text-muted">Номер формируется автоматически по собственнику и виду объекта кабеля. Если у собственника диапазон 0-0 — номер можно ввести вручную.</p>
+                        <p class="text-muted">Номер формируется автоматически: <код номера>-<код собственника>-<минимальный свободный номер>(-суффикс).</p>
                     </div>
                     <div class="form-group">
                         <label>Вид объекта *</label>
@@ -4492,7 +4486,7 @@ const App = {
             if (owners.success && document.getElementById('modal-owner-select')) {
                 document.getElementById('modal-owner-select').innerHTML = 
                     '<option value="">Выберите...</option>' +
-                    owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}" data-range-from="${o.range_from ?? 0}" data-range-to="${o.range_to ?? 0}" data-is-default="${o.is_default ? 1 : 0}">${o.name}</option>`).join('');
+                    owners.data.map(o => `<option value="${o.id}" data-code="${o.code || ''}" data-is-default="${o.is_default ? 1 : 0}">${o.name}</option>`).join('');
                 const sel = document.getElementById('modal-owner-select');
                 const udef = this.settings?.default_owner_id || '';
                 if (!pickUserDefault(sel, udef)) pickDefault(sel);
@@ -4501,15 +4495,7 @@ const App = {
             // Обновление префикса номера по выбранному собственнику
             const ownerSelect = document.getElementById('modal-owner-select');
             const prefixInput = document.getElementById('modal-number-prefix');
-            const seqInput = document.getElementById('modal-number-seq');
             const suffixInput = document.getElementById('modal-number-suffix');
-
-            const getSelectedOwnerRange = () => {
-                const opt = ownerSelect?.selectedOptions?.[0];
-                const rf = parseInt(opt?.dataset?.rangeFrom || '0', 10);
-                const rt = parseInt(opt?.dataset?.rangeTo || '0', 10);
-                return { rf: Number.isFinite(rf) ? rf : 0, rt: Number.isFinite(rt) ? rt : 0 };
-            };
 
             const buildPrefix = () => {
                 const ownerCode = ownerSelect?.selectedOptions?.[0]?.dataset?.code || '';
@@ -4533,58 +4519,18 @@ const App = {
                 if (!prefixInput || !ownerSelect) return;
                 const pref = buildPrefix();
                 prefixInput.value = pref || '...';
-
-                if (!seqInput) return;
-                const { rf, rt } = getSelectedOwnerRange();
-                const manual = (rf === 0 && rt === 0);
-                seqInput.disabled = !manual;
-                if (!manual) {
-                    seqInput.value = '';
-                    seqInput.style.background = 'var(--bg-tertiary)';
-                } else {
-                    seqInput.style.background = '';
-                }
-            };
-
-            const checkManualUnique = async () => {
-                if (!prefixInput || !seqInput) return;
-                const { rf, rt } = getSelectedOwnerRange();
-                const manual = (rf === 0 && rt === 0);
-                if (!manual) return;
-
-                const pref = buildPrefix();
-                const seq = parseInt(seqInput.value || '', 10);
-                const sfx = (suffixInput?.value || '').toString().trim();
-                if (!pref || !Number.isFinite(seq) || seq <= 0) return;
-
-                const full = `${pref}${seq}${sfx ? '-' + sfx.replace(/[^0-9A-Za-zА-Яа-яЁё_]/g, '').slice(0, 5) : ''}`;
-                try {
-                    let resp = null;
-                    if (objectType === 'wells') resp = await API.wells.existsNumber(full);
-                    else if (objectType === 'markers') resp = await API.markerPosts.existsNumber(full);
-                    else if (objectType === 'unified_cables') resp = await API.unifiedCables.existsNumber(full);
-                    const exists = !!(resp?.data?.exists);
-                    seqInput.style.background = exists ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)';
-                } catch (_) {
-                    // ignore
-                }
             };
 
             if (ownerSelect && prefixInput) {
                 ownerSelect.addEventListener('change', () => {
                     updateNumberUi();
-                    checkManualUnique().catch(() => {});
                 });
-                seqInput?.addEventListener('input', () => checkManualUnique().catch(() => {}));
-                suffixInput?.addEventListener('input', () => checkManualUnique().catch(() => {}));
                 // unified cables: префикс зависит от выбранного object_type_id
                 document.getElementById('modal-cable-object-type')?.addEventListener('change', () => {
                     updateNumberUi();
-                    checkManualUnique().catch(() => {});
                 });
                 document.getElementById('modal-type-select')?.addEventListener('change', () => {
                     updateNumberUi();
-                    checkManualUnique().catch(() => {});
                 });
 
                 updateNumberUi();
@@ -6365,16 +6311,6 @@ const App = {
                 <div class="form-group">
                     <label>Примечания</label>
                     <textarea name="notes" rows="2">${data.notes || ''}</textarea>
-                </div>
-                <div class="form-group">
-                    <label>Значение С</label>
-                    <input type="number" name="range_from" min="0" step="1" value="${(data.range_from ?? 0)}">
-                    <p class="text-muted">0 означает ручной ввод номера (диапазон 0-0).</p>
-                </div>
-                <div class="form-group">
-                    <label>Значение ДО</label>
-                    <input type="number" name="range_to" min="0" step="1" value="${(data.range_to ?? 0)}">
-                    <p class="text-muted">Диапазоны собственников не должны пересекаться.</p>
                 </div>
                 ${defaultBlock}
             `,

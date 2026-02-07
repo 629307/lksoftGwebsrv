@@ -35,7 +35,7 @@ class ReferenceController extends BaseController
         ],
         'owners' => [
             'table' => 'owners',
-            'fields' => ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'range_from', 'range_to', 'is_default'],
+            'fields' => ['code', 'name', 'short_name', 'color', 'inn', 'address', 'contact_person', 'contact_phone', 'contact_email', 'notes', 'is_default'],
             'search' => ['code', 'name', 'short_name', 'inn'],
         ],
         'contracts' => [
@@ -221,31 +221,7 @@ class ReferenceController extends BaseController
 
         $data = $this->request->only($config['fields']);
 
-        // Owners: валидация диапазонов нумерации (пересечения запрещены)
-        if ($type === 'owners') {
-            $rf = isset($data['range_from']) ? (int) $data['range_from'] : 0;
-            $rt = isset($data['range_to']) ? (int) $data['range_to'] : 0;
-
-            if ($rf < 0 || $rt < 0) {
-                Response::error('Диапазон нумерации должен быть неотрицательным', 422);
-            }
-            if (!(($rf === 0 && $rt === 0) || ($rf > 0 && $rt > 0 && $rf <= $rt))) {
-                Response::error('Некорректный диапазон нумерации (допустимо 0-0 или С<=ДО)', 422);
-            }
-            if ($rf > 0 && $rt > 0) {
-                $over = $this->db->fetch(
-                    "SELECT id, code, name, range_from, range_to
-                     FROM owners
-                     WHERE range_from > 0 AND range_to > 0
-                       AND NOT (range_to < :rf OR range_from > :rt)
-                     LIMIT 1",
-                    ['rf' => $rf, 'rt' => $rt]
-                );
-                if ($over) {
-                    Response::error('Диапазон пересекается с другим собственником: ' . ($over['name'] ?? $over['code'] ?? $over['id']), 422);
-                }
-            }
-        }
+        // Owners: диапазоны нумерации удалены (v15)
 
         // Object types: number_code по умолчанию равен code
         if ($type === 'object_types') {
@@ -366,32 +342,7 @@ class ReferenceController extends BaseController
             unset($data['code']);
         }
 
-        // Owners: валидация диапазонов нумерации (пересечения запрещены)
-        if ($type === 'owners') {
-            $rf = array_key_exists('range_from', $data) ? (int) $data['range_from'] : (int) ($oldItem['range_from'] ?? 0);
-            $rt = array_key_exists('range_to', $data) ? (int) $data['range_to'] : (int) ($oldItem['range_to'] ?? 0);
-
-            if ($rf < 0 || $rt < 0) {
-                Response::error('Диапазон нумерации должен быть неотрицательным', 422);
-            }
-            if (!(($rf === 0 && $rt === 0) || ($rf > 0 && $rt > 0 && $rf <= $rt))) {
-                Response::error('Некорректный диапазон нумерации (допустимо 0-0 или С<=ДО)', 422);
-            }
-            if ($rf > 0 && $rt > 0) {
-                $over = $this->db->fetch(
-                    "SELECT id, code, name, range_from, range_to
-                     FROM owners
-                     WHERE id <> :id
-                       AND range_from > 0 AND range_to > 0
-                       AND NOT (range_to < :rf OR range_from > :rt)
-                     LIMIT 1",
-                    ['id' => $recordId, 'rf' => $rf, 'rt' => $rt]
-                );
-                if ($over) {
-                    Response::error('Диапазон пересекается с другим собственником: ' . ($over['name'] ?? $over['code'] ?? $over['id']), 422);
-                }
-            }
-        }
+        // Owners: диапазоны нумерации удалены (v15)
 
         // Object types: number_code не должен быть пустым (если передан) — иначе ставим code
         if ($type === 'object_types') {

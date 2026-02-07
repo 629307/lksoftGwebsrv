@@ -236,7 +236,7 @@ abstract class BaseController
     protected function getOwnerNumbering(int $ownerId): array
     {
         $row = $this->db->fetch(
-            "SELECT id, code, range_from, range_to FROM owners WHERE id = :id",
+            "SELECT id, code FROM owners WHERE id = :id",
             ['id' => (int) $ownerId]
         );
         if (!$row) {
@@ -244,8 +244,6 @@ abstract class BaseController
         }
         return [
             'code' => (string) ($row['code'] ?? ''),
-            'from' => (int) ($row['range_from'] ?? 0),
-            'to' => (int) ($row['range_to'] ?? 0),
         ];
     }
 
@@ -296,61 +294,36 @@ abstract class BaseController
             Response::error('Недостаточно данных для формирования номера', 422);
         }
 
-        $rf = (int) $owner['from'];
-        $rt = (int) $owner['to'];
         $sfx = $this->sanitizeNumberSuffix($suffix);
 
-        $seq = null;
-        if ($rf === 0 && $rt === 0) {
-            // ручной режим
-            $seq = (int) ($manualSeq ?? 0);
-            if ($seq <= 0) {
-                Response::error('Введите номер (целое положительное)', 422);
-            }
-        } else {
-            // авто режим: если передан preferred seq (например, при смене собственника) — пытаемся сохранить его
-            $preferred = (int) ($manualSeq ?? 0);
-            if ($preferred > 0 && $preferred >= $rf && $preferred <= $rt) {
-                $prefNum = "{$numberCode}-{$ownerCode}-{$preferred}";
-                if ($sfx !== '') $prefNum .= "-{$sfx}";
-                $sqlPref = "SELECT id FROM {$table} WHERE number = :n AND {$typeColumn} = :type_id";
-                $pPref = ['n' => $prefNum, 'type_id' => (int) $typeId];
-                if (!empty($excludeId)) {
-                    $sqlPref .= " AND id <> :id";
-                    $pPref['id'] = (int) $excludeId;
-                }
-                $sqlPref .= " LIMIT 1";
-                $existsPref = $this->db->fetch($sqlPref, $pPref);
-                if (!$existsPref) {
-                    return $prefNum;
-                }
-            }
-
-            // авто режим: берём минимальный свободный в диапазоне
-            $like = $numberCode . '-' . $ownerCode . '-%';
-            $row = $this->db->fetch(
-                "WITH used AS (
-                    SELECT DISTINCT (split_part(number, '-', 3))::int AS n
-                    FROM {$table}
-                    WHERE number LIKE :like
-                      AND {$typeColumn} = :type_id
-                      AND split_part(number, '-', 3) ~ '^[0-9]+$'
-                )
-                SELECT gs AS n
-                FROM generate_series(:rf, :rt) gs
-                LEFT JOIN used u ON u.n = gs
-                WHERE u.n IS NULL
-                ORDER BY gs
-                LIMIT 1",
-                ['like' => $like, 'type_id' => (int) $typeId, 'rf' => $rf, 'rt' => $rt]
-            );
-            if (!$row) {
-                Response::error("Диапазон нумерации исчерпан для собственника {$ownerCode}", 422);
-            }
-            $seq = (int) ($row['n'] ?? 0);
-            if ($seq <= 0) {
-                Response::error('Не удалось подобрать номер', 500);
-            }
+        // 3-я часть: минимальное целое положительное (>=1), уникальное для уже существующих номеров
+        // в рамках конкретного вида объекта (typeColumn = typeId) и собственника (ownerCode включён в номер)
+        $like = $numberCode . '-' . $ownerCode . '-%';
+        $row = $this->db->fetch(
+            "WITH used AS (
+                SELECT DISTINCT (split_part(number, '-', 3))::int AS n
+                FROM {$table}
+                WHERE number LIKE :like
+                  AND {$typeColumn} = :type_id
+                  AND split_part(number, '-', 3) ~ '^[0-9]+$'
+            ),
+            mx AS (
+                SELECT COALESCE(MAX(n), 0) AS m FROM used
+            ),
+            gs AS (
+                SELECT generate_series(1, (SELECT m + 1 FROM mx)) AS n
+            )
+            SELECT gs.n AS n
+            FROM gs
+            LEFT JOIN used u ON u.n = gs.n
+            WHERE u.n IS NULL
+            ORDER BY gs.n
+            LIMIT 1",
+            ['like' => $like, 'type_id' => (int) $typeId]
+        );
+        $seq = (int) ($row['n'] ?? 0);
+        if ($seq <= 0) {
+            Response::error('Не удалось подобрать номер', 500);
         }
 
         $num = "{$numberCode}-{$ownerCode}-{$seq}";
@@ -392,6 +365,12 @@ abstract class BaseController
             }
         }
         return ['seq' => $seq, 'suffix' => $suffix];
+    }
+
+    protected function parseNumberSuffixOnly(string $number): string
+    {
+        $parts = $this->parseNumberSeqAndSuffix($number);
+        return (string) ($parts['suffix'] ?? '');
     }
 
     /**

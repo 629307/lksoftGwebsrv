@@ -7,8 +7,7 @@
 --
 -- ВНИМАНИЕ:
 -- - Скрипт НЕ учитывает суффиксы (suffix) и присваивает номера без суффикса.
--- - В авто-режиме (range_from/range_to != 0) seq назначается подряд от range_from по порядку id.
--- - В ручном режиме (0-0) скрипт пытается сохранить существующий seq (3-я часть номера), иначе назначает row_number().
+-- - seq назначается подряд от 1 по порядку id в рамках (owner_id, type_id/object_type_id).
 -- - Перед запуском сделайте резервную копию базы.
 -- ============================================================
 
@@ -28,13 +27,8 @@ WITH base AS (
         w.owner_id,
         w.type_id,
         o.code AS owner_code,
-        o.range_from,
-        o.range_to,
         COALESCE(NULLIF(ot.number_code, ''), ot.code) AS num_code,
-        CASE
-            WHEN split_part(w.number, '-', 3) ~ '^[0-9]+$' THEN split_part(w.number, '-', 3)::int
-            ELSE NULL
-        END AS old_seq
+        CASE WHEN split_part(w.number, '-', 3) ~ '^[0-9]+$' THEN split_part(w.number, '-', 3)::int ELSE NULL END AS old_seq
     FROM wells w
     JOIN owners o ON w.owner_id = o.id
     JOIN object_types ot ON w.type_id = ot.id
@@ -44,12 +38,7 @@ assigned AS (
         id,
         owner_code,
         num_code,
-        CASE
-            WHEN range_from = 0 AND range_to = 0
-                THEN COALESCE(old_seq, row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id))
-            ELSE
-                (range_from + row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id) - 1)
-        END AS seq
+        row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id) AS seq
     FROM base
 )
 UPDATE wells w
@@ -66,13 +55,8 @@ WITH base AS (
         mp.owner_id,
         mp.type_id,
         o.code AS owner_code,
-        o.range_from,
-        o.range_to,
         COALESCE(NULLIF(ot.number_code, ''), ot.code) AS num_code,
-        CASE
-            WHEN split_part(mp.number, '-', 3) ~ '^[0-9]+$' THEN split_part(mp.number, '-', 3)::int
-            ELSE NULL
-        END AS old_seq
+        CASE WHEN split_part(mp.number, '-', 3) ~ '^[0-9]+$' THEN split_part(mp.number, '-', 3)::int ELSE NULL END AS old_seq
     FROM marker_posts mp
     JOIN owners o ON mp.owner_id = o.id
     JOIN object_types ot ON mp.type_id = ot.id
@@ -82,12 +66,7 @@ assigned AS (
         id,
         owner_code,
         num_code,
-        CASE
-            WHEN range_from = 0 AND range_to = 0
-                THEN COALESCE(old_seq, row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id))
-            ELSE
-                (range_from + row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id) - 1)
-        END AS seq
+        row_number() OVER (PARTITION BY owner_id, type_id ORDER BY id) AS seq
     FROM base
 )
 UPDATE marker_posts mp
@@ -104,13 +83,8 @@ WITH base AS (
         c.owner_id,
         c.object_type_id,
         o.code AS owner_code,
-        o.range_from,
-        o.range_to,
         COALESCE(NULLIF(ot.number_code, ''), ot.code) AS num_code,
-        CASE
-            WHEN split_part(c.number, '-', 3) ~ '^[0-9]+$' THEN split_part(c.number, '-', 3)::int
-            ELSE NULL
-        END AS old_seq
+        CASE WHEN split_part(c.number, '-', 3) ~ '^[0-9]+$' THEN split_part(c.number, '-', 3)::int ELSE NULL END AS old_seq
     FROM cables c
     JOIN owners o ON c.owner_id = o.id
     JOIN object_types ot ON c.object_type_id = ot.id
@@ -121,12 +95,7 @@ assigned AS (
         owner_code,
         num_code,
         object_type_id,
-        CASE
-            WHEN range_from = 0 AND range_to = 0
-                THEN COALESCE(old_seq, row_number() OVER (PARTITION BY owner_id, object_type_id ORDER BY id))
-            ELSE
-                (range_from + row_number() OVER (PARTITION BY owner_id, object_type_id ORDER BY id) - 1)
-        END AS seq
+        row_number() OVER (PARTITION BY owner_id, object_type_id ORDER BY id) AS seq
     FROM base
 )
 UPDATE cables c

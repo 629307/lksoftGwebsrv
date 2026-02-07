@@ -253,13 +253,12 @@ class MarkerPostController extends BaseController
         ]);
 
         // Формирование номера (авто по диапазону собственника + опциональный суффикс)
-        $manualSeq = $this->request->input('number_seq');
         $suffix = $this->request->input('number_suffix');
         $data['number'] = $this->buildAutoNumber(
             'marker_posts',
             (int) ($data['type_id'] ?? 0),
             (int) ($data['owner_id'] ?? 0),
-            ($manualSeq !== null && $manualSeq !== '') ? (int) $manualSeq : null,
+            null,
             ($suffix !== null) ? (string) $suffix : null
         );
 
@@ -398,16 +397,14 @@ class MarkerPostController extends BaseController
 
             // Если изменён собственник — обновляем номер по новой схеме (сохраняем seq/суффикс, если возможно)
             if (array_key_exists('owner_id', $data) && (int) $data['owner_id'] !== (int) $oldPost['owner_id']) {
-                $parts = $this->parseNumberSeqAndSuffix((string) ($oldPost['number'] ?? ''));
-                $preferredSeq = $parts['seq'] ?? null;
-                $suffix = $parts['suffix'] ?? '';
+                $suffix = $this->parseNumberSuffixOnly((string) ($oldPost['number'] ?? ''));
                 $typeId = (int) ($oldPost['type_id'] ?? ($data['type_id'] ?? 0));
 
                 $newNumber = $this->buildAutoNumber(
                     'marker_posts',
                     $typeId,
                     (int) $data['owner_id'],
-                    $preferredSeq ? (int) $preferredSeq : null,
+                    null,
                     $suffix ? (string) $suffix : null,
                     $postId
                 );

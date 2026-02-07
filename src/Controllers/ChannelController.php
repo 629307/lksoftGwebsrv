@@ -633,13 +633,12 @@ class ChannelController extends BaseController
             $this->db->beginTransaction();
 
             // 1) Создаём новый колодец
-            $manualSeq = $this->request->input('number_seq');
             $suffix = $this->request->input('number_suffix');
             $wellData['number'] = $this->buildAutoNumber(
                 'wells',
                 (int) ($wellData['type_id'] ?? 0),
                 (int) ($wellData['owner_id'] ?? 0),
-                ($manualSeq !== null && $manualSeq !== '') ? (int) $manualSeq : null,
+                null,
                 ($suffix !== null) ? (string) $suffix : null
             );
             $wellData['created_by'] = $uid;

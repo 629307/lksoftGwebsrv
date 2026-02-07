@@ -209,13 +209,12 @@ class WellController extends BaseController
         ]);
 
         // Формирование номера (авто по диапазону собственника + опциональный суффикс)
-        $manualSeq = $this->request->input('number_seq');
         $suffix = $this->request->input('number_suffix');
         $data['number'] = $this->buildAutoNumber(
             'wells',
             (int) ($data['type_id'] ?? 0),
             (int) ($data['owner_id'] ?? 0),
-            ($manualSeq !== null && $manualSeq !== '') ? (int) $manualSeq : null,
+            null,
             ($suffix !== null) ? (string) $suffix : null
         );
 
@@ -356,26 +355,16 @@ class WellController extends BaseController
             $ownerIdNew = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : $ownerIdOld;
             $typeId = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldWell['type_id'] ?? 0);
 
-            // Приоритет источников для seq/suffix: number_seq/number_suffix -> number (legacy UI) -> old number
-            $seqIncoming = $this->request->input('number_seq');
             $suffixIncoming = $this->request->input('number_suffix');
             $numberIncoming = array_key_exists('number', $data) ? trim((string) $data['number']) : null;
 
-            $partsOld = $this->parseNumberSeqAndSuffix((string) ($oldWell['number'] ?? ''));
-            $partsInc = ($numberIncoming !== null && $numberIncoming !== '')
-                ? $this->parseNumberSeqAndSuffix((string) $numberIncoming)
-                : ['seq' => null, 'suffix' => ''];
-
-            $preferredSeq =
-                ($seqIncoming !== null && $seqIncoming !== '') ? (int) $seqIncoming :
-                (($partsInc['seq'] ?? null) ? (int) $partsInc['seq'] : (($partsOld['seq'] ?? null) ? (int) $partsOld['seq'] : null));
             $suffix =
-                ($suffixIncoming !== null && $suffixIncoming !== '') ? (string) $suffixIncoming :
-                ((string) (($partsInc['suffix'] ?? '') !== '' ? ($partsInc['suffix'] ?? '') : ($partsOld['suffix'] ?? '')));
+                ($suffixIncoming !== null && $suffixIncoming !== '')
+                    ? (string) $suffixIncoming
+                    : $this->parseNumberSuffixOnly((string) ($oldWell['number'] ?? ''));
 
             $shouldRebuildNumber =
                 ($ownerIdNew > 0 && $ownerIdNew !== $ownerIdOld) ||
-                ($seqIncoming !== null) ||
                 ($suffixIncoming !== null) ||
                 ($numberIncoming !== null);
 
@@ -384,7 +373,7 @@ class WellController extends BaseController
                     'wells',
                     $typeId,
                     $ownerIdNew,
-                    $preferredSeq ? (int) $preferredSeq : null,
+                    null,
                     $suffix !== '' ? (string) $suffix : null,
                     $wellId
                 );

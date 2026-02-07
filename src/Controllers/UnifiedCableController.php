@@ -359,13 +359,12 @@ class UnifiedCableController extends BaseController
         }
 
         // Формирование номера (авто по диапазону собственника + опциональный суффикс)
-        $manualSeq = $this->request->input('number_seq');
         $suffix = $this->request->input('number_suffix');
         $data['number'] = $this->buildAutoNumber(
             'cables',
             (int) ($data['object_type_id'] ?? 0),
             (int) ($data['owner_id'] ?? 0),
-            ($manualSeq !== null && $manualSeq !== '') ? (int) $manualSeq : null,
+            null,
             ($suffix !== null) ? (string) $suffix : null
         );
 
@@ -618,16 +617,14 @@ class UnifiedCableController extends BaseController
 
             // Если изменён собственник — обновляем номер по новой схеме (сохраняем seq/суффикс, если возможно)
             if (array_key_exists('owner_id', $data) && (int) $data['owner_id'] !== (int) ($oldCable['owner_id'] ?? 0)) {
-                $parts = $this->parseNumberSeqAndSuffix((string) ($oldCable['number'] ?? ''));
-                $preferredSeq = $parts['seq'] ?? null;
-                $suffix = $parts['suffix'] ?? '';
+                $suffix = $this->parseNumberSuffixOnly((string) ($oldCable['number'] ?? ''));
                 $typeId = (int) ($oldCable['object_type_id'] ?? 0);
 
                 $newNumber = $this->buildAutoNumber(
                     'cables',
                     $typeId,
                     (int) $data['owner_id'],
-                    $preferredSeq ? (int) $preferredSeq : null,
+                    null,
                     $suffix ? (string) $suffix : null,
                     $cableId
                 );

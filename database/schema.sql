@@ -123,9 +123,6 @@ CREATE TABLE IF NOT EXISTS owners (
     contact_phone VARCHAR(50),
     contact_email VARCHAR(255),
     notes TEXT,
-    -- Диапазоны нумерации объектов по собственнику (0-0 = ручной ввод)
-    range_from INTEGER NOT NULL DEFAULT 0,
-    range_to INTEGER NOT NULL DEFAULT 0,
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
