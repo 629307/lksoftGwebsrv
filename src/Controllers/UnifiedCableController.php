@@ -293,7 +293,7 @@ class UnifiedCableController extends BaseController
             );
             
             $cable['route_channels'] = $this->db->fetchAll(
-                "SELECT crc.*, cc.channel_number, cd.number as direction_number,
+                "SELECT crc.*, cc.channel_number, cc.direction_id, cd.number as direction_number,
                         cd.length_m as direction_length
                  FROM cable_route_channels crc
                  JOIN cable_channels cc ON crc.cable_channel_id = cc.id

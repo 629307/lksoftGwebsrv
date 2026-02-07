@@ -441,6 +441,21 @@ const App = {
                     return;
                 }
 
+                if (e.key === 'Enter') {
+                    if (isEditable) return;
+                    // если открыта модалка — не подтверждаем перемещение
+                    const modal = document.getElementById('modal');
+                    if (modal && !modal.classList.contains('hidden')) return;
+                    try {
+                        const mm = (typeof MapManager !== 'undefined') ? MapManager : null;
+                        if (mm?.movePointMode && typeof mm.commitMovePoint === 'function') {
+                            e.preventDefault();
+                            mm.commitMovePoint();
+                        }
+                    } catch (_) {}
+                    return;
+                }
+
                 if (e.key !== 'Escape') return;
 
                 // 1) Отмена подсветки кабеля
@@ -460,10 +475,20 @@ const App = {
                         !!mm.addDirectionMode ||
                         !!mm.addCableMode ||
                         !!mm.addDuctCableMode;
-                    if (!anyAdd) return;
-                    mm.cancelAddDirectionMode?.();
-                    mm.cancelAddCableMode?.();
-                    mm.cancelAddDuctCableMode?.();
+                    if (anyAdd) {
+                        mm.cancelAddDirectionMode?.();
+                        mm.cancelAddCableMode?.();
+                        mm.cancelAddDuctCableMode?.();
+                    }
+                    // Дополнительно: отмена режимов инструментов
+                    if (mm.movePointMode) {
+                        mm.cancelMovePointMode?.();
+                        document.getElementById('btn-move-point-map')?.classList?.toggle('active', false);
+                    }
+                    if (mm.relocateDuctCableMode) {
+                        mm.toggleRelocateDuctCableMode?.();
+                        document.getElementById('btn-relocate-duct-cable-map')?.classList?.toggle('active', false);
+                    }
                 } catch (_) {}
             });
         }
@@ -518,6 +543,18 @@ const App = {
         document.getElementById('btn-add-ground-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_ground'));
         document.getElementById('btn-add-aerial-cable-map')?.addEventListener('click', () => MapManager.startAddCableMode('cable_aerial'));
         document.getElementById('btn-add-duct-cable-map')?.addEventListener('click', () => MapManager.startAddDuctCableMode());
+        document.getElementById('btn-relocate-duct-cable-map')?.addEventListener('click', (e) => {
+            try {
+                MapManager.toggleRelocateDuctCableMode?.();
+                e.currentTarget?.classList?.toggle('active', !!MapManager.relocateDuctCableMode);
+            } catch (_) {}
+        });
+        document.getElementById('btn-move-point-map')?.addEventListener('click', (e) => {
+            try {
+                MapManager.toggleMovePointMode?.();
+                e.currentTarget?.classList?.toggle('active', !!MapManager.movePointMode);
+            } catch (_) {}
+        });
         document.getElementById('btn-toggle-well-labels')?.addEventListener('click', (e) => {
             MapManager.toggleWellLabels();
             e.currentTarget.classList.toggle('active', MapManager.wellLabelsEnabled);

@@ -227,8 +227,9 @@ abstract class BaseController
         // Разрешаем буквы/цифры/подчёркивание (без дефисов, чтобы не ломать разбор номера)
         $s = preg_replace('/[^0-9A-Za-zА-Яа-яЁё_]/u', '', $s);
         $s = (string) $s;
-        if (mb_strlen($s) > 5) {
-            $s = mb_substr($s, 0, 5);
+        $len = function_exists('mb_strlen') ? mb_strlen($s) : strlen($s);
+        if ($len > 5) {
+            $s = function_exists('mb_substr') ? mb_substr($s, 0, 5) : substr($s, 0, 5);
         }
         return $s;
     }

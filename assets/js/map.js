@@ -64,6 +64,19 @@ const MapManager = {
 
     // Режим "Набить колодец" (выбор направления)
     stuffWellMode: false,
+    // Режим "Переложить кабель в канализации"
+    relocateDuctCableMode: false,
+    relocateDuctCableId: null,
+    relocateDuctCableRouteChannels: [], // [{ cable_channel_id, direction_id, route_order }]
+    relocateDuctCablePickCandidates: [],
+    relocateDuctCableDirectionPickCandidates: [],
+    relocateDuctCablePendingDirection: null, // { directionId, channels: [] }
+
+    // Режим "Переместить точечный объект"
+    movePointMode: false,
+    movePointSelected: null, // { objectType: 'well'|'marker_post', id, origLatLng, newLatLng }
+    movePointMarker: null,
+    movePointPickCandidates: [],
 
     // Цвета для слоёв
     colors: {
@@ -1035,6 +1048,209 @@ const MapManager = {
             return;
         }
 
+        // "Переложить кабель в канализации"
+        if (this.relocateDuctCableMode) {
+            // шаг 1: выбрать кабель в канализации
+            if (!this.relocateDuctCableId) {
+                const ductHits = (hits || []).filter(h => h?.objectType === 'unified_cable' && (h?.properties?.object_type_code || '') === 'cable_duct');
+                const pick = async (h) => {
+                    if (!h) return;
+                    const cid = parseInt(h?.properties?.id || 0, 10);
+                    if (!cid) return;
+                    this.relocateDuctCableId = cid;
+                    try {
+                        const resp = await API.unifiedCables.get(cid);
+                        const c = resp?.data || resp || {};
+                        const rcs = Array.isArray(c.route_channels) ? c.route_channels : [];
+                        // ожидаем cc.direction_id в ответе (добавлено в API)
+                        this.relocateDuctCableRouteChannels = (rcs || []).map(rc => ({
+                            cable_channel_id: parseInt(rc?.cable_channel_id || 0, 10),
+                            direction_id: parseInt(rc?.direction_id || 0, 10),
+                            route_order: parseInt(rc?.route_order || 0, 10) || 0,
+                        })).filter(x => x.cable_channel_id > 0 && x.direction_id > 0);
+                    } catch (_) {
+                        this.relocateDuctCableRouteChannels = [];
+                    }
+                    try { this.highlightCableRouteDirections(cid); } catch (_) {}
+                    App.notify('Кабель выбран. Кликните по направлению: клик по направлению из маршрута — удалить, по другому — добавить канал.', 'info');
+                };
+
+                if (ductHits.length <= 1) {
+                    if (!ductHits.length) {
+                        App.notify('Выберите кабель в канализации', 'warning');
+                        return;
+                    }
+                    pick(ductHits[0]);
+                    return;
+                }
+
+                this.relocateDuctCablePickCandidates = ductHits;
+                const content = `
+                    <div style="max-height: 60vh; overflow:auto;">
+                        ${(ductHits || []).map((h, idx) => `
+                            <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectRelocateDuctCableFromHits(${idx})">
+                                ${h.title}
+                            </button>
+                        `).join('')}
+                    </div>
+                    <p class="text-muted" style="margin-top:8px;">Выберите кабель в канализации.</p>
+                `;
+                const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+                App.showModal('Переложить кабель', content, footer);
+                return;
+            }
+
+            // шаг 2: клик по направлению — удалить/добавить
+            const dirHits = (hits || []).filter(h => h?.objectType === 'channel_direction');
+            const pickDir = async (h) => {
+                if (!h) return;
+                const directionId = parseInt(h?.properties?.id || 0, 10);
+                if (!directionId) return;
+
+                const inRoute = (this.relocateDuctCableRouteChannels || []).some(x => parseInt(x.direction_id || 0, 10) === directionId);
+                if (inRoute) {
+                    // удаляем все каналы маршрута, которые относятся к этому направлению
+                    const kept = (this.relocateDuctCableRouteChannels || []).filter(x => parseInt(x.direction_id || 0, 10) !== directionId);
+                    // сохраняем исходный порядок route_order, затем собираем ids
+                    kept.sort((a, b) => (a.route_order || 0) - (b.route_order || 0));
+                    const newIds = kept.map(x => x.cable_channel_id);
+                    try {
+                        const resp = await API.unifiedCables.update(this.relocateDuctCableId, { route_channels: newIds });
+                        if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                        // обновляем кэш маршрута
+                        const r = await API.unifiedCables.get(this.relocateDuctCableId);
+                        const c = r?.data || r || {};
+                        const rcs = Array.isArray(c.route_channels) ? c.route_channels : [];
+                        this.relocateDuctCableRouteChannels = (rcs || []).map(rc => ({
+                            cable_channel_id: parseInt(rc.cable_channel_id || 0, 10),
+                            direction_id: parseInt(rc.direction_id || 0, 10),
+                            route_order: parseInt(rc.route_order || 0, 10) || 0,
+                        })).filter(x => x.cable_channel_id && x.direction_id);
+                        try {
+                            if (newIds.length) this.highlightCableRouteDirections(this.relocateDuctCableId);
+                            else this.clearHighlight();
+                        } catch (_) {}
+                        App.notify('Участок удалён из маршрута', 'success');
+                    } catch (e) {
+                        App.notify(e?.message || 'Ошибка изменения маршрута', 'error');
+                    }
+                    return;
+                }
+
+                // добавить: выбрать канал направления
+                try {
+                    const resp = await API.channelDirections.get(directionId);
+                    const dir = resp?.data || resp || {};
+                    const channels = Array.isArray(dir.channels) ? dir.channels : [];
+                    if (!channels.length) {
+                        App.notify('У направления нет каналов', 'warning');
+                        return;
+                    }
+                    this.relocateDuctCablePendingDirection = { directionId, channels };
+                    const content = `
+                        <div style="max-height: 60vh; overflow:auto;">
+                            ${(channels || []).map((ch) => `
+                                <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectRelocateDuctCableChannel(${parseInt(ch.id, 10)})">
+                                    Канал ${ch.channel_number}${ch.kind_name ? ` — ${String(ch.kind_name).replace(/</g, '&lt;')}` : ''}
+                                </button>
+                            `).join('')}
+                        </div>
+                        <p class="text-muted" style="margin-top:8px;">Выберите канал, который нужно добавить в маршрут кабеля.</p>
+                    `;
+                    const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+                    App.showModal('Добавить канал в маршрут', content, footer);
+                } catch (e) {
+                    App.notify('Не удалось загрузить каналы направления', 'error');
+                }
+            };
+
+            if (dirHits.length <= 1) {
+                if (!dirHits.length) {
+                    App.notify('Кликните по направлению (линии)', 'warning');
+                    return;
+                }
+                pickDir(dirHits[0]);
+                return;
+            }
+            // несколько направлений под курсором
+            this.relocateDuctCableDirectionPickCandidates = dirHits;
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(dirHits || []).map((h, idx) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectRelocateDirectionFromHits(${idx})">
+                            ${h.title}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите направление.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            App.showModal('Выберите направление', content, footer);
+            return;
+        }
+
+        // "Переместить точечный объект"
+        if (this.movePointMode) {
+            if (!this.movePointSelected) {
+                const pointHits = (hits || []).filter(h => h?.objectType === 'well' || h?.objectType === 'marker_post');
+                const pick = (h) => {
+                    if (!h) return;
+                    const objType = h.objectType;
+                    const id = parseInt(h?.properties?.id || 0, 10);
+                    if (!id) return;
+                    const layer = this.findLayerByMeta(objType, id);
+                    const ll = layer?.getLatLng?.();
+                    if (!ll) {
+                        App.notify('Не удалось определить координаты объекта', 'error');
+                        return;
+                    }
+                    this.movePointSelected = { objectType: objType, id, origLatLng: ll, newLatLng: ll };
+                    try {
+                        if (this.movePointMarker) this.map.removeLayer(this.movePointMarker);
+                    } catch (_) {}
+                    this.movePointMarker = L.marker(ll, {
+                        draggable: true,
+                        autoPan: true,
+                        keyboard: false,
+                        opacity: 0.9,
+                    }).addTo(this.map);
+                    this.movePointMarker.on('dragend', () => {
+                        try {
+                            const nll = this.movePointMarker.getLatLng();
+                            this.movePointSelected.newLatLng = nll;
+                        } catch (_) {}
+                    });
+                    App.notify('Перетащите маркер в новое место и нажмите Enter или кнопку перемещения ещё раз', 'info');
+                };
+
+                if (pointHits.length <= 1) {
+                    if (!pointHits.length) {
+                        App.notify('Выберите колодец или столбик', 'warning');
+                        return;
+                    }
+                    pick(pointHits[0]);
+                    return;
+                }
+                // несколько объектов — выбор
+                this.movePointPickCandidates = pointHits;
+                const content = `
+                    <div style="max-height: 60vh; overflow:auto;">
+                        ${(pointHits || []).map((h, idx) => `
+                            <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectMovePointFromHits(${idx})">
+                                ${h.title}
+                            </button>
+                        `).join('')}
+                    </div>
+                    <p class="text-muted" style="margin-top:8px;">Выберите точечный объект для перемещения.</p>
+                `;
+                const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+                App.showModal('Переместить объект', content, footer);
+                return;
+            }
+            // если объект уже выбран — дальнейшие клики игнорируем (перемещение drag&drop)
+            return;
+        }
+
         // "Набить колодец": выбираем направление
         if (this.stuffWellMode) {
             // запоминаем координаты клика, чтобы новый колодец создавался в точке клика
@@ -1108,6 +1324,240 @@ const MapManager = {
             const props = Object.assign({}, (h.properties || {}), { __clickLatLng: this.lastClickLatLng || null });
             App.openStuffWellFromDirection?.(props);
         } catch (_) {}
+    },
+
+    async selectRelocateDuctCableFromHits(idx) {
+        const h = (this.relocateDuctCablePickCandidates || [])[idx];
+        if (!h) return;
+        App.hideModal();
+        await this._relocateSelectCableHit(h);
+    },
+
+    async selectRelocateDirectionFromHits(idx) {
+        const h = (this.relocateDuctCableDirectionPickCandidates || [])[idx];
+        if (!h) return;
+        App.hideModal();
+        await this._relocateHandleDirectionHit(h);
+    },
+
+    async selectRelocateDuctCableChannel(channelId) {
+        const cid = parseInt(channelId || 0, 10);
+        if (!cid) return;
+        App.hideModal();
+        await this._relocateAddChannel(cid);
+    },
+
+    selectMovePointFromHits(idx) {
+        const h = (this.movePointPickCandidates || [])[idx];
+        if (!h) return;
+        App.hideModal();
+        try {
+            if (h?.objectType !== 'well' && h?.objectType !== 'marker_post') return;
+            const id = parseInt(h?.properties?.id || 0, 10);
+            if (!id) return;
+            const layer = this.findLayerByMeta(h.objectType, id);
+            const ll = layer?.getLatLng?.();
+            if (!ll) return;
+            this.movePointSelected = { objectType: h.objectType, id, origLatLng: ll, newLatLng: ll };
+            if (this.movePointMarker) this.map.removeLayer(this.movePointMarker);
+            this.movePointMarker = L.marker(ll, { draggable: true, autoPan: true, keyboard: false, opacity: 0.9 }).addTo(this.map);
+            this.movePointMarker.on('dragend', () => {
+                try { this.movePointSelected.newLatLng = this.movePointMarker.getLatLng(); } catch (_) {}
+            });
+            App.notify('Перетащите маркер в новое место и нажмите Enter или кнопку перемещения ещё раз', 'info');
+        } catch (_) {}
+    },
+
+    async _relocateSelectCableHit(h) {
+        if (!h || h.objectType !== 'unified_cable') return;
+        const cid = parseInt(h?.properties?.id || 0, 10);
+        const code = (h?.properties?.object_type_code || '').toString();
+        if (!cid || code !== 'cable_duct') {
+            App.notify('Выберите кабель в канализации', 'warning');
+            return;
+        }
+        this.relocateDuctCableId = cid;
+        try {
+            const resp = await API.unifiedCables.get(cid);
+            const c = resp?.data || resp || {};
+            const rcs = Array.isArray(c.route_channels) ? c.route_channels : [];
+            this.relocateDuctCableRouteChannels = (rcs || []).map(rc => ({
+                cable_channel_id: parseInt(rc?.cable_channel_id || 0, 10),
+                direction_id: parseInt(rc?.direction_id || 0, 10),
+                route_order: parseInt(rc?.route_order || 0, 10) || 0,
+            })).filter(x => x.cable_channel_id > 0 && x.direction_id > 0);
+        } catch (_) {
+            this.relocateDuctCableRouteChannels = [];
+        }
+        try { this.highlightCableRouteDirections(cid); } catch (_) {}
+        App.notify('Кабель выбран. Кликните по направлению: удалить/добавить канал.', 'info');
+    },
+
+    async _relocateHandleDirectionHit(h) {
+        if (!this.relocateDuctCableMode || !this.relocateDuctCableId) return;
+        if (!h || h.objectType !== 'channel_direction') {
+            App.notify('Кликните по направлению (линии)', 'warning');
+            return;
+        }
+        const directionId = parseInt(h?.properties?.id || 0, 10);
+        if (!directionId) return;
+
+        const inRoute = (this.relocateDuctCableRouteChannels || []).some(x => parseInt(x.direction_id || 0, 10) === directionId);
+        if (inRoute) {
+            const kept = (this.relocateDuctCableRouteChannels || []).filter(x => parseInt(x.direction_id || 0, 10) !== directionId);
+            kept.sort((a, b) => (a.route_order || 0) - (b.route_order || 0));
+            const newIds = kept.map(x => x.cable_channel_id);
+            try {
+                const resp = await API.unifiedCables.update(this.relocateDuctCableId, { route_channels: newIds });
+                if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                const r = await API.unifiedCables.get(this.relocateDuctCableId);
+                const c = r?.data || r || {};
+                const rcs = Array.isArray(c.route_channels) ? c.route_channels : [];
+                this.relocateDuctCableRouteChannels = (rcs || []).map(rc => ({
+                    cable_channel_id: parseInt(rc?.cable_channel_id || 0, 10),
+                    direction_id: parseInt(rc?.direction_id || 0, 10),
+                    route_order: parseInt(rc?.route_order || 0, 10) || 0,
+                })).filter(x => x.cable_channel_id > 0 && x.direction_id > 0);
+                try {
+                    if (newIds.length) this.highlightCableRouteDirections(this.relocateDuctCableId);
+                    else this.clearHighlight();
+                } catch (_) {}
+                App.notify('Участок удалён из маршрута', 'success');
+            } catch (e) {
+                App.notify(e?.message || 'Ошибка изменения маршрута', 'error');
+            }
+            return;
+        }
+
+        try {
+            const resp = await API.channelDirections.get(directionId);
+            const dir = resp?.data || resp || {};
+            const channels = Array.isArray(dir.channels) ? dir.channels : [];
+            if (!channels.length) {
+                App.notify('У направления нет каналов', 'warning');
+                return;
+            }
+            this.relocateDuctCablePendingDirection = { directionId, channels };
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(channels || []).map((ch) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager.selectRelocateDuctCableChannel(${parseInt(ch.id, 10)})">
+                            Канал ${ch.channel_number}${ch.kind_name ? ` — ${String(ch.kind_name).replace(/</g, '&lt;')}` : ''}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите канал, который нужно добавить в маршрут кабеля.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            App.showModal('Добавить канал в маршрут', content, footer);
+        } catch (_) {
+            App.notify('Не удалось загрузить каналы направления', 'error');
+        }
+    },
+
+    async _relocateAddChannel(channelId) {
+        if (!this.relocateDuctCableMode || !this.relocateDuctCableId) return;
+        const kept = (this.relocateDuctCableRouteChannels || []).slice().sort((a, b) => (a.route_order || 0) - (b.route_order || 0));
+        const ids = kept.map(x => x.cable_channel_id);
+        if (ids.includes(channelId)) {
+            App.notify('Канал уже в маршруте', 'info');
+            return;
+        }
+        ids.push(channelId);
+        try {
+            const resp = await API.unifiedCables.update(this.relocateDuctCableId, { route_channels: ids });
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const r = await API.unifiedCables.get(this.relocateDuctCableId);
+            const c = r?.data || r || {};
+            const rcs = Array.isArray(c.route_channels) ? c.route_channels : [];
+            this.relocateDuctCableRouteChannels = (rcs || []).map(rc => ({
+                cable_channel_id: parseInt(rc?.cable_channel_id || 0, 10),
+                direction_id: parseInt(rc?.direction_id || 0, 10),
+                route_order: parseInt(rc?.route_order || 0, 10) || 0,
+            })).filter(x => x.cable_channel_id > 0 && x.direction_id > 0);
+            try { this.highlightCableRouteDirections(this.relocateDuctCableId); } catch (_) {}
+            App.notify('Канал добавлен в маршрут', 'success');
+        } catch (e) {
+            App.notify(e?.message || 'Ошибка изменения маршрута', 'error');
+        }
+    },
+
+    toggleRelocateDuctCableMode() {
+        this.relocateDuctCableMode = !this.relocateDuctCableMode;
+        if (this.relocateDuctCableMode) {
+            this.relocateDuctCableId = null;
+            this.relocateDuctCableRouteChannels = [];
+            this.relocateDuctCablePickCandidates = [];
+            this.relocateDuctCableDirectionPickCandidates = [];
+            this.relocateDuctCablePendingDirection = null;
+            if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+            App.notify('Переложить кабель: сначала кликните по кабелю в канализации', 'info');
+        } else {
+            this.relocateDuctCableId = null;
+            this.relocateDuctCableRouteChannels = [];
+            this.relocateDuctCablePickCandidates = [];
+            this.relocateDuctCableDirectionPickCandidates = [];
+            this.relocateDuctCablePendingDirection = null;
+            if (this.map) this.map.getContainer().style.cursor = '';
+            try { this.clearHighlight(); } catch (_) {}
+        }
+    },
+
+    toggleMovePointMode() {
+        // Если режим уже активен и объект выбран — кнопка работает как "сохранить"
+        if (this.movePointMode && this.movePointSelected) {
+            this.commitMovePoint();
+            return;
+        }
+
+        this.movePointMode = !this.movePointMode;
+        if (this.movePointMode) {
+            this.movePointSelected = null;
+            try { if (this.movePointMarker) this.map.removeLayer(this.movePointMarker); } catch (_) {}
+            this.movePointMarker = null;
+            this.movePointPickCandidates = [];
+            if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+            App.notify('Перемещение: кликните по колодцу/столбику, затем перетащите и подтвердите Enter', 'info');
+        } else {
+            this.cancelMovePointMode();
+        }
+    },
+
+    cancelMovePointMode() {
+        this.movePointMode = false;
+        this.movePointSelected = null;
+        this.movePointPickCandidates = [];
+        try { if (this.movePointMarker) this.map.removeLayer(this.movePointMarker); } catch (_) {}
+        this.movePointMarker = null;
+        if (this.map) this.map.getContainer().style.cursor = '';
+    },
+
+    async commitMovePoint() {
+        if (!this.movePointMode || !this.movePointSelected) return;
+        const sel = this.movePointSelected;
+        const ll = sel.newLatLng || sel.origLatLng;
+        const lat = ll?.lat;
+        const lng = ll?.lng;
+        if (lat === undefined || lng === undefined) return;
+        if (typeof App !== 'undefined' && typeof App.canWrite === 'function' && !App.canWrite()) {
+            App.notify('Недостаточно прав для изменения', 'error');
+            return;
+        }
+        try {
+            let resp = null;
+            if (sel.objectType === 'well') {
+                resp = await API.wells.update(sel.id, { latitude: lat, longitude: lng });
+            } else if (sel.objectType === 'marker_post') {
+                resp = await API.markerPosts.update(sel.id, { latitude: lat, longitude: lng });
+            }
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.cancelMovePointMode();
+            try { document.getElementById('btn-move-point-map')?.classList?.toggle('active', false); } catch (_) {}
+            App.notify('Объект перемещён', 'success');
+            try { await this.loadAllLayers?.(); } catch (_) {}
+        } catch (e) {
+            App.notify(e?.message || 'Ошибка перемещения', 'error');
+        }
     },
 
     toggleStuffWellMode() {
