@@ -108,7 +108,7 @@ const App = {
             });
             // Инструменты карты: отключаем всё кроме разрешённых
             try {
-                const allowed = new Set(['btn-toggle-well-labels', 'btn-toggle-direction-length-labels', 'btn-toggle-owner-legend']);
+                const allowed = new Set(['btn-toggle-well-labels', 'btn-toggle-object-coordinates', 'btn-toggle-direction-length-labels', 'btn-toggle-owner-legend']);
                 document.querySelectorAll('#map-toolbar button').forEach((btn) => {
                     if (!btn?.id) return;
                     if (allowed.has(btn.id)) return;
@@ -693,6 +693,12 @@ const App = {
         document.getElementById('btn-toggle-well-labels')?.addEventListener('click', (e) => {
             MapManager.toggleWellLabels();
             e.currentTarget.classList.toggle('active', MapManager.wellLabelsEnabled);
+        });
+        document.getElementById('btn-toggle-object-coordinates')?.addEventListener('click', (e) => {
+            try {
+                MapManager.toggleObjectCoordinatesLabels?.();
+                e.currentTarget.classList.toggle('active', !!MapManager.objectCoordinatesLabelsEnabled);
+            } catch (_) {}
         });
         document.getElementById('btn-toggle-direction-length-labels')?.addEventListener('click', (e) => {
             MapManager.toggleDirectionLengthLabels();

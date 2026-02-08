@@ -35,6 +35,10 @@ const MapManager = {
     wellLabelsEnabled: false,
     wellLabelsLayer: null,
     wellLabelsMinZoom: 14,
+    // Подписи координат (колодцы + столбики)
+    objectCoordinatesLabelsEnabled: false,
+    objectCoordinatesLabelsLayer: null,
+    objectCoordinatesLabelsMinZoom: 14,
     // Подписи длины направлений
     directionLengthLabelsEnabled: false,
     directionLengthLabelsLayer: null,
@@ -135,6 +139,11 @@ const MapManager = {
 
     getWellLabelFontSizePx() {
         return Math.max(8, this.getSettingNumber('font_size_well_number_label', 12));
+    },
+
+    getObjectCoordinatesLabelFontSizePx() {
+        // По ТЗ размер шрифта берём из "Размер шрифта — номер Колодца"
+        return this.getWellLabelFontSizePx();
     },
 
     getDirectionLengthLabelFontSizePx() {
@@ -285,6 +294,55 @@ const MapManager = {
         }
     },
 
+    rebuildObjectCoordinatesLabelsFromPointLayers() {
+        if (!this.objectCoordinatesLabelsLayer) return;
+        this.objectCoordinatesLabelsLayer.clearLayers();
+
+        const fontSize = this.getObjectCoordinatesLabelFontSizePx();
+        const fmt = (v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '';
+            return n.toFixed(6);
+        };
+
+        const addLabel = (latlng) => {
+            const lat = fmt(latlng?.lat);
+            const lng = fmt(latlng?.lng);
+            if (!lat || !lng) return;
+            const label = L.marker(latlng, {
+                interactive: false,
+                keyboard: false,
+                icon: L.divIcon({
+                    className: 'igs-coords-label',
+                    html: `<div class="igs-coords-label-box" style="font-size:${fontSize}px;">${lat}<br>${lng}</div>`,
+                    iconAnchor: [0, 0],
+                }),
+            });
+            label.addTo(this.objectCoordinatesLabelsLayer);
+        };
+
+        const traverse = (layer) => {
+            if (!layer) return;
+            if (typeof layer.getLayers === 'function') {
+                (layer.getLayers() || []).forEach(traverse);
+                return;
+            }
+            const meta = layer?._igsMeta;
+            if (!meta) return;
+            if (meta.objectType !== 'well' && meta.objectType !== 'marker_post') return;
+            const ll = layer.getLatLng?.();
+            if (!ll) return;
+            addLabel(ll);
+        };
+
+        try {
+            traverse(this.layers?.wells);
+            traverse(this.layers?.markers);
+        } catch (_) {
+            // ignore
+        }
+    },
+
     getTypeDisplayName(objectType) {
         const typeNames = {
             well: 'Колодец',
@@ -341,6 +399,8 @@ const MapManager = {
 
         // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
         this.wellLabelsLayer = L.featureGroup().addTo(this.map);
+        // Отдельный слой подписей координат (колодцы + столбики)
+        this.objectCoordinatesLabelsLayer = L.featureGroup().addTo(this.map);
         // Отдельный слой подписей длин направлений
         this.directionLengthLabelsLayer = L.featureGroup().addTo(this.map);
 
@@ -396,9 +456,11 @@ const MapManager = {
         // Авто-скрытие подписей колодцев по зуму + пересборка подписей направлений (угол зависит от зума)
         this.map.on('zoomend', () => {
             this.updateWellLabelsVisibility();
+            this.updateObjectCoordinatesLabelsVisibility();
             if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
         });
         this.updateWellLabelsVisibility();
+        this.updateObjectCoordinatesLabelsVisibility();
 
         console.log('Карта инициализирована');
     },
@@ -726,6 +788,7 @@ const MapManager = {
             
             this.layers.wells.clearLayers();
             if (this.wellLabelsLayer) this.wellLabelsLayer.clearLayers();
+            if (this.objectCoordinatesLabelsLayer) this.objectCoordinatesLabelsLayer.clearLayers();
             
             // Фильтруем features с невалидной геометрией
             const validFeatures = response.features.filter(f => f && f.geometry && f.geometry.type);
@@ -775,6 +838,8 @@ const MapManager = {
                 // Пересобираем подписи из текущего слоя колодцев (важно для режима "Группа")
                 if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
                 this.updateWellLabelsVisibility();
+                if (this.objectCoordinatesLabelsEnabled) this.rebuildObjectCoordinatesLabelsFromPointLayers();
+                this.updateObjectCoordinatesLabelsVisibility();
             }
         } catch (error) {
             console.error('Ошибка загрузки колодцев:', error);
@@ -789,6 +854,14 @@ const MapManager = {
         if (!shouldShow && hasLayer) this.map.removeLayer(this.wellLabelsLayer);
     },
 
+    updateObjectCoordinatesLabelsVisibility() {
+        if (!this.map || !this.objectCoordinatesLabelsLayer) return;
+        const shouldShow = this.objectCoordinatesLabelsEnabled && this.map.getZoom() >= this.objectCoordinatesLabelsMinZoom;
+        const hasLayer = this.map.hasLayer(this.objectCoordinatesLabelsLayer);
+        if (shouldShow && !hasLayer) this.map.addLayer(this.objectCoordinatesLabelsLayer);
+        if (!shouldShow && hasLayer) this.map.removeLayer(this.objectCoordinatesLabelsLayer);
+    },
+
     setWellLabelsEnabled(enabled) {
         this.wellLabelsEnabled = !!enabled;
         if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
@@ -797,6 +870,16 @@ const MapManager = {
 
     toggleWellLabels() {
         this.setWellLabelsEnabled(!this.wellLabelsEnabled);
+    },
+
+    setObjectCoordinatesLabelsEnabled(enabled) {
+        this.objectCoordinatesLabelsEnabled = !!enabled;
+        if (this.objectCoordinatesLabelsEnabled) this.rebuildObjectCoordinatesLabelsFromPointLayers();
+        this.updateObjectCoordinatesLabelsVisibility();
+    },
+
+    toggleObjectCoordinatesLabels() {
+        this.setObjectCoordinatesLabelsEnabled(!this.objectCoordinatesLabelsEnabled);
     },
 
     rebuildDirectionLengthLabelsFromDirectionsLayer() {
@@ -1090,6 +1173,8 @@ const MapManager = {
                     },
                 }).addTo(this.layers.markers);
             }
+            if (this.objectCoordinatesLabelsEnabled) this.rebuildObjectCoordinatesLabelsFromPointLayers();
+            this.updateObjectCoordinatesLabelsVisibility();
         } catch (error) {
             console.error('Ошибка загрузки столбиков:', error);
         }

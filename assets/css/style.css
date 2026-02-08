@@ -536,6 +536,26 @@ a:hover {
     transform: translate(-50%, -26px); /* над колодцем, без наезда на символ */
 }
 
+/* Object coordinates labels (wells + marker posts) */
+.igs-coords-label {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.igs-coords-label-box {
+    background: rgba(255, 255, 255, 0.78);
+    color: #111;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 6px;
+    padding: 4px 6px;
+    line-height: 1.15;
+    font-weight: 600;
+    transform: translate(-100%, 8px); /* снизу-слева от объекта */
+}
+
 /* Direction length labels (Leaflet divIcon defaults to 12x12) */
 .direction-length-label {
     width: max-content !important;
