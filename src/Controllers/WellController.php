@@ -955,6 +955,7 @@ class WellController extends BaseController
      */
     public function export(): void
     {
+        try { $this->log('export', 'wells', null, null, ['type' => 'wells']); } catch (\Throwable $e) {}
         $filters = $this->buildFilters([
             'owner_id' => 'w.owner_id',
             'type_id' => 'w.type_id',
@@ -1015,6 +1016,7 @@ class WellController extends BaseController
     public function importTextPreview(): void
     {
         $this->checkWriteAccess();
+        try { $this->log('import', 'wells', null, null, ['stage' => 'preview']); } catch (\Throwable $e) {}
 
         $text = (string) $this->request->input('text', '');
         $delimiterRaw = (string) $this->request->input('delimiter', ';');
@@ -1051,6 +1053,7 @@ class WellController extends BaseController
     public function importText(): void
     {
         $this->checkWriteAccess();
+        try { $this->log('import', 'wells', null, null, ['stage' => 'apply']); } catch (\Throwable $e) {}
 
         $text = (string) $this->request->input('text', '');
         $delimiterRaw = (string) $this->request->input('delimiter', ';');

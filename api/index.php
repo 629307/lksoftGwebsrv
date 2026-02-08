@@ -118,6 +118,7 @@ use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
 use App\Controllers\SettingsController;
 use App\Controllers\DbBackupController;
+use App\Controllers\AuditLogController;
 
 $router = new Router();
 $request = new Request();
@@ -310,6 +311,9 @@ $router->get('/api/admin/db-backups', [DbBackupController::class, 'index'], ['au
 $router->post('/api/admin/db-backups', [DbBackupController::class, 'create'], ['auth']);
 $router->post('/api/admin/db-backups/tick', [DbBackupController::class, 'tick'], ['auth']);
 $router->post('/api/admin/db-backups/{id}/restore', [DbBackupController::class, 'restore'], ['auth']);
+
+// Администрирование: журнал действий (только админ)
+$router->get('/api/admin/audit-log', [AuditLogController::class, 'index'], ['auth']);
 
 // Запуск маршрутизации
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

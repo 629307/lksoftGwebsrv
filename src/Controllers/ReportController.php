@@ -15,6 +15,8 @@ class ReportController extends BaseController
      */
     public function objects(): void
     {
+        // аудит: запрос формирования отчёта
+        try { $this->log('report', 'reports', null, null, ['type' => 'objects', 'owner_id' => (int) $this->request->query('owner_id', 0)]); } catch (\Throwable $e) {}
         // На экране отчёта используется фильтр по собственнику (owner_id)
         $ownerId = (int) $this->request->query('owner_id', 0);
         $params = $ownerId > 0 ? ['oid' => $ownerId] : [];
@@ -91,6 +93,7 @@ class ReportController extends BaseController
      */
     public function contracts(): void
     {
+        try { $this->log('report', 'reports', null, null, ['type' => 'contracts', 'contract_id' => (int) $this->request->query('contract_id', 0)]); } catch (\Throwable $e) {}
         $contractId = (int) $this->request->query('contract_id', 0);
 
         // Список контрактов для селекта
@@ -253,6 +256,7 @@ class ReportController extends BaseController
      */
     public function owners(): void
     {
+        try { $this->log('report', 'reports', null, null, ['type' => 'owners']); } catch (\Throwable $e) {}
         $owners = $this->db->fetchAll(
             "SELECT o.id, o.name, o.short_name, o.inn, o.contact_person, o.contact_phone,
                     (SELECT COUNT(*) FROM wells WHERE owner_id = o.id) as wells,
@@ -275,6 +279,7 @@ class ReportController extends BaseController
      */
     public function incidents(): void
     {
+        try { $this->log('report', 'reports', null, null, ['type' => 'incidents']); } catch (\Throwable $e) {}
         // В UI для фильтра чаще приходят даты без времени (YYYY-MM-DD).
         // Для TIMESTAMP важно включать весь день, иначе при date_to=сегодня будет отсечено всё после 00:00:00.
         $dateFrom = (string) $this->request->query('date_from', date('Y-01-01 00:00:00'));
@@ -366,6 +371,7 @@ class ReportController extends BaseController
      */
     public function export(string $type): void
     {
+        try { $this->log('report_export', 'reports', null, null, ['type' => $type]); } catch (\Throwable $e) {}
         $data = [];
         $filename = '';
         $headers = [];

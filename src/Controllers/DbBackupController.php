@@ -233,6 +233,7 @@ class DbBackupController extends BaseController
         @set_time_limit(0);
 
         $this->withLock('db_backup', function () {
+            try { $this->log('backup_create', 'db_backups'); } catch (\Throwable $e) {}
             $dir = $this->ensureBackupDir();
             $db = $this->dbCfg();
             $ts = date('Ymd_His');
@@ -331,6 +332,7 @@ class DbBackupController extends BaseController
         @set_time_limit(0);
 
         $this->withLock('db_restore', function () use ($id) {
+            try { $this->log('backup_restore', 'db_backups', null, null, ['id' => $id]); } catch (\Throwable $e) {}
             $dir = $this->ensureBackupDir();
             $bid = $this->sanitizeBackupId($id);
             if (!preg_match('/\.dump$/', $bid)) {

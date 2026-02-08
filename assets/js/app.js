@@ -4355,6 +4355,7 @@ const App = {
             const response = await API.users.list();
             if (response.success) {
                 this.renderUsersTable(response.data);
+                this.renderAuditLogPanel(response.data);
             }
         } catch (error) {
             this.notify('Ошибка загрузки пользователей', 'error');
@@ -4375,6 +4376,9 @@ const App = {
                 <td><span class="status-badge ${user.is_active ? 'active' : 'inactive'}">${user.is_active ? 'Да' : 'Нет'}</span></td>
                 <td>${this.formatDate(user.last_login)}</td>
                 <td>
+                    <button class="btn btn-sm btn-secondary" onclick="App.showUserAuditLog(${user.id})" title="Показать действия пользователя">
+                        <i class="fas fa-history"></i>
+                    </button>
                     <button class="btn btn-sm btn-primary" onclick="App.editUser(${user.id})">
                         <i class="fas fa-edit"></i>
                     </button>
@@ -4386,6 +4390,130 @@ const App = {
                 </td>
             </tr>
         `).join('');
+    },
+
+    renderAuditLogPanel(users) {
+        const el = document.getElementById('audit-log');
+        if (!el) return;
+
+        const list = Array.isArray(users) ? users : [];
+        const options = [
+            `<option value="">Все пользователи</option>`,
+            ...list.map(u => `<option value="${u.id}">${this.escapeHtml(u.login)}${u.full_name ? ' — ' + this.escapeHtml(u.full_name) : ''}</option>`)
+        ].join('');
+
+        el.innerHTML = `
+            <div class="filters-row" style="margin: 10px 0;">
+                <select id="audit-user-select">${options}</select>
+                <button class="btn btn-primary btn-sm" id="btn-audit-refresh">
+                    <i class="fas fa-rotate"></i> Показать
+                </button>
+                <span class="text-muted" id="audit-log-hint" style="margin-left:auto;"></span>
+            </div>
+            <div id="audit-log-table" style="overflow:auto; max-height: 55vh; border: 1px solid var(--border-color); border-radius: 10px;"></div>
+        `;
+
+        if (!this._boundAuditLogPanel) {
+            this._boundAuditLogPanel = true;
+            document.addEventListener('click', (e) => {
+                if (e?.target?.id === 'btn-audit-refresh' || e?.target?.closest?.('#btn-audit-refresh')) {
+                    this.loadAuditLogFromUi();
+                }
+            });
+            document.addEventListener('change', (e) => {
+                if (e?.target?.id === 'audit-user-select') {
+                    this.loadAuditLogFromUi();
+                }
+            });
+        }
+
+        // По умолчанию показываем последние действия (все пользователи)
+        this.loadAuditLogFromUi();
+    },
+
+    showUserAuditLog(userId) {
+        const sel = document.getElementById('audit-user-select');
+        if (sel) sel.value = String(userId || '');
+        // переключаемся к журналу
+        try { document.getElementById('audit-log')?.scrollIntoView({ block: 'start' }); } catch (_) {}
+        this.loadAuditLogFromUi();
+    },
+
+    async loadAuditLogFromUi() {
+        const uid = (document.getElementById('audit-user-select')?.value || '').toString().trim();
+        const userId = uid ? parseInt(uid, 10) : 0;
+        return this.loadAuditLog(userId);
+    },
+
+    async loadAuditLog(userId = 0) {
+        const tableEl = document.getElementById('audit-log-table');
+        const hintEl = document.getElementById('audit-log-hint');
+        if (!tableEl) return;
+        tableEl.innerHTML = `<div class="text-muted" style="padding:12px;">Загрузка...</div>`;
+        if (hintEl) hintEl.textContent = 'Показываются последние 1000 действий';
+
+        try {
+            const params = { limit: 1000 };
+            if (userId) params.user_id = userId;
+            const resp = await API.auditLog.list(params);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const rows = resp?.data || resp || [];
+            if (!Array.isArray(rows) || rows.length === 0) {
+                tableEl.innerHTML = `<div class="text-muted" style="padding:12px;">Нет данных</div>`;
+                return;
+            }
+
+            const actionName = (a) => {
+                const x = (a || '').toString();
+                const map = {
+                    login: 'Логин',
+                    logout: 'Выход',
+                    create: 'Создание',
+                    update: 'Редактирование',
+                    delete: 'Удаление',
+                    export: 'Выгрузка',
+                    import: 'Загрузка',
+                    report: 'Отчёт',
+                    report_export: 'Выгрузка отчёта',
+                    backup_create: 'Бэкап БД',
+                    backup_restore: 'Восстановление БД',
+                };
+                return map[x] || x;
+            };
+
+            const fmtDt = (v) => {
+                try { return v ? new Date(v).toLocaleString('ru-RU') : '-'; } catch (_) { return '-'; }
+            };
+
+            tableEl.innerHTML = `
+                <table style="width:100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="position: sticky; top: 0;">Дата/время</th>
+                            <th style="position: sticky; top: 0;">Пользователь</th>
+                            <th style="position: sticky; top: 0;">Действие</th>
+                            <th style="position: sticky; top: 0;">Объект</th>
+                            <th style="position: sticky; top: 0;">ID</th>
+                            <th style="position: sticky; top: 0;">IP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(r => `
+                            <tr>
+                                <td>${this.escapeHtml(fmtDt(r.created_at))}</td>
+                                <td>${this.escapeHtml(r.user_login || '-')}${r.user_full_name ? `<div class="text-muted" style="font-size:12px;">${this.escapeHtml(r.user_full_name)}</div>` : ''}</td>
+                                <td>${this.escapeHtml(actionName(r.action))}</td>
+                                <td>${this.escapeHtml(r.table_name || '-')}</td>
+                                <td>${this.escapeHtml(r.record_id ?? '-')}</td>
+                                <td>${this.escapeHtml(r.ip_address || '-')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        } catch (e) {
+            tableEl.innerHTML = `<div class="text-muted" style="padding:12px;">Ошибка: ${this.escapeHtml(e?.message || 'Ошибка')}</div>`;
+        }
     },
 
     async editUser(id) {

@@ -1243,6 +1243,7 @@ class ChannelController extends BaseController
      */
     public function exportDirections(): void
     {
+        try { $this->log('export', 'channel_directions', null, null, ['type' => 'directions']); } catch (\Throwable $e) {}
         $filters = $this->buildFilters([
             'owner_id' => 'cd.owner_id',
             'type_id' => 'cd.type_id',
@@ -1297,6 +1298,7 @@ class ChannelController extends BaseController
      */
     public function exportChannels(): void
     {
+        try { $this->log('export', 'cable_channels', null, null, ['type' => 'channels']); } catch (\Throwable $e) {}
         $filters = $this->buildFilters([
             'direction_id' => 'cc.direction_id',
             'kind_id' => 'cc.kind_id',
