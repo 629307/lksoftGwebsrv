@@ -2393,7 +2393,7 @@ const MapManager = {
                 <span class="info-label" style="flex: 0 0 auto;">${this.getTypeDisplayName(ot)}:</span>
                 <span class="info-value" style="flex: 1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;">${label}</span>
                 <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 8px;" title="Исключить из выделения"
-                        onclick="MapManager.removeFromMultiSelection(${JSON.stringify(String(ot))}, ${JSON.stringify(String(id))})">
+                        onclick='MapManager.removeFromMultiSelection(${JSON.stringify(String(ot))}, ${JSON.stringify(String(id))})'>
                     <i class="fas fa-times"></i>
                 </button>
             </div>`;
