@@ -762,7 +762,9 @@ const App = {
         // Загружаем данные для панели
         switch (panel) {
             case 'objects':
-                this.loadObjects();
+                // Важно: при первом входе в "Объекты" нужно корректно показать фильтры выбранной вкладки
+                // (иначе для "Колодцы" фильтр может не появиться до переключения вкладок).
+                this.switchTab(this.currentTab || 'wells');
                 break;
             case 'incidents':
                 this.loadIncidents();
