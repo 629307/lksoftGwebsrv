@@ -3598,7 +3598,8 @@ const App = {
         const contracted = data?.contracted || { stats: { count: 0, length_sum_contract_part: 0, cost_per_meter: null }, cables: [] };
         const uncontracted = data?.uncontracted || { stats: { count: 0, length_sum_contract_part: 0, cost_per_meter: null }, cables: [] };
 
-        const renderCablesTable = (rows) => `
+        const canManage = (typeof this.canWrite === 'function') ? this.canWrite() : false;
+        const renderCablesTable = (rows, mode) => `
             <table>
                 <thead>
                     <tr>
@@ -3609,6 +3610,7 @@ const App = {
                         <th>Собственник</th>
                         <th>Длина расч. (м), всего кабеля</th>
                         <th>Длина расч. (м) в части контракта</th>
+                        <th style="width: 210px;">Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -3621,8 +3623,26 @@ const App = {
                             <td>${c.owner_name || '-'}</td>
                             <td>${c.length_calculated || 0}</td>
                             <td>${Number(c.length_contract_part || 0).toFixed(2)}</td>
+                            <td style="white-space: nowrap;">
+                                <button class="btn btn-sm btn-secondary" title="Показать на карте"
+                                        onclick='MapManager.showObjectOnMap("unified_cables", ${Number(c.id)})'>
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                ${mode === 'uncontracted' ? (canManage ? `
+                                    <button class="btn btn-sm btn-primary" title="Добавить в контракт"
+                                            onclick='App.addCableToSelectedContractFromReport(${Number(c.id)})'>
+                                        <i class="fas fa-plus"></i>
+                                    </button>
+                                ` : ``) : ``}
+                                ${mode === 'contracted' ? (canManage ? `
+                                    <button class="btn btn-sm btn-danger" title="Исключить из контракта"
+                                            onclick='App.removeCableFromContractFromReport(${Number(c.id)})'>
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                ` : ``) : ``}
+                            </td>
                         </tr>
-                    `).join('') || '<tr><td colspan="7">Нет данных</td></tr>'}
+                    `).join('') || '<tr><td colspan="8">Нет данных</td></tr>'}
                 </tbody>
             </table>
         `;
@@ -3651,7 +3671,7 @@ const App = {
                             Стоимость за 1 метр: ${green(contracted.stats.cost_per_meter === null ? '-' : contracted.stats.cost_per_meter)})
                         </span>
                     </h4>
-                    ${renderCablesTable(contracted.cables)}
+                    ${renderCablesTable(contracted.cables, 'contracted')}
                 </div>
 
                 <div style="margin-top: 18px;">
@@ -3662,12 +3682,52 @@ const App = {
                             Общая протяженность кабелей (м) в части контракта: ${green(fmt2(uncontracted.stats.length_sum_contract_part || 0))})
                         </span>
                     </h4>
-                    ${renderCablesTable(uncontracted.cables)}
+                    ${renderCablesTable(uncontracted.cables, 'uncontracted')}
                 </div>
             ` : `
                 <p class="text-muted">Выберите контракт в фильтре — после этого будет сформирован отчёт.</p>
             `}
         `;
+    },
+
+    async addCableToSelectedContractFromReport(cableId) {
+        const contractId = document.getElementById('report-contracts-contract')?.value || '';
+        const cid = parseInt(contractId || 0, 10);
+        const id = parseInt(cableId || 0, 10);
+        if (!id || !cid) {
+            this.notify('Выберите контракт', 'warning');
+            return;
+        }
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        try {
+            const resp = await API.unifiedCables.update(id, { contract_id: cid });
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Кабель добавлен в контракт', 'success');
+            await this.applyContractsReportFilter();
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка', 'error');
+        }
+    },
+
+    async removeCableFromContractFromReport(cableId) {
+        const id = parseInt(cableId || 0, 10);
+        if (!id) return;
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (!confirm('Исключить кабель из контракта?')) return;
+        try {
+            const resp = await API.unifiedCables.update(id, { contract_id: null });
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Кабель исключён из контракта', 'success');
+            await this.applyContractsReportFilter();
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка', 'error');
+        }
     },
 
     async applyContractsReportFilter() {
