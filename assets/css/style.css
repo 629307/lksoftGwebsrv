@@ -244,6 +244,15 @@ a:hover {
     transition: border-color 0.2s;
 }
 
+/* DB backup: cron line textarea (readonly) */
+#db-backup-cron-line {
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary);
+}
+#db-backup-cron-line[readonly] {
+    opacity: 1;
+}
+
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus {
