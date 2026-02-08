@@ -4245,12 +4245,13 @@ const App = {
         document.getElementById('modal-footer').innerHTML = footer;
         const modal = document.getElementById('modal');
         // сброс вариантов позиционирования/режимов
-        modal.classList.remove('modal-nonblocking', 'modal-bottom-left');
+        modal.classList.remove('modal-nonblocking', 'modal-bottom-left', 'modal-bottom-right');
         // применяем опции (если есть)
         try {
             const o = opts || {};
             if (o.nonBlocking) modal.classList.add('modal-nonblocking');
             if (o.position === 'bottom-left') modal.classList.add('modal-bottom-left');
+            if (o.position === 'bottom-right') modal.classList.add('modal-bottom-right');
         } catch (_) {}
         modal.classList.remove('hidden');
 
@@ -4271,7 +4272,7 @@ const App = {
         const modal = document.getElementById('modal');
         modal.classList.add('hidden');
         // сбрасываем модификаторы, чтобы следующий показ был "обычным"
-        modal.classList.remove('modal-nonblocking', 'modal-bottom-left');
+        modal.classList.remove('modal-nonblocking', 'modal-bottom-left', 'modal-bottom-right');
     },
 
     /**
@@ -4529,8 +4530,8 @@ const App = {
                 </button>
             `;
             this._shortestDuctCablePath = data;
-            // Неблокирующее окно: снизу-слева, без затемнения карты
-            this.showModal('Кабель в канализации по кратчайшему пути', content, footer, { nonBlocking: true, position: 'bottom-left' });
+            // Неблокирующее окно: снизу-справа, без затемнения карты
+            this.showModal('Кабель в канализации по кратчайшему пути', content, footer, { nonBlocking: true, position: 'bottom-right' });
         } catch (e) {
             this.notify(e?.message || 'Не удалось рассчитать путь', 'error');
         }
@@ -4560,6 +4561,16 @@ const App = {
 
             const picked = await new Promise((resolve) => {
                 this._resolveShortestChannelPick = resolve;
+                // Подсветить направление, где выбираем канал (как выделение объекта)
+                try {
+                    const prev = MapManager?.selectedLayer?._igsMeta || null;
+                    this._shortestPickPrevSelected = (prev && prev.objectType && prev.properties?.id)
+                        ? { objectType: prev.objectType, id: prev.properties.id }
+                        : null;
+                } catch (_) {
+                    this._shortestPickPrevSelected = null;
+                }
+                try { MapManager?.highlightSelectedObject?.('channel_direction', d.id); } catch (_) {}
                 const content = `
                     <div class="text-muted" style="margin-bottom:8px;">Направление: <strong>${this.escapeHtml(d.number || String(d.id))}</strong></div>
                     <div style="max-height: 60vh; overflow:auto;">
@@ -4571,7 +4582,7 @@ const App = {
                     </div>
                 `;
                 const footer = `<button class="btn btn-secondary" onclick="App.cancelShortestPathChannelPick()">Отмена</button>`;
-                this.showModal('Выберите канал направления', content, footer);
+                this.showModal('Выберите канал направления', content, footer, { nonBlocking: true, position: 'bottom-right' });
             });
             if (!picked) return; // cancelled
             selected.push(parseInt(picked, 10));
@@ -4587,6 +4598,13 @@ const App = {
         const fn = this._resolveShortestChannelPick;
         this._resolveShortestChannelPick = null;
         this.hideModal();
+        // снимаем подсветку направления и восстанавливаем предыдущее выделение (если было)
+        try {
+            const prev = this._shortestPickPrevSelected || null;
+            this._shortestPickPrevSelected = null;
+            if (prev && prev.objectType && prev.id) MapManager?.highlightSelectedObject?.(prev.objectType, prev.id);
+            else MapManager?.clearSelectedObject?.();
+        } catch (_) {}
         if (typeof fn === 'function') fn(parseInt(id, 10));
     },
 
@@ -4594,6 +4612,13 @@ const App = {
         const fn = this._resolveShortestChannelPick;
         this._resolveShortestChannelPick = null;
         this.hideModal();
+        // снимаем подсветку направления и восстанавливаем предыдущее выделение (если было)
+        try {
+            const prev = this._shortestPickPrevSelected || null;
+            this._shortestPickPrevSelected = null;
+            if (prev && prev.objectType && prev.id) MapManager?.highlightSelectedObject?.(prev.objectType, prev.id);
+            else MapManager?.clearSelectedObject?.();
+        } catch (_) {}
         if (typeof fn === 'function') fn(null);
     },
 

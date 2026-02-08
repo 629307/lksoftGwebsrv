@@ -1059,6 +1059,18 @@ body.ctrl-down #objects-table .obj-select-col {
     max-height: 45vh;
 }
 
+.modal.modal-bottom-right {
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 12px;
+}
+
+.modal.modal-bottom-right .modal-content {
+    width: 420px;
+    max-width: calc(100vw - 24px);
+    max-height: 45vh;
+}
+
 .modal-content {
     background: var(--bg-card);
     border-radius: 12px;

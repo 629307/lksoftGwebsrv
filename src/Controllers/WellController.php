@@ -455,6 +455,7 @@ class WellController extends BaseController
                 $minSeq
             );
         }
+        $numberChanged = ($needRenumber && array_key_exists('number', $data) && (string) $data['number'] !== (string) $oldNumber);
 
         $user = Auth::user();
         $data['updated_by'] = $user['id'];
@@ -496,6 +497,22 @@ class WellController extends BaseController
             // Обновляем остальные поля
             if (!empty($data)) {
                 $this->db->update('wells', $data, 'id = :id', ['id' => $wellId]);
+            }
+
+            // Если изменился номер колодца — обновляем номера связанных направлений
+            // (номер направления формируется как "<номер начального колодца>-<номер конечного колодца>")
+            if (!empty($numberChanged)) {
+                $this->db->query(
+                    "UPDATE channel_directions cd
+                     SET number = (sw.number || '-' || ew.number),
+                         updated_by = :uid,
+                         updated_at = NOW()
+                     FROM wells sw, wells ew
+                     WHERE cd.start_well_id = sw.id
+                       AND cd.end_well_id = ew.id
+                       AND (cd.start_well_id = :wid OR cd.end_well_id = :wid)",
+                    ['uid' => (int) ($user['id'] ?? 0), 'wid' => $wellId]
+                );
             }
 
             // Если изменились координаты колодца — пересчитываем геометрию и длину направлений, которые на него ссылаются
