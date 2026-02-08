@@ -778,4 +778,28 @@ const API = {
             return API.put('/settings', data);
         }
     },
+
+    // ========================
+    // Администрирование: бэкапы БД
+    // ========================
+    dbBackups: {
+        config() {
+            return API.get('/admin/db-backups/config');
+        },
+        updateConfig(data) {
+            return API.put('/admin/db-backups/config', data);
+        },
+        list() {
+            return API.get('/admin/db-backups');
+        },
+        create() {
+            return API.post('/admin/db-backups', {});
+        },
+        tick() {
+            return API.post('/admin/db-backups/tick', {});
+        },
+        restore(id) {
+            return API.post(`/admin/db-backups/${encodeURIComponent(id)}/restore`, {});
+        },
+    },
 };

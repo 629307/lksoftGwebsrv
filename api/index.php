@@ -117,6 +117,7 @@ use App\Controllers\ImportController;
 use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
 use App\Controllers\SettingsController;
+use App\Controllers\DbBackupController;
 
 $router = new Router();
 $request = new Request();
@@ -301,6 +302,14 @@ $router->get('/api/reports/export/{type}', [ReportController::class, 'export'], 
 // Настройки (системные)
 $router->get('/api/settings', [SettingsController::class, 'index'], ['auth']);
 $router->put('/api/settings', [SettingsController::class, 'update'], ['auth']);
+
+// Администрирование: бэкапы БД (только для админа, проверка в контроллере)
+$router->get('/api/admin/db-backups/config', [DbBackupController::class, 'config'], ['auth']);
+$router->put('/api/admin/db-backups/config', [DbBackupController::class, 'updateConfig'], ['auth']);
+$router->get('/api/admin/db-backups', [DbBackupController::class, 'index'], ['auth']);
+$router->post('/api/admin/db-backups', [DbBackupController::class, 'create'], ['auth']);
+$router->post('/api/admin/db-backups/tick', [DbBackupController::class, 'tick'], ['auth']);
+$router->post('/api/admin/db-backups/{id}/restore', [DbBackupController::class, 'restore'], ['auth']);
 
 // Запуск маршрутизации
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);

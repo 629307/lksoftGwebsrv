@@ -137,6 +137,21 @@ const App = {
         // Инициализируем карту
         MapManager.init();
 
+        // Админ: периодическая проверка расписания бэкапов (создаст бэкап только если "пора")
+        if (this.isAdmin()) {
+            try {
+                if (!this._dbBackupTickTimer) {
+                    const tick = async () => {
+                        try { await API.dbBackups?.tick?.(); } catch (_) {}
+                    };
+                    // 1 раз при старте
+                    tick().catch(() => {});
+                    // затем раз в 10 минут (если админ держит вкладку открытой)
+                    this._dbBackupTickTimer = setInterval(() => tick().catch(() => {}), 10 * 60 * 1000);
+                }
+            } catch (_) {}
+        }
+
         // Подтягиваем цвета типов объектов (слои + отрисовка на карте)
         this.refreshObjectTypeColors().catch(() => {});
 
@@ -3973,6 +3988,161 @@ const App = {
                 wmtsUrlTmpl, wmtsStyle, wmtsTms, wmtsTm, wmtsTr, wmtsTc,
                 entryKind,
             ].forEach(disable);
+        }
+
+        // Админ: секция бэкапов СУБД
+        if (this.isAdmin()) {
+            this.initDbBackupSettingsPanel().catch(() => {});
+        }
+    },
+
+    async initDbBackupSettingsPanel() {
+        const host = document.getElementById('db-backup-settings');
+        if (!host) return;
+
+        // bind buttons once
+        if (!this._boundDbBackupSettings) {
+            this._boundDbBackupSettings = true;
+            document.getElementById('btn-db-backup-refresh')?.addEventListener('click', () => this.refreshDbBackups());
+            document.getElementById('btn-db-backup-create-now')?.addEventListener('click', () => this.createDbBackupNow());
+            document.getElementById('btn-db-backup-save-schedule')?.addEventListener('click', () => this.saveDbBackupSchedule());
+            document.getElementById('btn-db-backup-run-tick')?.addEventListener('click', () => this.runDbBackupTick());
+        }
+
+        await this.loadDbBackupConfig();
+        await this.refreshDbBackups();
+    },
+
+    async loadDbBackupConfig() {
+        try {
+            const resp = await API.dbBackups.config();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const data = resp?.data || resp || {};
+
+            const enabled = document.getElementById('db-backup-schedule-enabled');
+            const interval = document.getElementById('db-backup-interval-hours');
+            const keep = document.getElementById('db-backup-keep-count');
+            const last = document.getElementById('db-backup-last-run');
+
+            if (enabled) enabled.checked = !!data.schedule_enabled;
+            if (interval) interval.value = String(data.interval_hours ?? 24);
+            if (keep) keep.value = (data.keep_count === null || data.keep_count === undefined) ? '' : String(data.keep_count);
+            if (last) {
+                const v = data.last_run_at ? new Date(data.last_run_at).toLocaleString('ru-RU') : '-';
+                last.value = v;
+            }
+        } catch (e) {
+            // не спамим ошибками в настройках
+            console.error('DB backup config load error:', e);
+        }
+    },
+
+    async saveDbBackupSchedule() {
+        try {
+            const enabled = !!document.getElementById('db-backup-schedule-enabled')?.checked;
+            const intervalHours = parseInt(document.getElementById('db-backup-interval-hours')?.value || '24', 10);
+            const keepRaw = (document.getElementById('db-backup-keep-count')?.value || '').toString().trim();
+            const keepCount = keepRaw === '' ? null : parseInt(keepRaw, 10);
+
+            const payload = { schedule_enabled: enabled, interval_hours: intervalHours, keep_count: keepCount };
+            const resp = await API.dbBackups.updateConfig(payload);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Настройки бэкапа сохранены', 'success');
+            await this.loadDbBackupConfig();
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка сохранения', 'error');
+        }
+    },
+
+    async refreshDbBackups() {
+        const listEl = document.getElementById('db-backups-list');
+        if (listEl) listEl.innerHTML = '<div class="text-muted">Загрузка...</div>';
+        try {
+            const resp = await API.dbBackups.list();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const list = resp?.data || resp || [];
+            if (!Array.isArray(list) || list.length === 0) {
+                if (listEl) listEl.innerHTML = '<div class="text-muted">Бэкапы отсутствуют</div>';
+                return;
+            }
+
+            const fmtSize = (b) => {
+                const n = Number(b || 0);
+                if (!Number.isFinite(n) || n <= 0) return '-';
+                const units = ['B', 'KB', 'MB', 'GB'];
+                let v = n;
+                let i = 0;
+                while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+                return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+            };
+
+            const rows = list.map(x => {
+                const id = String(x.id || '');
+                const dt = x.created_at ? new Date(x.created_at).toLocaleString('ru-RU') : '-';
+                const sz = fmtSize(x.size_bytes);
+                return `
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom: 1px solid var(--border-color);">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(id)}</div>
+                            <div class="text-muted" style="font-size:12px;">${this.escapeHtml(dt)} • ${this.escapeHtml(sz)}</div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-danger" onclick='App.restoreDbBackup(${JSON.stringify(id)})' title="Восстановить БД из этого бэкапа">
+                            <i class="fas fa-rotate-left"></i> Восстановить
+                        </button>
+                    </div>
+                `;
+            }).join('');
+            if (listEl) listEl.innerHTML = rows;
+        } catch (e) {
+            if (listEl) listEl.innerHTML = `<div class="text-muted">Ошибка загрузки списка: ${this.escapeHtml(e?.message || 'Ошибка')}</div>`;
+        }
+    },
+
+    async createDbBackupNow() {
+        try {
+            this.notify('Создание бэкапа...', 'info');
+            const resp = await API.dbBackups.create();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Бэкап создан', 'success');
+            await this.loadDbBackupConfig();
+            await this.refreshDbBackups();
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка создания бэкапа', 'error');
+        }
+    },
+
+    async runDbBackupTick() {
+        try {
+            const resp = await API.dbBackups.tick();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            // create() в tick() может вернуть "Бэкап создан" как success message,
+            // поэтому просто обновим.
+            await this.loadDbBackupConfig();
+            await this.refreshDbBackups();
+            this.notify('Проверка расписания выполнена', 'info');
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка', 'error');
+        }
+    },
+
+    async restoreDbBackup(id) {
+        const bid = String(id || '');
+        if (!bid) return;
+        const ok = confirm(
+            `Восстановить базу данных из бэкапа?\n\n` +
+            `Файл: ${bid}\n\n` +
+            `ВНИМАНИЕ: операция перезапишет текущие данные. Во время восстановления система может работать нестабильно.`
+        );
+        if (!ok) return;
+
+        try {
+            this.notify('Восстановление БД...', 'warning');
+            const resp = await API.dbBackups.restore(bid);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('База данных восстановлена', 'success');
+            await this.refreshDbBackups();
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка восстановления', 'error');
         }
     },
 

@@ -701,6 +701,61 @@
                                 <input type="text" id="settings-hotkey-add-aerial-cable" maxlength="1" placeholder="Напр.: A">
                             </div>
                             <p class="text-muted">Настройки применяются к карте и ссылкам в боковой панели.</p>
+
+                            <hr style="margin: 18px 0;">
+                            <div class="admin-only" id="db-backup-settings">
+                                <h3 style="margin: 0 0 10px 0;">Бэкапирование СУБД</h3>
+                                <p class="text-muted" style="margin-top: 0;">
+                                    Доступно только для роли “Администратор”. Создание и восстановление могут занять несколько минут.
+                                </p>
+
+                                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 10px;">
+                                    <button type="button" class="btn btn-secondary" id="btn-db-backup-refresh">
+                                        <i class="fas fa-rotate"></i> Обновить список
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="btn-db-backup-create-now">
+                                        <i class="fas fa-database"></i> Создать бэкап сейчас
+                                    </button>
+                                </div>
+
+                                <div class="form-group" style="margin-bottom: 6px;">
+                                    <label style="display:flex; align-items:center; gap:8px;">
+                                        <input type="checkbox" id="db-backup-schedule-enabled">
+                                        Регулярное бэкапирование (включить)
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label>Периодичность (в часах)</label>
+                                    <input type="number" id="db-backup-interval-hours" min="1" max="720" step="1" placeholder="Напр.: 24">
+                                    <p class="text-muted">Рекомендуется настроить CRON/планировщик на сервере. В интерфейсе хранится только конфигурация.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label>Хранить последних бэкапов (шт)</label>
+                                    <input type="number" id="db-backup-keep-count" min="1" max="365" step="1" placeholder="Напр.: 30">
+                                    <p class="text-muted">Если задано — при создании нового бэкапа старые будут удаляться автоматически.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label>Последний запуск</label>
+                                    <input type="text" id="db-backup-last-run" disabled style="background: var(--bg-tertiary);" value="-">
+                                </div>
+                                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom: 14px;">
+                                    <button type="button" class="btn btn-secondary" id="btn-db-backup-run-tick" title="Проверить расписание и запустить бэкап, если пора">
+                                        <i class="fas fa-clock"></i> Запустить по расписанию (проверка)
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="btn-db-backup-save-schedule">
+                                        <i class="fas fa-save"></i> Сохранить расписание
+                                    </button>
+                                </div>
+
+                                <div style="border:1px solid var(--border-color); border-radius: 10px; overflow:hidden;">
+                                    <div style="padding: 10px 12px; background: var(--bg-secondary); font-weight: 700;">
+                                        Доступные бэкапы
+                                    </div>
+                                    <div id="db-backups-list" style="max-height: 45vh; overflow:auto; padding: 10px 12px;">
+                                        <div class="text-muted">Загрузка...</div>
+                                    </div>
+                                </div>
+                            </div>
                         </form>
                     </div>
                 </div>

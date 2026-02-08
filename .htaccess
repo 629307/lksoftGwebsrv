@@ -33,7 +33,7 @@ RewriteRule ^ index.html [L]
 </FilesMatch>
 
 # Защита папок
-<DirectoryMatch "/(config|src|database|vendor)/">
+<DirectoryMatch "/(config|src|database|vendor|storage)/">
     Order allow,deny
     Deny from all
 </DirectoryMatch>
