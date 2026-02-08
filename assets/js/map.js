@@ -2101,10 +2101,16 @@ const MapManager = {
 
         // Доп. действия для карты
         if (objectType === 'well') {
+            const canWrite = (typeof App !== 'undefined' && typeof App.canWrite === 'function' && App.canWrite());
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInWell(${properties.id})">
                     Показать кабели в колодце
                 </button>
+                ${canWrite ? `
+                    <button type="button" class="btn btn-sm btn-danger" onclick="App.dismantleWell(${properties.id})" title="Демонтаж возможен только если у колодца ровно 2 направления">
+                        Демонтаж колодца
+                    </button>
+                ` : ``}
             </div>`;
         }
         if (objectType === 'channel_direction') {

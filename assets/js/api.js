@@ -326,6 +326,10 @@ const API = {
         importText(text, delimiter, mapping, coordinate_system = 'wgs84', options = {}) {
             return API.post('/wells/import-text', { text, delimiter, mapping, coordinate_system, ...options });
         },
+
+        dismantle(id) {
+            return API.post(`/wells/${id}/dismantle`, {});
+        },
     },
 
     // ========================

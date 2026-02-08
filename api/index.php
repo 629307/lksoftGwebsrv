@@ -187,6 +187,7 @@ $router->post('/api/wells/import-text/preview', [WellController::class, 'importT
 $router->post('/api/wells/import-text', [WellController::class, 'importText'], ['auth']);
 $router->get('/api/wells/{id}', [WellController::class, 'show'], ['auth']);
 $router->post('/api/wells', [WellController::class, 'store'], ['auth']);
+$router->post('/api/wells/{id}/dismantle', [WellController::class, 'dismantle'], ['auth']);
 $router->put('/api/wells/{id}', [WellController::class, 'update'], ['auth']);
 $router->delete('/api/wells/{id}', [WellController::class, 'destroy'], ['auth']);
 

@@ -5508,6 +5508,32 @@ const App = {
     },
 
     /**
+     * Карта: "Демонтаж колодца" (обратная операция к "Набить колодец")
+     * Допустимо только если у колодца ровно 2 связанных направления.
+     */
+    async dismantleWell(wellId) {
+        const id = parseInt(wellId || 0, 10);
+        if (!id) return;
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (!confirm('Демонтировать колодец? Будут удалены 2 направления и создано 1 новое направление.')) {
+            return;
+        }
+        try {
+            const resp = await API.wells.dismantle(id);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Колодец демонтирован', 'success');
+            try { MapManager.hideObjectInfo?.(); } catch (_) {}
+            try { await MapManager.loadAllLayers?.(); } catch (_) {}
+            try { this.loadObjects?.(); } catch (_) {}
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка демонтажа колодца', 'error');
+        }
+    },
+
+    /**
      * Выгрузка объектов (CSV) с выбором разделителя
      */
     exportObjects() {

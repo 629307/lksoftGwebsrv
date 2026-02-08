@@ -559,6 +559,327 @@ class WellController extends BaseController
     }
 
     /**
+     * POST /api/wells/{id}/dismantle
+     * "Демонтаж колодца": удалить колодец, связанный ровно с 2 направлениями,
+     * заменить два направления одним, перенося маршруты duct-кабелей на новое направление.
+     */
+    public function dismantle(string $id): void
+    {
+        $this->checkWriteAccess();
+        $wellId = (int) $id;
+
+        $well = $this->db->fetch("SELECT id, number FROM wells WHERE id = :id", ['id' => $wellId]);
+        if (!$well) {
+            Response::error('Колодец не найден', 404);
+        }
+
+        $dirs = $this->db->fetchAll(
+            "SELECT * FROM channel_directions
+             WHERE start_well_id = :id OR end_well_id = :id
+             ORDER BY id",
+            ['id' => $wellId]
+        );
+
+        if (count($dirs) !== 2) {
+            Response::error('Демонтаж возможен только для колодца, у которого ровно 2 связанных направления', 422);
+        }
+
+        $d1 = $dirs[0];
+        $d2 = $dirs[1];
+
+        $dir1Id = (int) ($d1['id'] ?? 0);
+        $dir2Id = (int) ($d2['id'] ?? 0);
+        if ($dir1Id <= 0 || $dir2Id <= 0) {
+            Response::error('Некорректные связанные направления', 422);
+        }
+
+        $other1 = ((int) ($d1['start_well_id'] ?? 0) === $wellId) ? (int) ($d1['end_well_id'] ?? 0) : (int) ($d1['start_well_id'] ?? 0);
+        $other2 = ((int) ($d2['start_well_id'] ?? 0) === $wellId) ? (int) ($d2['end_well_id'] ?? 0) : (int) ($d2['start_well_id'] ?? 0);
+        if ($other1 <= 0 || $other2 <= 0 || $other1 === $other2) {
+            Response::error('Некорректные конечные колодцы направлений для демонтажа', 422);
+        }
+
+        // Для корректного демонтажа ожидаем одинаковые базовые атрибуты направлений
+        foreach (['owner_id', 'type_id', 'status_id'] as $k) {
+            $a = (string) ($d1[$k] ?? '');
+            $b = (string) ($d2[$k] ?? '');
+            if ($a !== $b) {
+                Response::error('Нельзя демонтировать: связанные направления имеют разные параметры (owner/type/status)', 422);
+            }
+        }
+
+        $wStart = $this->db->fetch("SELECT id, number FROM wells WHERE id = :id", ['id' => $other1]);
+        $wEnd = $this->db->fetch("SELECT id, number FROM wells WHERE id = :id", ['id' => $other2]);
+        if (!$wStart || !$wEnd) {
+            Response::error('Связанные колодцы направлений не найдены', 404);
+        }
+
+        // Кол-во каналов у направлений
+        $cnt1Row = $this->db->fetch("SELECT COUNT(*) as cnt FROM cable_channels WHERE direction_id = :id", ['id' => $dir1Id]) ?: ['cnt' => 0];
+        $cnt2Row = $this->db->fetch("SELECT COUNT(*) as cnt FROM cable_channels WHERE direction_id = :id", ['id' => $dir2Id]) ?: ['cnt' => 0];
+        $cnt1 = (int) ($cnt1Row['cnt'] ?? 0);
+        $cnt2 = (int) ($cnt2Row['cnt'] ?? 0);
+        $maxChannels = max($cnt1, $cnt2);
+        if ($maxChannels < 1) $maxChannels = 1;
+
+        // Каналы направлений: для переноса свойств и для маппинга (channel_number -> new_channel_id)
+        $ch1 = $this->db->fetchAll(
+            "SELECT id, channel_number, kind_id, status_id, diameter_mm, material, notes
+             FROM cable_channels WHERE direction_id = :id ORDER BY channel_number",
+            ['id' => $dir1Id]
+        );
+        $ch2 = $this->db->fetchAll(
+            "SELECT id, channel_number, kind_id, status_id, diameter_mm, material, notes
+             FROM cable_channels WHERE direction_id = :id ORDER BY channel_number",
+            ['id' => $dir2Id]
+        );
+
+        $byNum = [];
+        foreach ($ch1 as $r) $byNum[(int) $r['channel_number']] = $r;
+        foreach ($ch2 as $r) {
+            $n = (int) $r['channel_number'];
+            if (!isset($byNum[$n])) $byNum[$n] = $r;
+        }
+
+        // Затронутые кабели (duct)
+        $affected = $this->db->fetchAll(
+            "SELECT DISTINCT crc.cable_id
+             FROM cable_route_channels crc
+             JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+             WHERE cc.direction_id IN (" . (int) $dir1Id . ", " . (int) $dir2Id . ")"
+        );
+        $affectedCableIds = array_values(array_unique(array_map(fn($r) => (int) ($r['cable_id'] ?? 0), $affected)));
+        $affectedCableIds = array_values(array_filter($affectedCableIds, fn($v) => $v > 0));
+
+        // Пред-валидация: для каждого кабеля канал-номер по демонтируемым направлениям должен быть одинаковым
+        if ($affectedCableIds) {
+            // карта old_channel_id -> [direction_id, channel_number]
+            $oldChRows = $this->db->fetchAll(
+                "SELECT id, direction_id, channel_number
+                 FROM cable_channels
+                 WHERE direction_id IN (" . (int) $dir1Id . ", " . (int) $dir2Id . ")"
+            );
+            $oldChMap = [];
+            foreach ($oldChRows as $r) {
+                $oldChMap[(int) $r['id']] = ['direction_id' => (int) $r['direction_id'], 'channel_number' => (int) $r['channel_number']];
+            }
+
+            foreach ($affectedCableIds as $cid) {
+                $route = $this->db->fetchAll(
+                    "SELECT crc.cable_channel_id
+                     FROM cable_route_channels crc
+                     WHERE crc.cable_id = :id
+                     ORDER BY crc.route_order",
+                    ['id' => $cid]
+                );
+                $nums = [];
+                foreach ($route as $rr) {
+                    $chid = (int) ($rr['cable_channel_id'] ?? 0);
+                    $info = $oldChMap[$chid] ?? null;
+                    if (!$info) continue;
+                    $nums[] = (int) $info['channel_number'];
+                }
+                $nums = array_values(array_unique(array_filter($nums, fn($v) => $v > 0)));
+                if (count($nums) > 1) {
+                    Response::error('Нельзя демонтировать: найден кабель с разными номерами каналов на демонтируемых направлениях (cable_id=' . $cid . ')', 422);
+                }
+            }
+        }
+
+        $user = Auth::user();
+        $uid = (int) ($user['id'] ?? 0);
+
+        try {
+            $this->db->beginTransaction();
+
+            // 1) Создаём новое направление: other1 -> other2
+            $sqlDir = "WITH well_geoms AS (
+                            SELECT
+                                sw.geom_wgs84 as start_wgs84, sw.geom_msk86 as start_msk86,
+                                ew.geom_wgs84 as end_wgs84, ew.geom_msk86 as end_msk86
+                            FROM wells sw, wells ew
+                            WHERE sw.id = :start_well_id AND ew.id = :end_well_id
+                        )
+                        INSERT INTO channel_directions (number, geom_wgs84, geom_msk86, owner_id, type_id, status_id,
+                                                        start_well_id, end_well_id, length_m, notes, created_by, updated_by)
+                        SELECT :number,
+                               ST_MakeLine(start_wgs84, end_wgs84),
+                               ST_MakeLine(start_msk86, end_msk86),
+                               :owner_id, :type_id, :status_id, :start_well_id2, :end_well_id2,
+                               ROUND(ST_Length(ST_MakeLine(start_wgs84, end_wgs84)::geography)::numeric, 2),
+                               :notes, :created_by, :updated_by
+                        FROM well_geoms
+                        RETURNING id";
+
+            $dirBase = [
+                'number' => (string) ($wStart['number'] ?? $other1) . '-' . (string) ($wEnd['number'] ?? $other2),
+                'owner_id' => $d1['owner_id'] ?? null,
+                'type_id' => $d1['type_id'] ?? null,
+                'status_id' => $d1['status_id'] ?? null,
+                'notes' => $d1['notes'] ?? null,
+                'created_by' => $uid,
+                'updated_by' => $uid,
+                'start_well_id' => $other1,
+                'end_well_id' => $other2,
+                'start_well_id2' => $other1,
+                'end_well_id2' => $other2,
+            ];
+            $stmt = $this->db->query($sqlDir, $dirBase);
+            $newDirId = (int) $stmt->fetchColumn();
+            if ($newDirId <= 0) {
+                Response::error('Не удалось создать новое направление', 500);
+            }
+
+            // 2) Создаём каналы нового направления (1..maxChannels)
+            for ($i = 1; $i <= $maxChannels; $i++) {
+                $src = $byNum[$i] ?? null;
+                $this->db->insert('cable_channels', [
+                    'direction_id' => $newDirId,
+                    'channel_number' => $i,
+                    'kind_id' => $src['kind_id'] ?? null,
+                    'status_id' => $src['status_id'] ?? null,
+                    'diameter_mm' => $src['diameter_mm'] ?? 110,
+                    'material' => $src['material'] ?? null,
+                    'notes' => $src['notes'] ?? null,
+                    'created_by' => $uid,
+                    'updated_by' => $uid,
+                ]);
+            }
+
+            $newChRows = $this->db->fetchAll(
+                "SELECT id, channel_number FROM cable_channels WHERE direction_id = :id",
+                ['id' => $newDirId]
+            );
+            $newChByNum = [];
+            foreach ($newChRows as $r) {
+                $newChByNum[(int) $r['channel_number']] = (int) $r['id'];
+            }
+
+            // карта old_channel_id -> channel_number (для замены в маршрутах)
+            $oldChRows = $this->db->fetchAll(
+                "SELECT id, channel_number
+                 FROM cable_channels
+                 WHERE direction_id IN (" . (int) $dir1Id . ", " . (int) $dir2Id . ")"
+            );
+            $oldNumById = [];
+            foreach ($oldChRows as $r) {
+                $oldNumById[(int) $r['id']] = (int) $r['channel_number'];
+            }
+
+            // 3) Перенос маршрутов кабелей (route_channels -> каналы нового направления)
+            foreach ($affectedCableIds as $cid) {
+                $route = $this->db->fetchAll(
+                    "SELECT crc.cable_channel_id
+                     FROM cable_route_channels crc
+                     WHERE crc.cable_id = :id
+                     ORDER BY crc.route_order",
+                    ['id' => $cid]
+                );
+                $routeIds = array_map(fn($r) => (int) ($r['cable_channel_id'] ?? 0), $route);
+                $routeIds = array_values(array_filter($routeIds, fn($v) => $v > 0));
+
+                $newRoute = [];
+                $prev = null;
+                foreach ($routeIds as $chid) {
+                    $num = $oldNumById[$chid] ?? null;
+                    if ($num !== null) {
+                        $rep = $newChByNum[(int) $num] ?? null;
+                        if (!$rep) {
+                            Response::error('Не удалось сопоставить канал маршрута (channel_number=' . (int) $num . ')', 500);
+                        }
+                        // убираем подряд идущие дубликаты
+                        if ($prev !== $rep) $newRoute[] = (int) $rep;
+                        $prev = $rep;
+                        continue;
+                    }
+                    if ($prev !== $chid) $newRoute[] = $chid;
+                    $prev = $chid;
+                }
+
+                // Перезаписываем маршрут
+                $this->db->delete('cable_route_channels', 'cable_id = :id', ['id' => $cid]);
+                foreach (array_values($newRoute) as $order => $channelId) {
+                    $this->db->insert('cable_route_channels', [
+                        'cable_id' => $cid,
+                        'cable_channel_id' => (int) $channelId,
+                        'route_order' => (int) $order,
+                    ]);
+                }
+
+                // Пересобираем колодцы маршрута
+                $this->db->delete('cable_route_wells', 'cable_id = :id', ['id' => $cid]);
+                if (!empty($newRoute)) {
+                    $rows = $this->db->fetchAll(
+                        "SELECT cd.start_well_id, cd.end_well_id
+                         FROM cable_channels cc
+                         JOIN channel_directions cd ON cc.direction_id = cd.id
+                         WHERE cc.id IN (" . implode(',', array_map('intval', $newRoute)) . ")"
+                    );
+                    $routeWells = [];
+                    foreach ($rows as $r) {
+                        foreach ([(int) $r['start_well_id'], (int) $r['end_well_id']] as $wid) {
+                            if ($wid > 0 && !in_array($wid, $routeWells, true)) $routeWells[] = $wid;
+                        }
+                    }
+                    foreach ($routeWells as $order => $wid) {
+                        $this->db->insert('cable_route_wells', [
+                            'cable_id' => $cid,
+                            'well_id' => $wid,
+                            'route_order' => (int) $order,
+                        ]);
+                    }
+                }
+
+                $this->updateDuctCableLength($cid);
+            }
+
+            // 4) Удаляем старые направления + демонтируемый колодец
+            $this->db->delete('object_photos', "object_table = 'channel_directions' AND object_id IN (" . (int) $dir1Id . ", " . (int) $dir2Id . ")");
+            $this->db->delete('channel_directions', 'id IN (' . (int) $dir1Id . ', ' . (int) $dir2Id . ')');
+
+            $this->db->delete('object_photos', "object_table = 'wells' AND object_id = :id", ['id' => $wellId]);
+            $this->db->delete('wells', 'id = :id', ['id' => $wellId]);
+
+            $this->db->commit();
+
+            Response::success([
+                'new_direction_id' => $newDirId,
+                'deleted_well_id' => $wellId,
+                'deleted_direction_ids' => [$dir1Id, $dir2Id],
+                'updated_cable_ids' => $affectedCableIds,
+            ], 'Колодец демонтирован');
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+    }
+
+    private function updateDuctCableLength(int $cableId): void
+    {
+        // Длина кабеля в канализации:
+        // сумма длин всех направлений маршрута + (кол-во уникальных направлений) * K,
+        // где K = настройка "cable_in_well_length_m" (учитываемая длина кабеля в колодце)
+        $k = (float) $this->getAppSetting('cable_in_well_length_m', 2);
+        $this->db->query(
+            "UPDATE cables
+             SET length_calculated = (
+                WITH dirs AS (
+                    SELECT DISTINCT cd.id as dir_id,
+                           COALESCE(cd.length_m, 0) as len_m
+                    FROM cable_route_channels crc
+                    JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+                    JOIN channel_directions cd ON cc.direction_id = cd.id
+                    WHERE crc.cable_id = :cable_id
+                )
+                SELECT COALESCE(SUM(len_m), 0) + (:k * COALESCE(COUNT(*), 0))
+                FROM dirs
+             )
+             WHERE id = :cable_id",
+            ['cable_id' => $cableId, 'k' => $k]
+        );
+    }
+
+    /**
      * GET /api/wells/export
      * Экспорт колодцев в CSV
      */
