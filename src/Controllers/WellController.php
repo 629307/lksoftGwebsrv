@@ -353,12 +353,55 @@ class WellController extends BaseController
             Response::error('Колодец не найден', 404);
         }
 
-        // Номер при редактировании не изменяем
+        // При редактировании допускается изменение owner/type и суффикса номера.
+        // Требование: при смене собственника должен меняться код собственника в номере.
         $data = $this->request->only([
             'owner_id', 'type_id', 'kind_id', 'status_id',
             'depth', 'material', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);
+
+        // Пересобираем номер при необходимости (owner/type/suffix)
+        $oldNumber = (string) ($oldWell['number'] ?? '');
+        $oldParts = $this->parseNumberSeqAndSuffix($oldNumber);
+        $oldSeq = $oldParts['seq'] ?? null;
+        $oldSuffix = $this->sanitizeNumberSuffix((string) ($oldParts['suffix'] ?? ''));
+
+        $requestedSuffix = $this->request->input('number_suffix'); // может отсутствовать
+        $newSuffix = ($requestedSuffix !== null) ? $this->sanitizeNumberSuffix((string) $requestedSuffix) : $oldSuffix;
+
+        $newOwnerId = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : (int) ($oldWell['owner_id'] ?? 0);
+        $newTypeId  = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldWell['type_id'] ?? 0);
+        $newKindId  = array_key_exists('kind_id', $data) ? (int) $data['kind_id'] : (int) ($oldWell['kind_id'] ?? 0);
+
+        $needRenumber =
+            ($newOwnerId !== (int) ($oldWell['owner_id'] ?? 0)) ||
+            ($newTypeId  !== (int) ($oldWell['type_id'] ?? 0)) ||
+            ($newSuffix  !== $oldSuffix);
+
+        if ($needRenumber) {
+            // "вводной" колодец: нумерация может начинаться с настройки
+            $minSeq = 1;
+            try {
+                $kindCode = $this->getObjectKindCodeById($newKindId);
+                if (strtolower(trim($kindCode)) === 'input') {
+                    $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
+                }
+            } catch (\Throwable $e) {
+                $minSeq = 1;
+            }
+
+            $manualSeq = (is_int($oldSeq) && $oldSeq >= $minSeq) ? (int) $oldSeq : null;
+            $data['number'] = $this->buildAutoNumber(
+                'wells',
+                $newTypeId,
+                $newOwnerId,
+                $manualSeq,
+                ($newSuffix !== '') ? $newSuffix : null,
+                $wellId,
+                $minSeq
+            );
+        }
 
         $user = Auth::user();
         $data['updated_by'] = $user['id'];

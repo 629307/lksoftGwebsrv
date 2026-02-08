@@ -310,33 +310,62 @@ abstract class BaseController
 
         $sfx = $this->sanitizeNumberSuffix($suffix);
 
-        // 3-я часть: минимальное целое положительное (>=1), уникальное для уже существующих номеров
+        // 3-я часть: целое положительное (>= minSeq), уникальное для уже существующих номеров
         // сквозное в рамках конкретного вида объекта (typeColumn = typeId), независимо от собственника.
         $minSeq = max(1, (int) $minSeq);
-        $row = $this->db->fetch(
-            "WITH used AS (
-                SELECT DISTINCT (split_part(number, '-', 3))::int AS n
-                FROM {$table}
-                WHERE {$typeColumn} = :type_id
-                  AND split_part(number, '-', 3) ~ '^[0-9]+$'
-            ),
-            mx AS (
-                SELECT COALESCE(MAX(n), 0) AS m FROM used
-            ),
-            gs AS (
-                SELECT generate_series(:min_seq, GREATEST(:min_seq, (SELECT m + 1 FROM mx))) AS n
-            )
-            SELECT gs.n AS n
-            FROM gs
-            LEFT JOIN used u ON u.n = gs.n
-            WHERE u.n IS NULL
-            ORDER BY gs.n
-            LIMIT 1",
-            ['type_id' => (int) $typeId, 'min_seq' => $minSeq]
-        );
-        $seq = (int) ($row['n'] ?? 0);
-        if ($seq <= 0) {
-            Response::error('Не удалось подобрать номер', 500);
+        $seq = null;
+
+        // Если seq задан вручную (например, при смене собственника в существующем объекте),
+        // пытаемся сохранить его, чтобы менялась только часть номера с кодом собственника/суффиксом.
+        if ($manualSeq !== null) {
+            $candidate = (int) $manualSeq;
+            if ($candidate >= $minSeq) {
+                // Проверим, что такой seq не занят другим объектом этого типа (защита от ручных правок в БД).
+                $sql = "SELECT id
+                        FROM {$table}
+                        WHERE {$typeColumn} = :type_id
+                          AND split_part(number, '-', 3) = :seq
+                          AND split_part(number, '-', 3) ~ '^[0-9]+$'";
+                $params = ['type_id' => (int) $typeId, 'seq' => (string) $candidate];
+                if (!empty($excludeId)) {
+                    $sql .= " AND id <> :id";
+                    $params['id'] = (int) $excludeId;
+                }
+                $sql .= " LIMIT 1";
+                $existsSeq = $this->db->fetch($sql, $params);
+                if (!$existsSeq) {
+                    $seq = $candidate;
+                }
+            }
+        }
+
+        // Если ручной seq не применим — подбираем минимальный свободный
+        if ($seq === null) {
+            $row = $this->db->fetch(
+                "WITH used AS (
+                    SELECT DISTINCT (split_part(number, '-', 3))::int AS n
+                    FROM {$table}
+                    WHERE {$typeColumn} = :type_id
+                      AND split_part(number, '-', 3) ~ '^[0-9]+$'
+                ),
+                mx AS (
+                    SELECT COALESCE(MAX(n), 0) AS m FROM used
+                ),
+                gs AS (
+                    SELECT generate_series(:min_seq, GREATEST(:min_seq, (SELECT m + 1 FROM mx))) AS n
+                )
+                SELECT gs.n AS n
+                FROM gs
+                LEFT JOIN used u ON u.n = gs.n
+                WHERE u.n IS NULL
+                ORDER BY gs.n
+                LIMIT 1",
+                ['type_id' => (int) $typeId, 'min_seq' => $minSeq]
+            );
+            $seq = (int) ($row['n'] ?? 0);
+            if ($seq <= 0) {
+                Response::error('Не удалось подобрать номер', 500);
+            }
         }
 
         $num = "{$numberCode}-{$ownerCode}-{$seq}";

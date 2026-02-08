@@ -1636,6 +1636,10 @@ const App = {
             }
 
             const obj = response.data || response;
+            // Разбор номера на части для UI (seq + suffix). Формат: <code>-<owner>-<seq>(-<suffix>)
+            const _numParts = String(obj?.number || '').split('-');
+            const _numSeq = (_numParts.length >= 3 ? (_numParts[2] || '') : '').toString();
+            const _numSuffix = (_numParts.length >= 4 ? (_numParts[3] || '') : '').toString();
             // Предвыбор каналов маршрута для duct-кабеля (используется при рендере формы)
             this._editCableRouteChannelIds = [];
             if (type === 'unified_cables' && obj.object_type_code === 'cable_duct' && Array.isArray(obj.route_channels)) {
@@ -1667,8 +1671,12 @@ const App = {
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <input type="text" value="${this.escapeHtml(obj.number || '')}" disabled style="background: var(--bg-tertiary);">
-                            <p class="text-muted">Номер не изменяется при редактировании.</p>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 240px; background: var(--bg-tertiary);" value="...">
+                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="${this.escapeHtml(_numSeq || 'Авто')}">
+                                <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;" value="${this.escapeHtml(_numSuffix || '')}">
+                            </div>
+                            <p class="text-muted">При смене собственника обновляется код собственника в номере. Суффикс можно изменить.</p>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1708,8 +1716,12 @@ const App = {
                         <input type="hidden" name="id" value="${obj.id}">
                         <div class="form-group">
                             <label>Номер *</label>
-                            <input type="text" value="${this.escapeHtml(obj.number || '')}" disabled style="background: var(--bg-tertiary);">
-                            <p class="text-muted">Номер не изменяется при редактировании.</p>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 240px; background: var(--bg-tertiary);" value="...">
+                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="${this.escapeHtml(_numSeq || 'Авто')}">
+                                <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;" value="${this.escapeHtml(_numSuffix || '')}">
+                            </div>
+                            <p class="text-muted">При смене собственника обновляется код собственника в номере. Суффикс можно изменить.</p>
                         </div>
                         <div id="coords-wgs84-inputs">
                             <div class="form-group">
@@ -1841,9 +1853,16 @@ const App = {
                         <input type="hidden" name="id" value="${obj.id}">
                         <input type="hidden" name="object_type_code" value="${obj.object_type_code || ''}">
                         <div class="form-group">
-                            <label>Номер</label>
-                            <input type="text" id="modal-cable-number" value="${obj.number || ''}" disabled style="background: var(--bg-tertiary);">
+                            <label>Номер *</label>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <input type="text" id="modal-number-prefix" readonly style="flex: 0 0 260px; background: var(--bg-tertiary);" value="...">
+                                <input type="text" id="modal-number-seq-preview" disabled style="flex: 0 0 110px; background: var(--bg-tertiary);" value="${this.escapeHtml(_numSeq || 'Авто')}">
+                                <input type="text" name="number_suffix" id="modal-number-suffix" maxlength="5" placeholder="Суффикс (до 5)" style="flex: 1;" value="${this.escapeHtml(_numSuffix || '')}">
+                            </div>
+                            <p class="text-muted">При смене собственника обновляется код собственника в номере. Суффикс можно изменить.</p>
                         </div>
+                        <!-- hidden select нужен, чтобы пересчитывать префикс номера по number_code (как в форме создания) -->
+                        <select id="modal-cable-object-type" data-value="${obj.object_type_id || ''}" style="display:none;"></select>
                         <div class="form-group">
                             <label>Длина расч. (м)</label>
                             <input type="number" value="${obj.length_calculated || ''}" disabled style="background: var(--bg-tertiary);">
@@ -2029,7 +2048,12 @@ const App = {
             // Загружаем справочники и устанавливаем значения
             await this.loadModalSelectsWithValues(type);
 
-            // Номер при редактировании не меняется (валидация не требуется)
+            // Инициализация UI номера (суффикс/префикс) для объектов с авто-нумерацией
+            try {
+                if (type === 'wells') {
+                    this.setupWellEditNumberValidation?.(id);
+                }
+            } catch (_) {}
 
             // Подгружаем фотографии (если блок есть)
             if (photoTable) {
@@ -2369,7 +2393,7 @@ const App = {
             }
             
             // Затем устанавливаем остальные значения
-            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select', 'modal-contract-select', 'modal-cable-type-select', 'modal-cable-catalog-select'];
+            const selects = ['modal-owner-select', 'modal-kind-select', 'modal-status-select', 'modal-contract-select', 'modal-cable-object-type', 'modal-cable-type-select', 'modal-cable-catalog-select'];
             selects.forEach(selectId => {
                 const select = document.getElementById(selectId);
                 if (select && select.dataset.value) {

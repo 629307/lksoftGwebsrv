@@ -353,12 +353,43 @@ class MarkerPostController extends BaseController
             Response::error('Столбик не найден', 404);
         }
 
-        // number не редактируется
+        // При редактировании допускается изменение owner/type и суффикса номера.
+        // Требование: при смене собственника должен меняться код собственника в номере.
         $data = $this->request->only([
             'owner_id', 'type_id', 'kind_id', 'status_id',
             'height_m', 'material', 'installation_date', 'notes'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);
+
+        // Пересобираем номер при необходимости (owner/type/suffix)
+        $oldNumber = (string) ($oldPost['number'] ?? '');
+        $oldParts = $this->parseNumberSeqAndSuffix($oldNumber);
+        $oldSeq = $oldParts['seq'] ?? null;
+        $oldSuffix = $this->sanitizeNumberSuffix((string) ($oldParts['suffix'] ?? ''));
+
+        $requestedSuffix = $this->request->input('number_suffix'); // может отсутствовать
+        $newSuffix = ($requestedSuffix !== null) ? $this->sanitizeNumberSuffix((string) $requestedSuffix) : $oldSuffix;
+
+        $newOwnerId = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : (int) ($oldPost['owner_id'] ?? 0);
+        $newTypeId  = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldPost['type_id'] ?? 0);
+
+        $needRenumber =
+            ($newOwnerId !== (int) ($oldPost['owner_id'] ?? 0)) ||
+            ($newTypeId  !== (int) ($oldPost['type_id'] ?? 0)) ||
+            ($newSuffix  !== $oldSuffix);
+
+        if ($needRenumber) {
+            $manualSeq = (is_int($oldSeq) && $oldSeq >= 1) ? (int) $oldSeq : null;
+            $data['number'] = $this->buildAutoNumber(
+                'marker_posts',
+                $newTypeId,
+                $newOwnerId,
+                $manualSeq,
+                ($newSuffix !== '') ? $newSuffix : null,
+                $postId,
+                1
+            );
+        }
 
         $user = Auth::user();
         $data['updated_by'] = $user['id'];

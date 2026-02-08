@@ -513,7 +513,7 @@ class UnifiedCableController extends BaseController
         }
 
         $data = $this->request->only([
-            // number не редактируется
+            // number может пересобираться при смене собственника/суффикса
             'cable_catalog_id', 'cable_type_id', 'owner_id',
             'status_id', 'contract_id', 'length_declared', 'installation_date', 'notes'
         ]);
@@ -531,6 +531,35 @@ class UnifiedCableController extends BaseController
             if ($data[$k] === null && $k !== 'contract_id') {
                 unset($data[$k]);
             }
+        }
+
+        // Требование: при смене собственника должен меняться код собственника в номере.
+        // Также разрешаем редактировать суффикс номера (number_suffix).
+        $oldNumber = (string) ($oldCable['number'] ?? '');
+        $oldParts = $this->parseNumberSeqAndSuffix($oldNumber);
+        $oldSeq = $oldParts['seq'] ?? null;
+        $oldSuffix = $this->sanitizeNumberSuffix((string) ($oldParts['suffix'] ?? ''));
+
+        $requestedSuffix = $this->request->input('number_suffix'); // может отсутствовать
+        $newSuffix = ($requestedSuffix !== null) ? $this->sanitizeNumberSuffix((string) $requestedSuffix) : $oldSuffix;
+
+        $newOwnerId = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : (int) ($oldCable['owner_id'] ?? 0);
+        $needRenumber =
+            ($newOwnerId !== (int) ($oldCable['owner_id'] ?? 0)) ||
+            ($newSuffix !== $oldSuffix);
+
+        if ($needRenumber) {
+            $typeId = (int) ($oldCable['object_type_id'] ?? 0);
+            $manualSeq = (is_int($oldSeq) && $oldSeq >= 1) ? (int) $oldSeq : null;
+            $data['number'] = $this->buildAutoNumber(
+                'cables',
+                $typeId,
+                $newOwnerId,
+                $manualSeq,
+                ($newSuffix !== '') ? $newSuffix : null,
+                $cableId,
+                1
+            );
         }
 
         $user = Auth::user();
