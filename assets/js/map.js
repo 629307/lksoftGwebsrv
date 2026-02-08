@@ -315,6 +315,7 @@ const MapManager = {
                 icon: L.divIcon({
                     className: 'igs-coords-label',
                     html: `<div class="igs-coords-label-box" style="font-size:${fontSize}px;">${lat}<br>${lng}</div>`,
+                    iconSize: [1, 1],
                     iconAnchor: [0, 0],
                 }),
             });

@@ -543,6 +543,8 @@ a:hover {
     box-shadow: none;
     pointer-events: none;
     white-space: nowrap;
+    width: max-content !important;
+    height: max-content !important;
 }
 
 .igs-coords-label-box {
@@ -553,6 +555,7 @@ a:hover {
     padding: 4px 6px;
     line-height: 1.15;
     font-weight: 600;
+    display: inline-block;
     transform: translate(-100%, 8px); /* снизу-слева от объекта */
 }
 
