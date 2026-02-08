@@ -182,6 +182,7 @@ $router->delete('/api/owners/colors/{id}', [OwnerColorController::class, 'destro
 $router->get('/api/wells', [WellController::class, 'index'], ['auth']);
 $router->get('/api/wells/geojson', [WellController::class, 'geojson'], ['auth']);
 $router->get('/api/wells/exists', [WellController::class, 'existsNumber'], ['auth']);
+$router->get('/api/wells/clones', [WellController::class, 'clones'], ['auth']);
 $router->get('/api/wells/export', [WellController::class, 'export'], ['auth']);
 $router->post('/api/wells/import-text/preview', [WellController::class, 'importTextPreview'], ['auth']);
 $router->post('/api/wells/import-text', [WellController::class, 'importText'], ['auth']);

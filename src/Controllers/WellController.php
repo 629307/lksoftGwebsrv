@@ -66,6 +66,59 @@ class WellController extends BaseController
     }
 
     /**
+     * GET /api/wells/clones
+     * Найти "клоны" колодцев: одинаковые Latitude/Longitude (WGS84).
+     * Возвращает список колодцев, которые попали в группы с count > 1.
+     */
+    public function clones(): void
+    {
+        // доступ только для авторизованных пользователей обеспечивается middleware 'auth'
+        try {
+            $sql = "
+                WITH d AS (
+                    SELECT
+                        ST_X(geom_wgs84) AS longitude,
+                        ST_Y(geom_wgs84) AS latitude,
+                        COUNT(*)::int AS clone_count
+                    FROM wells
+                    WHERE geom_wgs84 IS NOT NULL
+                    GROUP BY longitude, latitude
+                    HAVING COUNT(*) > 1
+                )
+                SELECT
+                    w.id,
+                    w.number,
+                    ST_X(w.geom_wgs84) AS longitude,
+                    ST_Y(w.geom_wgs84) AS latitude,
+                    d.clone_count,
+                    w.owner_id,
+                    w.type_id,
+                    w.kind_id,
+                    w.status_id,
+                    o.short_name AS owner_short,
+                    o.name AS owner_name,
+                    ot.name AS type_name,
+                    ok.name AS kind_name,
+                    os.name AS status_name
+                FROM wells w
+                JOIN d
+                  ON ST_X(w.geom_wgs84) = d.longitude
+                 AND ST_Y(w.geom_wgs84) = d.latitude
+                LEFT JOIN owners o ON w.owner_id = o.id
+                LEFT JOIN object_types ot ON w.type_id = ot.id
+                LEFT JOIN object_kinds ok ON w.kind_id = ok.id
+                LEFT JOIN object_status os ON w.status_id = os.id
+                ORDER BY d.clone_count DESC, latitude, longitude, w.number
+            ";
+
+            $rows = $this->db->fetchAll($sql);
+            Response::success($rows);
+        } catch (\PDOException $e) {
+            Response::error('Ошибка поиска клонов', 500);
+        }
+    }
+
+    /**
      * GET /api/wells/geojson
      * GeoJSON всех колодцев для карты
      */

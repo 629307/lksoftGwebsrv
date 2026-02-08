@@ -291,6 +291,10 @@ const API = {
             return API.get('/wells', params);
         },
 
+        clones(params = {}) {
+            return API.get('/wells/clones', params);
+        },
+
         geojson(params = {}) {
             return API.get('/wells/geojson', params);
         },

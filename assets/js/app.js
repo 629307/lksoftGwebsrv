@@ -360,6 +360,28 @@ const App = {
             }
         });
 
+        // Ctrl + клик по строке таблицы = переключить чекбокс выбора (мультивыбор)
+        document.getElementById('table-body')?.addEventListener('click', (e) => {
+            try {
+                if (!e.ctrlKey) return;
+                const t = e.target;
+                if (!t) return;
+                // не перехватываем клики по кнопкам/инпутам действий
+                const tag = String(t.tagName || '').toUpperCase();
+                if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'A') return;
+                if (t.closest && (t.closest('button') || t.closest('a') || t.closest('input'))) return;
+                const tr = t.closest ? t.closest('tr[data-id]') : null;
+                if (!tr) return;
+                const cb = tr.querySelector ? tr.querySelector('input.obj-select[type="checkbox"]') : null;
+                if (!cb) return;
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+                e.preventDefault();
+            } catch (_) {
+                // ignore
+            }
+        });
+
         // Фильтры для кабелей в списке объектов
         document.getElementById('cables-filter-object-type')?.addEventListener('change', () => {
             this.pagination.page = 1;
@@ -376,6 +398,7 @@ const App = {
 
         // Кнопки добавления
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
+        document.getElementById('btn-find-clones')?.addEventListener('click', () => this.findWellClones());
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
         document.getElementById('btn-export').addEventListener('click', () => this.exportObjects());
         document.getElementById('btn-delete-selected')?.addEventListener('click', () => this.deleteSelectedObjects());
@@ -530,6 +553,18 @@ const App = {
                     }
                 } catch (_) {}
             });
+        }
+
+        // Ctrl = "режим множественного выбора" в таблицах объектов (показываем чекбоксы)
+        if (!this._boundCtrlDown) {
+            this._boundCtrlDown = true;
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Control') document.body.classList.add('ctrl-down');
+            });
+            document.addEventListener('keyup', (e) => {
+                if (e.key === 'Control') document.body.classList.remove('ctrl-down');
+            });
+            window.addEventListener('blur', () => document.body.classList.remove('ctrl-down'));
         }
 
         // Alt + hotkey из "Настройки" = запуск инструмента панели карты
@@ -1116,8 +1151,107 @@ const App = {
         if (importBtn) {
             importBtn.classList.toggle('hidden', tab !== 'wells' || !this.canWrite());
         }
+        // Кнопка "Найти клоны" — только для "Колодцы"
+        document.getElementById('btn-find-clones')?.classList.toggle('hidden', tab !== 'wells');
 
         this.loadObjects();
+    },
+
+    async findWellClones() {
+        if (this.currentTab !== 'wells') {
+            this.switchTab('wells');
+        }
+        try {
+            const resp = await API.wells.clones();
+            if (resp?.success === false) {
+                this.notify(resp?.message || 'Ошибка поиска клонов', 'error');
+                return;
+            }
+            const rows = resp?.data || resp || [];
+            if (!Array.isArray(rows) || rows.length === 0) {
+                this.notify('Клоны не найдены', 'info');
+                return;
+            }
+
+            const keyOf = (r) => `${String(r.latitude ?? '')}|${String(r.longitude ?? '')}`;
+            const groups = new Map();
+            for (const r of rows) {
+                const k = keyOf(r);
+                if (!groups.has(k)) {
+                    groups.set(k, {
+                        latitude: r.latitude,
+                        longitude: r.longitude,
+                        clone_count: Number(r.clone_count || 0) || 0,
+                        items: [],
+                    });
+                }
+                groups.get(k).items.push(r);
+            }
+
+            // Сортируем группы: по count desc
+            const sortedGroups = Array.from(groups.values()).sort((a, b) => (b.clone_count || 0) - (a.clone_count || 0));
+
+            const fmt = (v) => {
+                if (v === null || v === undefined || v === '') return '-';
+                const n = Number(v);
+                if (!Number.isFinite(n)) return this.escapeHtml(String(v));
+                return n.toFixed(7);
+            };
+
+            const content = `
+                <div style="display:flex; flex-direction:column; gap:14px;">
+                    ${sortedGroups.map(g => `
+                        <div style="border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+                            <div style="padding:10px 12px; background: var(--bg-secondary); display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+                                <span><strong>${g.clone_count || g.items.length}</strong> шт</span>
+                                <span>Широта (WGS84): <strong>${fmt(g.latitude)}</strong></span>
+                                <span>Долгота (WGS84): <strong>${fmt(g.longitude)}</strong></span>
+                            </div>
+                            <div style="max-height: 260px; overflow:auto;">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Номер</th>
+                                            <th>Вид</th>
+                                            <th>Тип</th>
+                                            <th>Статус</th>
+                                            <th>Собственник</th>
+                                            <th>Действия</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${(g.items || []).map(r => `
+                                            <tr>
+                                                <td>${this.escapeHtml(String(r.number || ''))}</td>
+                                                <td>${this.escapeHtml(String(r.type_name || ''))}</td>
+                                                <td>${this.escapeHtml(String(r.kind_name || ''))}</td>
+                                                <td>${this.escapeHtml(String(r.status_name || ''))}</td>
+                                                <td>${this.escapeHtml(String(r.owner_short || r.owner_name || ''))}</td>
+                                                <td style="white-space:nowrap;">
+                                                    <button class="btn btn-sm btn-secondary" onclick="App.viewObject(${Number(r.id)})" title="Показать на карте">
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                    ${this.canWrite() ? `
+                                                        <button class="btn btn-sm btn-primary" onclick="App.editObject(${Number(r.id)})" title="Редактировать">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                    ` : ``}
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            this.showModal('Найти клоны: колодцы (WGS84)', content, footer);
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка поиска клонов', 'error');
+        }
     },
 
     async loadObjectsListFilters(tab) {
@@ -1415,14 +1549,14 @@ const App = {
 
         // Заголовок
         header.innerHTML =
-            (canBulkDelete ? `<th style="width: 34px;"><input type="checkbox" id="select-all-objects"></th>` : '') +
+            (canBulkDelete ? `<th class="obj-select-col" style="width: 34px;"><input type="checkbox" id="select-all-objects"></th>` : '') +
             columns.map(col => `<th>${columnNames[col] || col}</th>`).join('') +
             '<th>Действия</th>';
 
         // Тело таблицы
         body.innerHTML = data.map(row => `
             <tr data-id="${row.id}">
-                ${canBulkDelete ? `<td><input type="checkbox" class="obj-select" data-id="${row.id}"></td>` : ''}
+                ${canBulkDelete ? `<td class="obj-select-col"><input type="checkbox" class="obj-select" data-id="${row.id}"></td>` : ''}
                 ${columns.map(col => `<td>${row[col] || '-'}</td>`).join('')}
                 <td>
                     ${Number(row.photo_count || 0) > 0 ? `

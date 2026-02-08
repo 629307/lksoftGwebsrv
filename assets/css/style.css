@@ -815,6 +815,14 @@ tr:hover {
     background: var(--bg-tertiary);
 }
 
+/* Ctrl multi-select in objects table: show checkbox column only while Ctrl is held */
+#objects-table .obj-select-col {
+    display: none;
+}
+body.ctrl-down #objects-table .obj-select-col {
+    display: table-cell;
+}
+
 /* Pagination */
 .pagination {
     display: flex;
