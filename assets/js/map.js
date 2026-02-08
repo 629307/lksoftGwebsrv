@@ -2315,6 +2315,29 @@ const MapManager = {
         } catch (_) {}
         this.multiSelected = new Map();
         this.hideMultiSelectionInfo();
+        try { document.getElementById('object-info-panel')?.classList.add('hidden'); } catch (_) {}
+    },
+
+    removeFromMultiSelection(objectType, objectId) {
+        const ot = (objectType || '').toString();
+        const id = (objectId !== undefined && objectId !== null) ? String(objectId) : '';
+        if (!ot || !id) return;
+        if (!(this.multiSelected instanceof Map)) this.multiSelected = new Map();
+        const key = `${ot}:${id}`;
+        if (!this.multiSelected.has(key)) return;
+
+        this.multiSelected.delete(key);
+        try {
+            const layer = this.findLayerByMeta(ot, id);
+            if (layer) this.applySelectedShadow(layer, false);
+        } catch (_) {}
+
+        if ((this.multiSelected.size || 0) === 0) {
+            this.hideMultiSelectionInfo();
+            try { document.getElementById('object-info-panel')?.classList.add('hidden'); } catch (_) {}
+            return;
+        }
+        this.showMultiSelectionInfo();
     },
 
     toggleMultiSelection(hit) {
@@ -2364,9 +2387,15 @@ const MapManager = {
         const rows = list.slice(0, 50).map((x) => {
             const ot = x.objectType;
             const p = x.properties || {};
-            return `<div class="info-row">
-                <span class="info-label">${this.getTypeDisplayName(ot)}:</span>
-                <span class="info-value">${String(p.number || p.id || '').replace(/</g, '&lt;')}</span>
+            const id = (p.id ?? '');
+            const label = String(p.number || p.id || '').replace(/</g, '&lt;');
+            return `<div class="info-row" style="display:flex; align-items:center; gap:8px;">
+                <span class="info-label" style="flex: 0 0 auto;">${this.getTypeDisplayName(ot)}:</span>
+                <span class="info-value" style="flex: 1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;">${label}</span>
+                <button type="button" class="btn btn-sm btn-secondary" style="padding: 2px 8px;" title="Исключить из выделения"
+                        onclick="MapManager.removeFromMultiSelection(${JSON.stringify(String(ot))}, ${JSON.stringify(String(id))})">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>`;
         }).join('');
 

@@ -619,6 +619,31 @@ const App = {
                         mm.toggleStuffWellMode?.();
                         document.getElementById('btn-stuff-well-map')?.classList?.toggle('active', false);
                     }
+
+                    // 3) Снять выделение на карте (одиночное/множественное)
+                    try {
+                        const hasMulti = !!(mm.multiSelected && (mm.multiSelected.size || 0) > 0);
+                        if (hasMulti) {
+                            mm.clearMultiSelection?.();
+                            this.notify('Выделение снято', 'info');
+                            e.preventDefault();
+                            return;
+                        }
+                        const panel = document.getElementById('object-info-panel');
+                        const visible = panel && !panel.classList.contains('hidden');
+                        if (visible) {
+                            mm.hideObjectInfo?.();
+                            this.notify('Выделение снято', 'info');
+                            e.preventDefault();
+                            return;
+                        }
+                        if (mm.selectedLayer) {
+                            mm.clearSelectedObject?.();
+                            this.notify('Выделение снято', 'info');
+                            e.preventDefault();
+                            return;
+                        }
+                    } catch (_) {}
                 } catch (_) {}
             });
         }
