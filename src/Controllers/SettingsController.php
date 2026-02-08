@@ -121,7 +121,12 @@ class SettingsController extends BaseController
             Response::error('Некорректные данные', 422);
         }
 
-        $allowed = [
+        $isAdmin = Auth::isAdmin();
+
+        // По ТЗ:
+        // - администратор: все настройки
+        // - пользователь/только чтение: только персональные настройки (без системных разделов данных/интерфейса/WMTS/ссылок)
+        $allowed = $isAdmin ? [
             'map_default_zoom',
             'map_default_lat',
             'map_default_lng',
@@ -164,6 +169,26 @@ class SettingsController extends BaseController
             'icon_size_well_marker',
             'font_size_well_number_label',
             'font_size_direction_length_label',
+        ] : [
+            // Разрешаем только персональные настройки
+            'map_layers',
+            'default_type_id_direction',
+            'default_type_id_well',
+            'default_type_id_marker',
+            'default_kind_id_direction',
+            'default_kind_id_well',
+            'default_kind_id_marker',
+            'default_status_id',
+            'default_owner_id',
+            'default_cable_type_id',
+            'default_cable_catalog_id',
+            'hotkey_add_direction',
+            'hotkey_add_well',
+            'hotkey_add_marker',
+            'hotkey_add_duct_cable',
+            'hotkey_add_ground_cable',
+            'hotkey_add_aerial_cable',
+            'well_entry_point_kind_code',
         ];
 
         $toSave = array_intersect_key($data, array_flip($allowed));

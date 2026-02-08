@@ -184,6 +184,8 @@ class Auth
      */
     public static function canDelete(): bool
     {
+        // По ТЗ роль "user" может удалять объекты (ограничения только на справочники/пользователей/системные настройки)
+        if (self::hasRole('user')) return true;
         return self::can('delete') || self::isAdmin();
     }
 

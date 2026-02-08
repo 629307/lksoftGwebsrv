@@ -99,6 +99,26 @@ const App = {
             document.getElementById('btn-delete-object')?.classList.add('hidden');
         }
 
+        // Роль "Только чтение": в меню доступна только карта, в тулбаре карты — только переключатели подписей/легенды
+        if ((this.user?.role?.code || '') === 'readonly') {
+            // Навигация: оставляем только "Карта"
+            document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
+                const p = el?.dataset?.panel;
+                if (p && p !== 'map') el.classList.add('hidden');
+            });
+            // Инструменты карты: отключаем всё кроме разрешённых
+            try {
+                const allowed = new Set(['btn-toggle-well-labels', 'btn-toggle-direction-length-labels', 'btn-toggle-owner-legend']);
+                document.querySelectorAll('#map-toolbar button').forEach((btn) => {
+                    if (!btn?.id) return;
+                    if (allowed.has(btn.id)) return;
+                    btn.disabled = true;
+                    btn.classList.add('disabled');
+                    btn.title = 'Недоступно для роли "Только чтение"';
+                });
+            } catch (_) {}
+        }
+
         // Кнопка "Загрузить" доступна только для колодцев + права на запись
         document.getElementById('btn-import')?.classList.toggle('hidden', this.currentTab !== 'wells' || !this.canWrite());
 
@@ -808,6 +828,10 @@ const App = {
      * Переключение панели
      */
     switchPanel(panel) {
+        // Роль "Только чтение": доступна только карта
+        if ((this.user?.role?.code || '') === 'readonly' && panel !== 'map') {
+            panel = 'map';
+        }
         this.currentPanel = panel;
 
         // Обновляем навигацию
@@ -888,6 +912,8 @@ const App = {
     },
 
     canDelete() {
+        const rc = this.user?.role?.code || '';
+        if (rc === 'admin' || rc === 'user') return true;
         return this.hasPermission('delete');
     },
 
@@ -3704,6 +3730,22 @@ const App = {
             } catch (_) {
                 // ignore
             }
+        }
+
+        // По ролям: не-админ не может менять системные разделы настроек
+        if (!this.isAdmin()) {
+            const disable = (el) => {
+                if (!el) return;
+                el.disabled = true;
+                try { el.style.background = 'var(--bg-tertiary)'; } catch (_) {}
+            };
+            [
+                z, lat, lng,
+                wDir, wCable, iconSize, fsWell, fsDirLen,
+                geo, cad,
+                wmtsUrlTmpl, wmtsStyle, wmtsTms, wmtsTm, wmtsTr, wmtsTc,
+                entryKind,
+            ].forEach(disable);
         }
     },
 
