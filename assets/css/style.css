@@ -1016,6 +1016,28 @@ tr:hover {
     z-index: 10000;
 }
 
+.modal.modal-nonblocking {
+    /* Не затемняем и не блокируем карту кликами */
+    background: transparent;
+    pointer-events: none;
+}
+
+.modal.modal-nonblocking .modal-content {
+    pointer-events: auto;
+}
+
+.modal.modal-bottom-left {
+    align-items: flex-end;
+    justify-content: flex-start;
+    padding: 12px;
+}
+
+.modal.modal-bottom-left .modal-content {
+    width: 420px;
+    max-width: calc(100vw - 24px);
+    max-height: 45vh;
+}
+
 .modal-content {
     background: var(--bg-card);
     border-radius: 12px;

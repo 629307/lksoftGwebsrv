@@ -3943,14 +3943,22 @@ const App = {
     /**
      * Модальное окно
      */
-    showModal(title, content, footer = '') {
+    showModal(title, content, footer = '', opts = null) {
         document.getElementById('modal-title').textContent = title;
         document.getElementById('modal-body').innerHTML = content;
         document.getElementById('modal-footer').innerHTML = footer;
-        document.getElementById('modal').classList.remove('hidden');
+        const modal = document.getElementById('modal');
+        // сброс вариантов позиционирования/режимов
+        modal.classList.remove('modal-nonblocking', 'modal-bottom-left');
+        // применяем опции (если есть)
+        try {
+            const o = opts || {};
+            if (o.nonBlocking) modal.classList.add('modal-nonblocking');
+            if (o.position === 'bottom-left') modal.classList.add('modal-bottom-left');
+        } catch (_) {}
+        modal.classList.remove('hidden');
 
         // Дата/время по умолчанию для пустых полей
-        const modal = document.getElementById('modal');
         const now = new Date();
         const pad2 = (n) => String(n).padStart(2, '0');
         const today = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
@@ -3964,7 +3972,10 @@ const App = {
     },
 
     hideModal() {
-        document.getElementById('modal').classList.add('hidden');
+        const modal = document.getElementById('modal');
+        modal.classList.add('hidden');
+        // сбрасываем модификаторы, чтобы следующий показ был "обычным"
+        modal.classList.remove('modal-nonblocking', 'modal-bottom-left');
     },
 
     /**
@@ -4222,7 +4233,8 @@ const App = {
                 </button>
             `;
             this._shortestDuctCablePath = data;
-            this.showModal('Кабель в канализации по кратчайшему пути', content, footer);
+            // Неблокирующее окно: снизу-слева, без затемнения карты
+            this.showModal('Кабель в канализации по кратчайшему пути', content, footer, { nonBlocking: true, position: 'bottom-left' });
         } catch (e) {
             this.notify(e?.message || 'Не удалось рассчитать путь', 'error');
         }
