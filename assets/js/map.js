@@ -390,6 +390,9 @@ const MapManager = {
         // Клик по карте
         this.map.on('click', (e) => this.onMapClick(e));
 
+        // Ctrl + drag: прямоугольное выделение (мультивыбор)
+        try { this.initBoxSelection(); } catch (_) {}
+
         // Авто-скрытие подписей колодцев по зуму + пересборка подписей направлений (угол зависит от зума)
         this.map.on('zoomend', () => {
             this.updateWellLabelsVisibility();
@@ -398,6 +401,189 @@ const MapManager = {
         this.updateWellLabelsVisibility();
 
         console.log('Карта инициализирована');
+    },
+
+    initBoxSelection() {
+        if (!this.map) return;
+        if (this._boxSelBound) return;
+        this._boxSelBound = true;
+
+        const container = this.map.getContainer();
+        const state = {
+            primed: false,
+            moved: false,
+            startPt: null,
+            startLatLng: null,
+            rect: null,
+        };
+
+        const isBlockedByMode = () => {
+            return !!(
+                this.groupPickMode ||
+                this.incidentSelectMode ||
+                this.addDirectionMode ||
+                this.addingObject ||
+                this.addCableMode ||
+                this.addDuctCableMode ||
+                this.relocateDuctCableMode ||
+                this.shortestDuctCableMode ||
+                this.movePointMode ||
+                this.stuffWellMode
+            );
+        };
+
+        const onMove = (ev) => {
+            if (!state.primed || !this.map) return;
+            const pt = L.point(ev.clientX, ev.clientY);
+            const d = state.startPt ? pt.distanceTo(state.startPt) : 0;
+            const threshold = 8;
+            if (!state.moved && d < threshold) return;
+
+            if (!state.moved) {
+                state.moved = true;
+                // выключаем drag карты на время выделения
+                try { this.map.dragging.disable(); } catch (_) {}
+                try { container.style.cursor = 'crosshair'; } catch (_) {}
+            }
+
+            const curLatLng = this.map.mouseEventToLatLng(ev);
+            const b = L.latLngBounds(state.startLatLng, curLatLng);
+            if (!state.rect) {
+                state.rect = L.rectangle(b, {
+                    interactive: false,
+                    color: '#3b82f6',
+                    weight: 2,
+                    opacity: 0.9,
+                    fillColor: '#3b82f6',
+                    fillOpacity: 0.12,
+                    dashArray: '4,4',
+                }).addTo(this.map);
+            } else {
+                state.rect.setBounds(b);
+            }
+        };
+
+        const onUp = (ev) => {
+            if (!state.primed) return;
+            document.removeEventListener('mousemove', onMove, true);
+            document.removeEventListener('mouseup', onUp, true);
+            state.primed = false;
+
+            // если drag не начался — это обычный Ctrl+клик, пусть обработает click-хендлер Leaflet
+            if (!state.moved) return;
+
+            try { ev.preventDefault(); } catch (_) {}
+            try { ev.stopPropagation(); } catch (_) {}
+
+            // возвращаем drag карты
+            try { this.map.dragging.enable(); } catch (_) {}
+            try { container.style.cursor = ''; } catch (_) {}
+
+            let bounds = null;
+            try { bounds = state.rect?.getBounds?.(); } catch (_) {}
+            try { if (state.rect) this.map.removeLayer(state.rect); } catch (_) {}
+            state.rect = null;
+            state.moved = false;
+
+            if (!bounds || !bounds.isValid?.() || !bounds.isValid()) return;
+            // подавляем "клик" после drag-выделения (иногда Leaflet может его сгенерировать)
+            try {
+                this._suppressClickOnce = true;
+                setTimeout(() => { this._suppressClickOnce = false; }, 150);
+            } catch (_) {}
+            this.addObjectsFullyInsideBoundsToMultiSelection(bounds);
+        };
+
+        const onDown = (ev) => {
+            try {
+                if (!this.map) return;
+                if (isBlockedByMode()) return;
+                if (ev.button !== 0) return;
+                const isCtrl = !!(ev.ctrlKey || ev.metaKey);
+                if (!isCtrl) return;
+
+                state.primed = true;
+                state.moved = false;
+                state.startPt = L.point(ev.clientX, ev.clientY);
+                state.startLatLng = this.map.mouseEventToLatLng(ev);
+                if (state.rect) {
+                    try { this.map.removeLayer(state.rect); } catch (_) {}
+                    state.rect = null;
+                }
+
+                document.addEventListener('mousemove', onMove, true);
+                document.addEventListener('mouseup', onUp, true);
+            } catch (_) {}
+        };
+
+        // Важно: слушаем DOM, чтобы отличать drag от click
+        container.addEventListener('mousedown', onDown, true);
+    },
+
+    addObjectsFullyInsideBoundsToMultiSelection(bounds) {
+        if (!bounds || !this.layers) return;
+
+        const hits = [];
+
+        const layerFullyInside = (layer) => {
+            if (!layer || !bounds) return false;
+            // Point-like
+            if (typeof layer.getLatLng === 'function') {
+                const ll = layer.getLatLng();
+                return !!(ll && bounds.contains(ll));
+            }
+            // Polyline-like
+            if (typeof layer.getLatLngs === 'function') {
+                const latlngs = layer.getLatLngs().flat(Infinity).filter(ll => ll && ll.lat !== undefined);
+                if (!latlngs.length) return false;
+                return latlngs.every(ll => bounds.contains(ll));
+            }
+            return false;
+        };
+
+        const traverse = (layer) => {
+            if (!layer) return;
+            if (typeof layer.getLayers === 'function') {
+                layer.getLayers().forEach(traverse);
+                return;
+            }
+            const meta = layer?._igsMeta;
+            if (!meta || !meta.objectType || !meta.properties?.id) return;
+            if (!layerFullyInside(layer)) return;
+            hits.push({
+                objectType: meta.objectType,
+                properties: meta.properties,
+            });
+        };
+
+        Object.values(this.layers || {}).forEach(group => traverse(group));
+
+        if (!hits.length) {
+            try { App.notify('В прямоугольнике нет объектов', 'info'); } catch (_) {}
+            return;
+        }
+
+        if (!(this.multiSelected instanceof Map)) this.multiSelected = new Map();
+        // При первом box-select — снимаем одиночное выделение
+        this.clearSelectedObject();
+
+        let added = 0;
+        for (const h of hits) {
+            const key = this.multiSelectKey(h);
+            if (this.multiSelected.has(key)) continue;
+            this.multiSelected.set(key, { objectType: h.objectType, properties: h.properties });
+            const layer = this.findLayerByMeta(h.objectType, h.properties.id);
+            if (layer) this.applySelectedShadow(layer, true);
+            added += 1;
+        }
+
+        if ((this.multiSelected?.size || 0) === 0) {
+            this.hideMultiSelectionInfo();
+            return;
+        }
+
+        this.showMultiSelectionInfo();
+        try { App.notify(`Выбрано объектов: ${this.multiSelected.size}`, 'success'); } catch (_) {}
     },
 
     setMapDefaultsEnabled(enabled) {
@@ -979,6 +1165,10 @@ const MapManager = {
 
     // e: Leaflet MouseEvent
     handleObjectsClick(e) {
+        if (this._suppressClickOnce) {
+            this._suppressClickOnce = false;
+            return;
+        }
         const latlng = e?.latlng || e;
         const hits = this.getObjectsAtLatLng(latlng);
         this.lastClickHits = hits;
@@ -2223,6 +2413,10 @@ const MapManager = {
      * Клик по карте (для добавления объектов)
      */
     onMapClick(e) {
+        if (this._suppressClickOnce) {
+            this._suppressClickOnce = false;
+            return;
+        }
         // Если включён режим добавления кабеля (ломаная линия)
         if (this.addCableMode) {
             this.handleAddCableClick(e.latlng);
