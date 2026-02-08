@@ -685,15 +685,24 @@ class ChannelController extends BaseController
             if (!empty($channelRows)) {
                 $ids = array_values(array_filter(array_map(fn($r) => (int) ($r['id'] ?? 0), $channelRows)));
                 if (!empty($ids)) {
-                    // Проверяем использование каналов кабелями
-                    $usedRow = $this->db->fetch(
-                        "SELECT COUNT(*) as cnt
-                         FROM cable_route_channels
-                         WHERE cable_channel_id IN (" . implode(',', array_map('intval', $ids)) . ")"
-                    );
-                    $usedCnt = (int) ($usedRow['cnt'] ?? 0);
-                    if ($usedCnt > 0) {
-                        Response::error('Нельзя удалить направление: в его каналах находятся кабели', 400);
+                    // Проверяем использование каналов кабелями (если в любом канале есть кабель — НЕ УДАЛЯЕМ ничего)
+                    try {
+                        $used = $this->db->fetchAll(
+                            "SELECT DISTINCT cb.id, cb.number
+                             FROM cable_route_channels crc
+                             JOIN cables cb ON crc.cable_id = cb.id
+                             WHERE crc.cable_channel_id IN (" . implode(',', array_map('intval', $ids)) . ")
+                             ORDER BY cb.number
+                             LIMIT 50"
+                        );
+                        if (!empty($used)) {
+                            $nums = array_values(array_filter(array_map(fn($r) => $r['number'] ?? null, $used)));
+                            $list = implode(', ', $nums);
+                            Response::error("Нельзя удалить направление: в его каналах находятся кабели: {$list}", 400);
+                        }
+                    } catch (\Throwable $e) {
+                        // Если не можем проверить — запрещаем удаление (безопасное поведение)
+                        Response::error('Нельзя проверить использование каналов кабелями', 400);
                     }
                 }
             }
