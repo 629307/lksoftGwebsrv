@@ -747,6 +747,26 @@
                                     </button>
                                 </div>
 
+                                <div style="border:1px solid var(--border-color); border-radius:10px; padding: 10px 12px; margin-bottom: 14px;">
+                                    <div style="font-weight:800; margin-bottom:8px;">Crontab (регулярный запуск на сервере)</div>
+                                    <div class="text-muted" style="margin-bottom:8px;">
+                                        Если на сервере доступен `crontab`, можно установить правило автоматически. Иначе — скопируйте команду и добавьте вручную.
+                                    </div>
+                                    <textarea id="db-backup-cron-line" rows="2" readonly style="width:100%; resize: vertical; background: var(--bg-tertiary); font-family: monospace;"></textarea>
+                                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px;">
+                                        <button type="button" class="btn btn-secondary" id="btn-db-backup-cron-copy">
+                                            <i class="fas fa-copy"></i> Скопировать команду
+                                        </button>
+                                        <button type="button" class="btn btn-primary" id="btn-db-backup-cron-install">
+                                            <i class="fas fa-check"></i> Установить в crontab
+                                        </button>
+                                        <button type="button" class="btn btn-danger" id="btn-db-backup-cron-remove">
+                                            <i class="fas fa-trash"></i> Удалить из crontab
+                                        </button>
+                                        <span class="text-muted" id="db-backup-cron-status" style="margin-left:auto;"></span>
+                                    </div>
+                                </div>
+
                                 <div style="border:1px solid var(--border-color); border-radius: 10px; overflow:hidden;">
                                     <div style="padding: 10px 12px; background: var(--bg-secondary); font-weight: 700;">
                                         Доступные бэкапы

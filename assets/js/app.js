@@ -4007,10 +4007,67 @@ const App = {
             document.getElementById('btn-db-backup-create-now')?.addEventListener('click', () => this.createDbBackupNow());
             document.getElementById('btn-db-backup-save-schedule')?.addEventListener('click', () => this.saveDbBackupSchedule());
             document.getElementById('btn-db-backup-run-tick')?.addEventListener('click', () => this.runDbBackupTick());
+            document.getElementById('btn-db-backup-cron-copy')?.addEventListener('click', () => this.copyDbBackupCronLine());
+            document.getElementById('btn-db-backup-cron-install')?.addEventListener('click', () => this.installDbBackupCron());
+            document.getElementById('btn-db-backup-cron-remove')?.addEventListener('click', () => this.removeDbBackupCron());
         }
 
         await this.loadDbBackupConfig();
+        await this.loadDbBackupCronInfo();
         await this.refreshDbBackups();
+    },
+
+    async loadDbBackupCronInfo() {
+        const ta = document.getElementById('db-backup-cron-line');
+        const st = document.getElementById('db-backup-cron-status');
+        if (st) st.textContent = '';
+        try {
+            const resp = await API.dbBackups.cronInfo();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const data = resp?.data || resp || {};
+            if (ta) ta.value = String(data.line || '');
+            if (st) st.textContent = data.installed ? 'Установлено' : 'Не установлено';
+        } catch (e) {
+            if (st) st.textContent = 'Недоступно';
+            if (ta && !ta.value) ta.value = '';
+        }
+    },
+
+    async copyDbBackupCronLine() {
+        const ta = document.getElementById('db-backup-cron-line');
+        const text = (ta?.value || '').toString().trim();
+        if (!text) {
+            this.notify('Команда crontab не сформирована', 'warning');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            this.notify('Команда скопирована', 'success');
+        } catch (_) {
+            this.notify('Не удалось скопировать команду', 'error');
+        }
+    },
+
+    async installDbBackupCron() {
+        try {
+            const resp = await API.dbBackups.cronInstall();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Правило crontab установлено', 'success');
+            await this.loadDbBackupCronInfo();
+        } catch (e) {
+            this.notify(e?.message || 'Не удалось установить crontab', 'error');
+        }
+    },
+
+    async removeDbBackupCron() {
+        try {
+            const resp = await API.dbBackups.cronRemove();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            this.notify('Правило crontab удалено', 'success');
+            await this.loadDbBackupCronInfo();
+        } catch (e) {
+            this.notify(e?.message || 'Не удалось удалить crontab', 'error');
+        }
     },
 
     async loadDbBackupConfig() {

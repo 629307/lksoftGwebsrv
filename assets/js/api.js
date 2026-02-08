@@ -807,6 +807,15 @@ const API = {
         tick() {
             return API.post('/admin/db-backups/tick', {});
         },
+        cronInfo() {
+            return API.get('/admin/db-backups/cron');
+        },
+        cronInstall() {
+            return API.post('/admin/db-backups/cron/install', {});
+        },
+        cronRemove() {
+            return API.post('/admin/db-backups/cron/remove', {});
+        },
         restore(id) {
             return API.post(`/admin/db-backups/${encodeURIComponent(id)}/restore`, {});
         },

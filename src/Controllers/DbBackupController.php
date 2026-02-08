@@ -43,6 +43,63 @@ class DbBackupController extends BaseController
         return require __DIR__ . '/../../config/database.php';
     }
 
+    private function projectRoot(): string
+    {
+        return realpath(__DIR__ . '/../../') ?: (string) (__DIR__ . '/../../');
+    }
+
+    private function cliScriptPath(): string
+    {
+        return $this->projectRoot() . '/storage/cli/db_backup_tick.php';
+    }
+
+    private function detectPhpCliBinary(): string
+    {
+        // Пытаемся найти CLI php (в cron PATH может быть ограничен)
+        try {
+            $res = $this->runCommand(['bash', '-lc', 'command -v php'], [], 10);
+            $p = trim((string) ($res['stdout'] ?? ''));
+            if ($p !== '' && is_file($p)) return $p;
+        } catch (\Throwable $e) {}
+        if (is_file('/usr/bin/php')) return '/usr/bin/php';
+        if (is_file('/usr/local/bin/php')) return '/usr/local/bin/php';
+        return 'php';
+    }
+
+    private function cronMarker(): string
+    {
+        return 'IGS_DB_BACKUP_TICK';
+    }
+
+    private function buildCronLine(): string
+    {
+        $php = $this->detectPhpCliBinary();
+        $script = $this->cliScriptPath();
+        $log = $this->ensureBackupDir() . '/cron.log';
+        // Запускаем часто, а решение "пора/не пора" принимает tick-скрипт по настройкам interval_hours
+        return "*/10 * * * * {$php} {$script} >> {$log} 2>&1 # " . $this->cronMarker();
+    }
+
+    private function readCrontab(): array
+    {
+        // Возвращает ['ok'=>bool, 'text'=>string]
+        $res = $this->runCommand(['bash', '-lc', 'crontab -l 2>/dev/null || true'], [], 10);
+        $text = (string) ($res['stdout'] ?? '');
+        return ['ok' => true, 'text' => $text];
+    }
+
+    private function writeCrontab(string $text): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'igs_cron_');
+        if (!$tmp) Response::error('Не удалось создать временный файл для crontab', 500);
+        file_put_contents($tmp, $text);
+        $res = $this->runCommand(['bash', '-lc', 'crontab ' . escapeshellarg($tmp)], [], 10);
+        @unlink($tmp);
+        if ((int) ($res['exit_code'] ?? 1) !== 0) {
+            Response::error('Не удалось обновить crontab: ' . trim((string) ($res['stderr'] ?? '')), 500);
+        }
+    }
+
     private function runCommand(array $cmd, array $env = [], int $timeoutSec = 600): array
     {
         if (!function_exists('proc_open')) {
@@ -160,6 +217,71 @@ class DbBackupController extends BaseController
             'keep_count' => ($keep === '' ? null : (int) $keep),
             'last_run_at' => ($lastRun !== '' ? $lastRun : null),
         ]);
+    }
+
+    /**
+     * GET /api/admin/db-backups/cron
+     * Информация о cron-правиле + рекомендуемая команда.
+     */
+    public function cron(): void
+    {
+        $this->requireAdmin();
+        $line = $this->buildCronLine();
+        $ct = $this->readCrontab();
+        $installed = (strpos((string) ($ct['text'] ?? ''), $this->cronMarker()) !== false);
+        Response::success([
+            'installed' => $installed,
+            'line' => $line,
+        ]);
+    }
+
+    /**
+     * POST /api/admin/db-backups/cron/install
+     * Установить (или обновить) cron-правило для текущего системного пользователя (www-data/php-fpm).
+     */
+    public function cronInstall(): void
+    {
+        $this->requireAdmin();
+        $line = $this->buildCronLine();
+        $ct = $this->readCrontab();
+        $text = (string) ($ct['text'] ?? '');
+        $marker = $this->cronMarker();
+
+        $lines = preg_split("/\r\n|\n|\r/", $text);
+        $lines = array_values(array_filter($lines, fn($l) => trim((string) $l) !== ''));
+        // удалим старые строки маркера
+        $lines = array_values(array_filter($lines, fn($l) => strpos((string) $l, $marker) === false));
+        $lines[] = $line;
+        $newText = implode("\n", $lines) . "\n";
+
+        // проверим существование CLI скрипта
+        if (!is_file($this->cliScriptPath())) {
+            Response::error('CLI-скрипт для cron не найден: ' . $this->cliScriptPath(), 500);
+        }
+        $this->writeCrontab($newText);
+        Response::success(['installed' => true, 'line' => $line], 'Crontab обновлён');
+    }
+
+    /**
+     * POST /api/admin/db-backups/cron/remove
+     */
+    public function cronRemove(): void
+    {
+        $this->requireAdmin();
+        $ct = $this->readCrontab();
+        $text = (string) ($ct['text'] ?? '');
+        $marker = $this->cronMarker();
+        $lines = preg_split("/\r\n|\n|\r/", $text);
+        $lines = array_values(array_filter($lines, fn($l) => trim((string) $l) !== ''));
+        $lines = array_values(array_filter($lines, fn($l) => strpos((string) $l, $marker) === false));
+        $newText = $lines ? (implode("\n", $lines) . "\n") : "";
+        if ($newText === "") {
+            // удалить crontab целиком
+            $this->runCommand(['bash', '-lc', 'crontab -r 2>/dev/null || true'], [], 10);
+        } else {
+            $this->writeCrontab($newText);
+        }
+        Response::success(['installed' => false], 'Crontab очищен');
     }
 
     /**

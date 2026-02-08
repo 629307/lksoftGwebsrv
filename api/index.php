@@ -310,6 +310,9 @@ $router->put('/api/admin/db-backups/config', [DbBackupController::class, 'update
 $router->get('/api/admin/db-backups', [DbBackupController::class, 'index'], ['auth']);
 $router->post('/api/admin/db-backups', [DbBackupController::class, 'create'], ['auth']);
 $router->post('/api/admin/db-backups/tick', [DbBackupController::class, 'tick'], ['auth']);
+$router->get('/api/admin/db-backups/cron', [DbBackupController::class, 'cron'], ['auth']);
+$router->post('/api/admin/db-backups/cron/install', [DbBackupController::class, 'cronInstall'], ['auth']);
+$router->post('/api/admin/db-backups/cron/remove', [DbBackupController::class, 'cronRemove'], ['auth']);
 $router->post('/api/admin/db-backups/{id}/restore', [DbBackupController::class, 'restore'], ['auth']);
 
 // Администрирование: журнал действий (только админ)
