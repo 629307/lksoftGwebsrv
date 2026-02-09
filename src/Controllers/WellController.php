@@ -265,12 +265,17 @@ class WellController extends BaseController
 
         // Формирование номера:
         // <Код номера>-<Код собственника>-<seq>(-суффикс)
-        // Исключение: для "вводных" колодцев (kind.code = 'input') seq начинается с настройки input_well_number_start
+        // Исключения:
+        // - для "вводных" колодцев (kind.code = 'input') seq начинается с настройки input_well_number_start
+        // - для колодцев типа "опора" (kind.code = 'pole') seq начинается со 100000
         $suffix = $this->request->input('number_suffix');
         $minSeq = 1;
         try {
             $kindCode = $this->getObjectKindCodeById((int) ($data['kind_id'] ?? 0));
-            if (strtolower(trim($kindCode)) === 'input') {
+            $kc = strtolower(trim($kindCode));
+            if ($kc === 'pole') {
+                $minSeq = 100000;
+            } elseif ($kc === 'input') {
                 $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
             }
         } catch (\Throwable $e) {
@@ -433,11 +438,14 @@ class WellController extends BaseController
             ($newSuffix  !== $oldSuffix);
 
         if ($needRenumber) {
-            // "вводной" колодец: нумерация может начинаться с настройки
+            // "вводной" колодец/ "опора": нумерация может начинаться с настройки/константы
             $minSeq = 1;
             try {
                 $kindCode = $this->getObjectKindCodeById($newKindId);
-                if (strtolower(trim($kindCode)) === 'input') {
+                $kc = strtolower(trim($kindCode));
+                if ($kc === 'pole') {
+                    $minSeq = 100000;
+                } elseif ($kc === 'input') {
                     $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
                 }
             } catch (\Throwable $e) {

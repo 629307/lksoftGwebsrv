@@ -159,6 +159,11 @@ const MapManager = {
         return !!kindCode && kindCode === entry;
     },
 
+    isWellPole(props) {
+        const kindCode = (props?.kind_code || '').toString().trim().toLowerCase();
+        return kindCode === 'pole';
+    },
+
     createWellMarker(latlng, props) {
         const base = props?.type_color || this.colors.wells;
         const legendColor = (props?.owner_color || '').toString().trim();
@@ -171,6 +176,21 @@ const MapManager = {
                 icon: L.divIcon({
                     className: 'well-entry-point-icon',
                     html: `<div style="width:${size}px;height:${size}px;background:${color};border:2px solid #fff;box-sizing:border-box;opacity:0.85;"></div>`,
+                    iconSize: [size, size],
+                    iconAnchor: [size / 2, size / 2],
+                }),
+            });
+        }
+        if (this.isWellPole(props)) {
+            // "Опора" (kind_code = pole): треугольник
+            return L.marker(latlng, {
+                icon: L.divIcon({
+                    className: 'well-pole-icon',
+                    html: `
+                        <svg width="${size}" height="${size}" viewBox="0 0 100 100" style="display:block;">
+                            <polygon points="50,8 95,92 5,92" fill="${color}" stroke="#fff" stroke-width="10" opacity="0.85"></polygon>
+                        </svg>
+                    `,
                     iconSize: [size, size],
                     iconAnchor: [size / 2, size / 2],
                 }),
