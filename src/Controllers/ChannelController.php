@@ -10,6 +10,39 @@ use App\Core\Auth;
 
 class ChannelController extends BaseController
 {
+    private function getStatusCodeById(?int $statusId): string
+    {
+        $id = (int) ($statusId ?? 0);
+        if ($id <= 0) return '';
+        $row = $this->db->fetch("SELECT code FROM object_status WHERE id = :id LIMIT 1", ['id' => $id]);
+        return strtolower(trim((string) ($row['code'] ?? '')));
+    }
+
+    private function getDefaultOwnerId(): int
+    {
+        // "ХЗ / Не указан" — системный собственник по умолчанию.
+        // В schema.sql он создаётся как code='default', name='Не указан'.
+        $row = $this->db->fetch(
+            "SELECT id
+             FROM owners
+             WHERE code = 'default'
+                OR lower(name) LIKE '%не указан%'
+                OR lower(short_name) IN ('н/у','ну')
+             ORDER BY (code = 'default') DESC, id
+             LIMIT 1"
+        );
+        $id = (int) ($row['id'] ?? 0);
+        if ($id <= 0) {
+            Response::error('Не найден собственник по умолчанию (Не указан). Создайте owners.code = default', 500);
+        }
+        return $id;
+    }
+
+    private function isInbuildingDirectionByStatusId(?int $statusId): bool
+    {
+        return $this->getStatusCodeById($statusId) === 'inbuilding';
+    }
+
     private function getDefaultChannelKindId(?int $userId = null): ?int
     {
         try {
@@ -555,6 +588,14 @@ class ChannelController extends BaseController
                 $data[$field] = null;
             }
         }
+
+        // Спец-правило: статус "inbuilding" (в здании)
+        // - собственник всегда "Не указан" (default)
+        // - количество каналов всегда 1
+        if ($this->isInbuildingDirectionByStatusId(isset($data['status_id']) ? (int) $data['status_id'] : null)) {
+            $data['owner_id'] = $this->getDefaultOwnerId();
+            $channelCount = 1;
+        }
         
         $user = Auth::user();
         $data['created_by'] = $user['id'];
@@ -646,7 +687,82 @@ class ChannelController extends BaseController
         $user = Auth::user();
         $data['updated_by'] = $user['id'];
 
-        $this->db->update('channel_directions', $data, 'id = :id', ['id' => $directionId]);
+        // Определяем итоговый статус
+        $newStatusId = array_key_exists('status_id', $data)
+            ? (int) $data['status_id']
+            : (int) ($oldDirection['status_id'] ?? 0);
+        $isInbuilding = $this->isInbuildingDirectionByStatusId($newStatusId);
+
+        // Спец-правило: статус "inbuilding"
+        // - собственник всегда default
+        // - каналов всегда 1 (лишние удаляем, если не используются кабелями)
+        if ($isInbuilding) {
+            $data['owner_id'] = $this->getDefaultOwnerId();
+        }
+
+        try {
+            $this->db->beginTransaction();
+
+            if ($isInbuilding) {
+                $channels = $this->db->fetchAll(
+                    "SELECT id, channel_number
+                     FROM cable_channels
+                     WHERE direction_id = :id
+                     ORDER BY channel_number",
+                    ['id' => $directionId]
+                );
+                $extra = array_values(array_filter($channels, fn($r) => (int) ($r['channel_number'] ?? 0) > 1));
+                if (!empty($extra)) {
+                    $extraIds = array_values(array_filter(array_map(fn($r) => (int) ($r['id'] ?? 0), $extra), fn($v) => $v > 0));
+                    if (!empty($extraIds)) {
+                        $used = $this->db->fetchAll(
+                            "SELECT DISTINCT cc.id, cc.channel_number, cb.id as cable_id, cb.number as cable_number
+                             FROM cable_route_channels crc
+                             JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+                             JOIN cables cb ON crc.cable_id = cb.id
+                             WHERE cc.id IN (" . implode(',', array_map('intval', $extraIds)) . ")
+                             ORDER BY cc.channel_number, cb.number
+                             LIMIT 50"
+                        );
+                        if (!empty($used)) {
+                            Response::error('Нельзя установить статус "В здании": дополнительные каналы используются кабелями', 400);
+                        }
+
+                        // удаляем лишние каналы (и их фото)
+                        foreach ($extraIds as $cid) {
+                            $this->db->delete('object_photos', "object_table = 'cable_channels' AND object_id = :id", ['id' => (int) $cid]);
+                            $this->db->delete('cable_channels', 'id = :id', ['id' => (int) $cid]);
+                        }
+                    }
+                }
+
+                // если по какой-то причине каналов нет — создадим канал №1
+                $cntRow = $this->db->fetch(
+                    "SELECT COUNT(*) as cnt FROM cable_channels WHERE direction_id = :id",
+                    ['id' => $directionId]
+                );
+                $cnt = (int) ($cntRow['cnt'] ?? 0);
+                if ($cnt <= 0) {
+                    $defaultKindId = $this->getDefaultChannelKindId((int) ($user['id'] ?? 0));
+                    $defaultStatusId = $this->getDefaultStatusId();
+                    $this->db->insert('cable_channels', [
+                        'direction_id' => $directionId,
+                        'channel_number' => 1,
+                        'kind_id' => $defaultKindId,
+                        'status_id' => $defaultStatusId,
+                        'diameter_mm' => 110,
+                        'created_by' => $user['id'],
+                        'updated_by' => $user['id'],
+                    ]);
+                }
+            }
+
+            $this->db->update('channel_directions', $data, 'id = :id', ['id' => $directionId]);
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            try { $this->db->rollback(); } catch (\Throwable $e2) {}
+            throw $e;
+        }
 
         $direction = $this->db->fetch(
             "SELECT *, ST_AsGeoJSON(geom_wgs84)::json as geometry FROM channel_directions WHERE id = :id",
@@ -755,6 +871,10 @@ class ChannelController extends BaseController
             Response::error('Направление не найдено', 404);
         }
 
+        if ($this->isInbuildingDirectionByStatusId((int) ($direction['status_id'] ?? 0))) {
+            Response::error('Для направления со статусом "В здании" количество каналов всегда 1. Добавление каналов запрещено.', 400);
+        }
+
         // Проверяем количество каналов
         $count = $this->db->fetch(
             "SELECT COUNT(*) as cnt FROM cable_channels WHERE direction_id = :id",
@@ -815,6 +935,10 @@ class ChannelController extends BaseController
         $direction = $this->db->fetch("SELECT * FROM channel_directions WHERE id = :id", ['id' => $directionId]);
         if (!$direction) {
             Response::error('Направление не найдено', 404);
+        }
+
+        if ($this->isInbuildingDirectionByStatusId((int) ($direction['status_id'] ?? 0))) {
+            Response::error('Для направления со статусом "В здании" количество каналов всегда 1. Добавление каналов запрещено.', 400);
         }
 
         $target = (int) ($this->request->input('target_count') ?? 0);
@@ -884,6 +1008,8 @@ class ChannelController extends BaseController
         if (!$direction) {
             Response::error('Направление не найдено', 404);
         }
+
+        $isInbuilding = $this->isInbuildingDirectionByStatusId((int) ($direction['status_id'] ?? 0));
 
         // Данные нового колодца (как в стандартном создании)
         $wellData = $this->request->only([
@@ -992,7 +1118,8 @@ class ChannelController extends BaseController
             }
 
             $dirBase = [
-                'owner_id' => $direction['owner_id'] ?? null,
+                // Статус "inbuilding": собственник всегда default
+                'owner_id' => $isInbuilding ? $this->getDefaultOwnerId() : ($direction['owner_id'] ?? null),
                 'type_id' => $direction['type_id'] ?? null,
                 'status_id' => $direction['status_id'] ?? null,
                 'notes' => $direction['notes'] ?? null,
@@ -1046,6 +1173,20 @@ class ChannelController extends BaseController
                  ORDER BY channel_number",
                 ['id' => $directionId]
             );
+            // Статус "inbuilding": каналов всегда 1
+            if ($isInbuilding) {
+                $channels = array_values(array_filter($channels, fn($ch) => (int) ($ch['channel_number'] ?? 0) === 1));
+                if (!$channels) {
+                    $channels = [[
+                        'channel_number' => 1,
+                        'kind_id' => $this->getDefaultChannelKindId((int) ($user['id'] ?? 0)),
+                        'status_id' => $this->getDefaultStatusId(),
+                        'diameter_mm' => 110,
+                        'material' => null,
+                        'notes' => null,
+                    ]];
+                }
+            }
             foreach ([$newDir1Id, $newDir2Id] as $did) {
                 foreach ($channels as $ch) {
                     $this->db->insert('cable_channels', [
@@ -1414,6 +1555,14 @@ class ChannelController extends BaseController
 
         $directionId = (int) ($channel['direction_id'] ?? 0);
         $channelNumber = (int) ($channel['channel_number'] ?? 0);
+
+        // Статус "inbuilding": канал должен оставаться ровно один — удаление запрещаем
+        if ($directionId > 0) {
+            $dir = $this->db->fetch("SELECT status_id FROM channel_directions WHERE id = :id", ['id' => $directionId]);
+            if ($dir && $this->isInbuildingDirectionByStatusId((int) ($dir['status_id'] ?? 0))) {
+                Response::error('Нельзя удалить канал: для направления со статусом "В здании" количество каналов всегда 1', 400);
+            }
+        }
 
         // Удалять можно только последний (по номеру) канал в направлении
         if ($directionId > 0) {

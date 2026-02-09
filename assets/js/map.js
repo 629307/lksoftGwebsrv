@@ -1118,13 +1118,21 @@ const MapManager = {
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
-                    style: (feature) => ({
-                        color: (this.ownersLegendEnabled && feature?.properties?.owner_color)
-                            ? feature.properties.owner_color
-                            : this.getPlannedOverrideColor(feature?.properties, this.colors.channels),
-                        weight: this.getDirectionLineWeight(),
-                        opacity: 0.8,
-                    }),
+                    style: (feature) => {
+                        const props = feature?.properties || {};
+                        const style = {
+                            color: (this.ownersLegendEnabled && props?.owner_color)
+                                ? props.owner_color
+                                : this.getPlannedOverrideColor(props, this.colors.channels),
+                            weight: this.getDirectionLineWeight(),
+                            opacity: 0.8,
+                        };
+                        // Статус "inbuilding": линия прерывистая (без изменения цветовой схемы)
+                        if ((props.status_code || '').toString().trim().toLowerCase() === 'inbuilding') {
+                            style.dashArray = '6, 6';
+                        }
+                        return style;
+                    },
                     onEachFeature: (feature, layer) => {
                         layer._igsMeta = { objectType: 'channel_direction', properties: feature.properties };
                         layer.on('click', async (e) => {
@@ -3259,7 +3267,14 @@ const MapManager = {
                     // LineString / MultiLineString
                     const latlngs = L.GeoJSON.coordsToLatLngs(geom.coordinates, geom.type === 'MultiLineString' ? 1 : 0);
                     if (ot === 'channel_direction') {
-                        addLine(this.layers.channels, 'channel_direction', f, latlngs, { color: this.colors.channels, weight: this.getDirectionLineWeight(), opacity: 0.8 });
+                        const props = f?.properties || {};
+                        const isInbuilding = (props.status_code || '').toString().trim().toLowerCase() === 'inbuilding';
+                        addLine(this.layers.channels, 'channel_direction', f, latlngs, {
+                            color: this.colors.channels,
+                            weight: this.getDirectionLineWeight(),
+                            opacity: 0.8,
+                            ...(isInbuilding ? { dashArray: '6, 6' } : {}),
+                        });
                     } else if (ot === 'ground_cable') {
                         addLine(this.layers.groundCables, 'ground_cable', f, latlngs, { color: this.colors.groundCables, weight: this.getCableLineWeight(), opacity: 0.8 });
                     } else if (ot === 'aerial_cable') {
