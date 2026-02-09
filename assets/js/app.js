@@ -2884,7 +2884,9 @@ const App = {
         const buildNumber = () => {
             const prefix = (prefixInput?.value || '').toString();
             const suffix = (suffixInput?.value || '').toString().trim();
-            const cleanSuffix = suffix.replace(/[^0-9A-Za-zА-Яа-яЁё_]/g, '').slice(0, 5);
+            // Разрешаем любые буквы (Unicode) + цифры + подчёркивание.
+            // Дефис запрещён (разделитель в номере).
+            const cleanSuffix = suffix.replace(/[^\p{L}\p{N}_]/gu, '').slice(0, 5);
             if (!prefix) return '';
             // seq подбирается сервером, поэтому проверяем только суффикс на допустимые символы/длину
             return `${prefix}...${cleanSuffix ? '-' + cleanSuffix : ''}`.trim();

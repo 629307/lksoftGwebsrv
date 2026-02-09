@@ -224,8 +224,10 @@ abstract class BaseController
     {
         $s = trim((string) ($suffix ?? ''));
         if ($s === '') return '';
-        // Разрешаем буквы/цифры/подчёркивание (без дефисов, чтобы не ломать разбор номера)
-        $s = preg_replace('/[^0-9A-Za-zА-Яа-яЁё_]/u', '', $s);
+        // Разрешаем любые буквы (любой алфавит) + любые цифры + подчёркивание.
+        // Дефис запрещён, т.к. используется как разделитель частей номера.
+        // Используем unicode-классы \p{L} (letters) и \p{N} (numbers).
+        $s = preg_replace('/[^\p{L}\p{N}_]/u', '', $s);
         $s = (string) $s;
         $len = function_exists('mb_strlen') ? mb_strlen($s) : strlen($s);
         if ($len > 5) {
