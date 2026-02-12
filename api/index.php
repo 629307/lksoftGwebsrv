@@ -239,6 +239,7 @@ $router->get('/api/unified-cables/by-channel/{id}', [UnifiedCableController::cla
 $router->get('/api/unified-cables/{id}/route-directions-geojson', [UnifiedCableController::class, 'routeDirectionsGeojson'], ['auth']);
 $router->get('/api/unified-cables/{id}', [UnifiedCableController::class, 'show'], ['auth']);
 $router->get('/api/unified-cables/{id}/recalculate-length', [UnifiedCableController::class, 'recalculateLength'], ['auth']);
+$router->post('/api/unified-cables/recalculate-lengths', [UnifiedCableController::class, 'recalculateLengths'], ['auth']);
 $router->post('/api/unified-cables', [UnifiedCableController::class, 'store'], ['auth']);
 $router->put('/api/unified-cables/{id}', [UnifiedCableController::class, 'update'], ['auth']);
 $router->delete('/api/unified-cables/{id}', [UnifiedCableController::class, 'destroy'], ['auth']);

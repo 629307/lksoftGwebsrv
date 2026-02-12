@@ -818,6 +818,65 @@ class UnifiedCableController extends BaseController
     }
 
     /**
+     * POST /api/unified-cables/recalculate-lengths
+     * Массовый пересчёт длины кабелей в канализации по маршрутам
+     */
+    public function recalculateLengths(): void
+    {
+        if (!(Auth::isAdmin() || Auth::canWrite())) {
+            Response::error('Недостаточно прав', 403);
+        }
+
+        $row = $this->db->fetch("SELECT id FROM object_types WHERE code = 'cable_duct' LIMIT 1");
+        $otId = (int) ($row['id'] ?? 0);
+        if ($otId <= 0) {
+            Response::error('Не найден вид объекта cable_duct', 500);
+        }
+
+        $k = (float) $this->getAppSetting('cable_in_well_length_m', 2);
+
+        // Пересчитываем только duct-кабели: sum(length_m направлений маршрута) + K * count(distinct direction)
+        $this->db->query(
+            "WITH dirs AS (
+                SELECT
+                    crc.cable_id,
+                    cd.id as dir_id,
+                    COALESCE(cd.length_m, 0) as len_m
+                FROM cable_route_channels crc
+                JOIN cable_channels cc ON crc.cable_channel_id = cc.id
+                JOIN channel_directions cd ON cc.direction_id = cd.id
+                GROUP BY crc.cable_id, cd.id, cd.length_m
+            ),
+            agg AS (
+                SELECT
+                    cable_id,
+                    COALESCE(SUM(len_m), 0) as sum_len,
+                    COALESCE(COUNT(*), 0) as cnt_dirs
+                FROM dirs
+                GROUP BY cable_id
+            )
+            UPDATE cables c
+            SET length_calculated = ROUND((COALESCE(a.sum_len, 0) + (:k * COALESCE(a.cnt_dirs, 0)))::numeric, 2)
+            FROM agg a
+            WHERE c.id = a.cable_id AND c.object_type_id = :ot_id",
+            ['k' => $k, 'ot_id' => $otId]
+        );
+
+        // Кабели без маршрута — длина 0 (чтобы не оставалось старых значений)
+        $this->db->query(
+            "UPDATE cables c
+             SET length_calculated = 0
+             WHERE c.object_type_id = :ot_id
+               AND NOT EXISTS (SELECT 1 FROM cable_route_channels crc WHERE crc.cable_id = c.id)",
+            ['ot_id' => $otId]
+        );
+
+        $total = (int) ($this->db->fetch("SELECT COUNT(*) as cnt FROM cables WHERE object_type_id = :ot_id", ['ot_id' => $otId])['cnt'] ?? 0);
+
+        Response::success(['cables_total' => $total], 'Длины пересчитаны');
+    }
+
+    /**
      * Обновление расчётной длины кабеля в канализации
      */
     private function updateDuctCableLength(int $cableId): void

@@ -493,6 +493,10 @@ const API = {
             return API.get(`/unified-cables/${id}/recalculate-length`);
         },
 
+        recalculateLengths() {
+            return API.post('/unified-cables/recalculate-lengths', {});
+        },
+
         byWell(wellId) {
             return API.get(`/unified-cables/by-well/${wellId}`);
         },
