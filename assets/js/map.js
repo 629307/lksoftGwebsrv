@@ -86,6 +86,9 @@ const MapManager = {
     shortestDuctCableMode: false,
     shortestDuctCableStartWell: null, // { id, number }
     shortestDuctCableEndWell: null,   // { id, number }
+    shortestDuctCableCableId: null,   // id созданного duct-кабеля (для достраивания по следующим колодцам)
+    shortestDuctCableRouteChannelIds: [], // накопленный маршрут cable_channel_id
+    shortestDuctCableBusy: false,
 
     // Цвета для слоёв
     colors: {
@@ -304,8 +307,9 @@ const MapManager = {
                 const number = props.number;
                 if (!coords || !number) return;
                 const base = props.status_color || props.type_color || this.colors.wells;
-                const legendColor = (props?.owner_color || '').toString().trim();
-                const color = (this.ownersLegendEnabled && legendColor) ? legendColor : this.getPlannedOverrideColor(props, base);
+                // Важно: "Легенда по собственникам" НЕ должна менять цвет подсказок (номера колодцев).
+                // Подсказки всегда рисуем в стандартной цветовой схеме (с учётом planned).
+                const color = this.getPlannedOverrideColor(props, base);
                 addLabel(coords, number, color);
             };
             Object.values(this.layers || {}).forEach(traverse);
@@ -1396,17 +1400,43 @@ const MapManager = {
         // "Создать кабель в канализации по кратчайшему пути"
         if (this.shortestDuctCableMode) {
             const wellHits = (hits || []).filter(h => h?.objectType === 'well');
-            const pickWell = (h) => {
+        const pickWell = (h) => {
                 if (!h) return;
+            if (this.shortestDuctCableBusy) return;
                 const wid = parseInt(h?.properties?.id || 0, 10);
                 if (!wid) return;
                 const num = (h?.properties?.number || '').toString();
                 if (!this.shortestDuctCableStartWell) {
                     this.shortestDuctCableStartWell = { id: wid, number: num };
-                    App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+                this.shortestDuctCableEndWell = null;
+                this.shortestDuctCableCableId = null;
+                this.shortestDuctCableRouteChannelIds = [];
+                App.notify(`Старт: ${num || wid}. Выберите следующий колодец.`, 'info');
                     return;
                 }
-                if (!this.shortestDuctCableEndWell) {
+            // Если кабель уже создан — достраиваем его по следующим колодцам
+            if (this.shortestDuctCableCableId) {
+                if (wid === this.shortestDuctCableStartWell.id) {
+                    App.notify('Следующий колодец должен отличаться от текущего', 'warning');
+                    return;
+                }
+                this.shortestDuctCableEndWell = { id: wid, number: num };
+                this.shortestDuctCableBusy = true;
+                try {
+                    Promise.resolve(App.extendShortestDuctCableToWell?.(
+                        this.shortestDuctCableCableId,
+                        this.shortestDuctCableStartWell,
+                        this.shortestDuctCableEndWell
+                    )).finally(() => {
+                        this.shortestDuctCableBusy = false;
+                    });
+                } catch (_) {
+                    this.shortestDuctCableBusy = false;
+                }
+                return;
+            }
+
+            if (!this.shortestDuctCableEndWell) {
                     if (wid === this.shortestDuctCableStartWell.id) {
                         App.notify('Конечный колодец должен отличаться от начального', 'warning');
                         return;
@@ -1416,11 +1446,13 @@ const MapManager = {
                     try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
                     return;
                 }
-                // если уже выбраны оба — начинаем заново с нового старта
-                this.shortestDuctCableStartWell = { id: wid, number: num };
-                this.shortestDuctCableEndWell = null;
-                try { this.clearHighlight(); } catch (_) {}
-                App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+            // Если конечный колодец уже выбран, но кабель ещё не создан — меняем конечный колодец и пересчитываем путь
+            if (wid === this.shortestDuctCableStartWell.id) {
+                App.notify('Конечный колодец должен отличаться от начального', 'warning');
+                return;
+            }
+            this.shortestDuctCableEndWell = { id: wid, number: num };
+            try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
             };
 
             if (wellHits.length <= 1) {
@@ -1779,7 +1811,31 @@ const MapManager = {
             if (!wid) return;
             if (!this.shortestDuctCableStartWell) {
                 this.shortestDuctCableStartWell = { id: wid, number: num };
-                App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+                this.shortestDuctCableEndWell = null;
+                this.shortestDuctCableCableId = null;
+                this.shortestDuctCableRouteChannelIds = [];
+                App.notify(`Старт: ${num || wid}. Выберите следующий колодец.`, 'info');
+                return;
+            }
+            if (this.shortestDuctCableBusy) return;
+            if (this.shortestDuctCableCableId) {
+                if (wid === this.shortestDuctCableStartWell.id) {
+                    App.notify('Следующий колодец должен отличаться от текущего', 'warning');
+                    return;
+                }
+                this.shortestDuctCableEndWell = { id: wid, number: num };
+                this.shortestDuctCableBusy = true;
+                try {
+                    Promise.resolve(App.extendShortestDuctCableToWell?.(
+                        this.shortestDuctCableCableId,
+                        this.shortestDuctCableStartWell,
+                        this.shortestDuctCableEndWell
+                    )).finally(() => {
+                        this.shortestDuctCableBusy = false;
+                    });
+                } catch (_) {
+                    this.shortestDuctCableBusy = false;
+                }
                 return;
             }
             if (!this.shortestDuctCableEndWell) {
@@ -1791,10 +1847,12 @@ const MapManager = {
                 try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
                 return;
             }
-            this.shortestDuctCableStartWell = { id: wid, number: num };
-            this.shortestDuctCableEndWell = null;
-            try { this.clearHighlight(); } catch (_) {}
-            App.notify(`Старт: ${num || wid}. Выберите конечный колодец.`, 'info');
+            if (wid === this.shortestDuctCableStartWell.id) {
+                App.notify('Конечный колодец должен отличаться от начального', 'warning');
+                return;
+            }
+            this.shortestDuctCableEndWell = { id: wid, number: num };
+            try { App.previewShortestDuctCablePath?.(this.shortestDuctCableStartWell, this.shortestDuctCableEndWell); } catch (_) {}
         } catch (_) {}
     },
 
@@ -1803,12 +1861,18 @@ const MapManager = {
         if (this.shortestDuctCableMode) {
             this.shortestDuctCableStartWell = null;
             this.shortestDuctCableEndWell = null;
+            this.shortestDuctCableCableId = null;
+            this.shortestDuctCableRouteChannelIds = [];
+            this.shortestDuctCableBusy = false;
             this._shortestWellHits = [];
             if (this.map) this.map.getContainer().style.cursor = 'crosshair';
             App.notify('Кратчайший путь: выберите стартовый колодец', 'info');
         } else {
             this.shortestDuctCableStartWell = null;
             this.shortestDuctCableEndWell = null;
+            this.shortestDuctCableCableId = null;
+            this.shortestDuctCableRouteChannelIds = [];
+            this.shortestDuctCableBusy = false;
             this._shortestWellHits = [];
             if (this.map) this.map.getContainer().style.cursor = '';
             try { this.clearHighlight(); } catch (_) {}

@@ -5065,7 +5065,7 @@ const App = {
                 <div class="info-row"><span class="info-label">Конец:</span> <span class="info-value">${this.escapeHtml(endWell?.number || String(eId))}</span></div>
                 <div class="info-row"><span class="info-label">Направлений:</span> <span class="info-value">${dirsCount}</span></div>
                 <div class="info-row"><span class="info-label">Длина (м):</span> <span class="info-value">${total}</span></div>
-                <p class="text-muted" style="margin-top:10px;">Путь подсвечен на карте. Нажмите “Создать”, чтобы выбрать каналы и открыть создание кабеля.</p>
+                <p class="text-muted" style="margin-top:10px;">Путь подсвечен на карте. Нажмите “Создать”, чтобы выбрать каналы и открыть создание кабеля. После создания можно продолжать выбирать следующие колодцы — маршрут будет достраиваться в этот же кабель.</p>
             `;
             const footer = `
                 <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
@@ -5081,22 +5081,26 @@ const App = {
         }
     },
 
-    async createDuctCableFromShortestPath() {
-        const data = this._shortestDuctCablePath || null;
-        if (!data) return;
-        const dirs = Array.isArray(data.directions) ? data.directions : [];
-        if (!dirs.length) {
-            this.notify('Путь пустой', 'warning');
-            return;
-        }
+    _uniqueIdsPreserveOrder(ids) {
+        const out = [];
+        const seen = new Set();
+        (ids || []).forEach((x) => {
+            const n = parseInt(x, 10);
+            if (!n) return;
+            if (seen.has(n)) return;
+            seen.add(n);
+            out.push(n);
+        });
+        return out;
+    },
 
-        // Канал на каждое направление
+    async pickChannelsForShortestPathDirections(dirs) {
         const selected = [];
-        for (const d of dirs) {
+        for (const d of (dirs || [])) {
             const chs = Array.isArray(d.channels) ? d.channels : [];
             if (!chs.length) {
                 this.notify(`У направления ${d.number || d.id} нет каналов`, 'error');
-                return;
+                return null;
             }
             if (chs.length === 1) {
                 selected.push(parseInt(chs[0].id, 10));
@@ -5128,14 +5132,97 @@ const App = {
                 const footer = `<button class="btn btn-secondary" onclick="App.cancelShortestPathChannelPick()">Отмена</button>`;
                 this.showModal('Выберите канал направления', content, footer, { nonBlocking: true, position: 'top-right' });
             });
-            if (!picked) return; // cancelled
+            if (!picked) return null; // cancelled
             selected.push(parseInt(picked, 10));
         }
+        return this._uniqueIdsPreserveOrder(selected);
+    },
+
+    async createDuctCableFromShortestPath() {
+        const data = this._shortestDuctCablePath || null;
+        if (!data) return;
+        const dirs = Array.isArray(data.directions) ? data.directions : [];
+        if (!dirs.length) {
+            this.notify('Путь пустой', 'warning');
+            return;
+        }
+
+        const selected = await this.pickChannelsForShortestPathDirections(dirs);
+        if (!selected || !selected.length) return;
 
         this.hideModal();
         this._shortestDuctCablePath = null;
         this._resolveShortestChannelPick = null;
+        // Запоминаем маршрут, чтобы после создания кабеля продолжать достраивать его по следующим колодцам
+        this._shortestDuctCableCreateRouteChannelIds = selected.slice();
         await this.showAddDuctCableModalFromMap(selected);
+    },
+
+    async extendShortestDuctCableToWell(cableId, startWell, endWell) {
+        const cid = parseInt(cableId || 0, 10);
+        const sId = parseInt(startWell?.id || 0, 10);
+        const eId = parseInt(endWell?.id || 0, 10);
+        if (!cid || !sId || !eId) return;
+
+        try {
+            this.notify('Расчёт кратчайшего пути...', 'info');
+            const resp = await API.channelDirections.shortestPath(sId, eId);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const data = resp?.data || resp || {};
+            const dirs = Array.isArray(data.directions) ? data.directions : [];
+            if (!dirs.length) {
+                this.notify('Путь пустой', 'warning');
+                try { MapManager.shortestDuctCableEndWell = null; } catch (_) {}
+                return;
+            }
+
+            // Подсветим сегмент
+            try {
+                const ids = Array.isArray(data.direction_ids) ? data.direction_ids : [];
+                if (ids.length) {
+                    const fc = await API.channelDirections.geojsonByIds(ids);
+                    if (fc && fc.type === 'FeatureCollection') {
+                        MapManager.highlightFeatureCollection(fc);
+                    }
+                }
+            } catch (_) {}
+
+            const segmentChannelIds = await this.pickChannelsForShortestPathDirections(dirs);
+            if (!segmentChannelIds || !segmentChannelIds.length) {
+                try { MapManager.shortestDuctCableEndWell = null; } catch (_) {}
+                return;
+            }
+
+            const existing = Array.isArray(MapManager?.shortestDuctCableRouteChannelIds)
+                ? MapManager.shortestDuctCableRouteChannelIds
+                : [];
+            const newRoute = this._uniqueIdsPreserveOrder([...(existing || []), ...(segmentChannelIds || [])]);
+
+            const upd = await API.unifiedCables.update(cid, { route_channels: newRoute });
+            if (upd?.success === false) throw new Error(upd?.message || 'Ошибка обновления кабеля');
+
+            // обновим состояние режима
+            try {
+                MapManager.shortestDuctCableRouteChannelIds = newRoute;
+                MapManager.shortestDuctCableStartWell = { id: eId, number: endWell?.number || String(eId) };
+                MapManager.shortestDuctCableEndWell = null;
+            } catch (_) {}
+
+            // Перерисуем слои карты (без изменения фокуса/зума) и подсветим весь маршрут кабеля
+            try { await MapManager.loadAllLayers?.(); } catch (_) {}
+            try {
+                const fc = await API.unifiedCables.routeDirectionsGeojson(cid);
+                if (fc && fc.type === 'FeatureCollection') {
+                    MapManager.highlightFeatureCollection(fc);
+                }
+            } catch (_) {}
+
+            this.notify('Участок добавлен в кабель', 'success');
+            this.notify('Выберите следующий колодец для продолжения (или выключите режим)', 'info');
+        } catch (e) {
+            try { MapManager.shortestDuctCableEndWell = null; } catch (_) {}
+            this.notify(e?.message || 'Не удалось достроить кабель', 'error');
+        }
     },
 
     pickShortestPathChannel(id) {
@@ -6167,6 +6254,42 @@ const App = {
                         }
                     }
                 }
+                // Кратчайший путь (duct cable): после создания кабеля остаёмся в режиме и позволяем достраивать по следующим колодцам
+                try {
+                    if (type === 'unified_cables') {
+                        const objectTypeSelect = document.getElementById('modal-cable-object-type');
+                        const objectTypeCode = objectTypeSelect?.options?.[objectTypeSelect.selectedIndex]?.dataset?.code;
+                        if (
+                            objectTypeCode === 'cable_duct' &&
+                            MapManager?.shortestDuctCableMode &&
+                            Array.isArray(this._shortestDuctCableCreateRouteChannelIds) &&
+                            this._shortestDuctCableCreateRouteChannelIds.length
+                        ) {
+                            const createdId = response?.data?.id || response?.id;
+                            const idNum = createdId ? parseInt(createdId, 10) : 0;
+                            if (idNum > 0) {
+                                MapManager.shortestDuctCableCableId = idNum;
+                                MapManager.shortestDuctCableRouteChannelIds = (this._shortestDuctCableCreateRouteChannelIds || []).slice();
+                                // продолжение от конечного колодца
+                                if (MapManager.shortestDuctCableEndWell?.id) {
+                                    MapManager.shortestDuctCableStartWell = { ...MapManager.shortestDuctCableEndWell };
+                                }
+                                MapManager.shortestDuctCableEndWell = null;
+                                this._shortestDuctCableCreateRouteChannelIds = null;
+                                // подсветим текущий маршрут кабеля без изменения зума/фокуса
+                                setTimeout(async () => {
+                                    try {
+                                        const fc = await API.unifiedCables.routeDirectionsGeojson(idNum);
+                                        if (fc && fc.type === 'FeatureCollection') {
+                                            MapManager.highlightFeatureCollection(fc);
+                                        }
+                                    } catch (_) {}
+                                }, 250);
+                                this.notify('Кабель создан. Выберите следующий колодец для продолжения (или выключите режим).', 'info');
+                            }
+                        }
+                    }
+                } catch (_) {}
                 this.hideModal();
                 this.notify('Объект создан', 'success');
                 this.loadObjects();
