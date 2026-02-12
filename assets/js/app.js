@@ -6471,6 +6471,8 @@ const App = {
                                     MapManager.toggleShortestDuctCableMode();
                                 }
                             } catch (_) {}
+                            // Снять подсветку кнопки тулбара (если режим выключили не кликом)
+                            try { document.getElementById('btn-add-duct-cable-shortest-map')?.classList?.toggle('active', false); } catch (_) {}
                             this.notify('Кабель создан. Режим кратчайшего пути выключен.', 'info');
                         }
                     }
