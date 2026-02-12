@@ -381,8 +381,13 @@ const API = {
             return API.post(`/channel-directions/${directionId}/stuff-well`, data);
         },
 
-        shortestPath(start_well_id, end_well_id) {
-            return API.get('/channel-directions/shortest-path', { start_well_id, end_well_id });
+        shortestPath(start_well_id, end_well_id, exclude_direction_ids = null) {
+            const params = { start_well_id, end_well_id };
+            const ex = Array.isArray(exclude_direction_ids) ? exclude_direction_ids : null;
+            if (ex && ex.length) {
+                params.exclude_direction_ids = ex.map(x => parseInt(x, 10)).filter(n => n > 0).join(',');
+            }
+            return API.get('/channel-directions/shortest-path', params);
         },
 
         geojsonByIds(ids = []) {

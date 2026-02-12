@@ -446,6 +446,21 @@ class UnifiedCableController extends BaseController
                 if (count($routeChannels) !== count(array_unique($routeChannels))) {
                     Response::error('Маршрут кабеля не может содержать повтор одного и того же канала', 422);
                 }
+                if (!empty($routeChannels)) {
+                    $rows = $this->db->fetchAll(
+                        "SELECT cc.id, cc.direction_id
+                         FROM cable_channels cc
+                         WHERE cc.id IN (" . implode(',', array_map('intval', $routeChannels)) . ")"
+                    );
+                    $dirIds = array_map(fn($r) => (int) ($r['direction_id'] ?? 0), $rows);
+                    $dirIds = array_values(array_filter($dirIds, fn($v) => $v > 0));
+                    if (count($dirIds) !== count($routeChannels)) {
+                        Response::error('Некорректный маршрут каналов', 422);
+                    }
+                    if (count($dirIds) !== count(array_unique($dirIds))) {
+                        Response::error('Маршрут кабеля не может содержать повтор одного и того же направления', 422);
+                    }
+                }
                 foreach ($routeChannels as $order => $channelId) {
                     $this->db->insert('cable_route_channels', [
                         'cable_id' => $id,
@@ -615,6 +630,21 @@ class UnifiedCableController extends BaseController
                     $routeChannels = array_values(array_filter(array_map('intval', $routeChannels), fn($v) => $v > 0));
                     if (count($routeChannels) !== count(array_unique($routeChannels))) {
                         Response::error('Маршрут кабеля не может содержать повтор одного и того же канала', 422);
+                    }
+                    if (!empty($routeChannels)) {
+                        $rows = $this->db->fetchAll(
+                            "SELECT cc.id, cc.direction_id
+                             FROM cable_channels cc
+                             WHERE cc.id IN (" . implode(',', array_map('intval', $routeChannels)) . ")"
+                        );
+                        $dirIds = array_map(fn($r) => (int) ($r['direction_id'] ?? 0), $rows);
+                        $dirIds = array_values(array_filter($dirIds, fn($v) => $v > 0));
+                        if (count($dirIds) !== count($routeChannels)) {
+                            Response::error('Некорректный маршрут каналов', 422);
+                        }
+                        if (count($dirIds) !== count(array_unique($dirIds))) {
+                            Response::error('Маршрут кабеля не может содержать повтор одного и того же направления', 422);
+                        }
                     }
                     $this->db->delete('cable_route_channels', 'cable_id = :id', ['id' => $cableId]);
                     foreach ($routeChannels as $order => $channelId) {

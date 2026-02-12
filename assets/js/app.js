@@ -5151,12 +5151,14 @@ const App = {
         if (!selected || !selected.length) return;
         // Страховка: маршрут не должен содержать повтор канала
         const selectedU = this._uniqueIdsPreserveOrder(selected);
+        const selectedDirIds = this._uniqueIdsPreserveOrder(Array.isArray(data.direction_ids) ? data.direction_ids : []);
 
         this.hideModal();
         this._shortestDuctCablePath = null;
         this._resolveShortestChannelPick = null;
         // Запоминаем маршрут, чтобы после создания кабеля продолжать достраивать его по следующим колодцам
         this._shortestDuctCableCreateRouteChannelIds = selectedU.slice();
+        this._shortestDuctCableCreateRouteDirectionIds = selectedDirIds.slice();
         await this.showAddDuctCableModalFromMap(selectedU);
     },
 
@@ -5168,12 +5170,15 @@ const App = {
 
         try {
             this.notify('Расчёт кратчайшего пути...', 'info');
-            const resp = await API.channelDirections.shortestPath(sId, eId);
+            const excludeDirs = Array.isArray(MapManager?.shortestDuctCableRouteDirectionIds)
+                ? MapManager.shortestDuctCableRouteDirectionIds
+                : [];
+            const resp = await API.channelDirections.shortestPath(sId, eId, excludeDirs);
             if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
             const data = resp?.data || resp || {};
             const dirs = Array.isArray(data.directions) ? data.directions : [];
             if (!dirs.length) {
-                this.notify('Путь пустой', 'warning');
+                this.notify('Выбранный объект недостижим', 'warning');
                 try { MapManager.shortestDuctCableEndWell = null; } catch (_) {}
                 return;
             }
@@ -5211,7 +5216,7 @@ const App = {
                     const fc = await API.unifiedCables.routeDirectionsGeojson(cid);
                     if (fc && fc.type === 'FeatureCollection') MapManager.highlightFeatureCollection(fc);
                 } catch (_) {}
-                this.notify('Выбранный колодец недостижим: маршрут требует повторного использования уже выбранного канала', 'warning');
+                this.notify('Выбранный объект недостижим', 'warning');
                 return;
             }
             const newRoute = [...existingU, ...segmentU];
@@ -5222,6 +5227,11 @@ const App = {
             // обновим состояние режима
             try {
                 MapManager.shortestDuctCableRouteChannelIds = newRoute;
+                const segDirIds = this._uniqueIdsPreserveOrder(Array.isArray(data.direction_ids) ? data.direction_ids : []);
+                const prevDirIds = Array.isArray(MapManager?.shortestDuctCableRouteDirectionIds)
+                    ? MapManager.shortestDuctCableRouteDirectionIds
+                    : [];
+                MapManager.shortestDuctCableRouteDirectionIds = this._uniqueIdsPreserveOrder([...(prevDirIds || []), ...(segDirIds || [])]);
                 MapManager.shortestDuctCableStartWell = { id: eId, number: endWell?.number || String(eId) };
                 MapManager.shortestDuctCableEndWell = null;
             } catch (_) {}
@@ -6288,12 +6298,16 @@ const App = {
                             if (idNum > 0) {
                                 MapManager.shortestDuctCableCableId = idNum;
                                 MapManager.shortestDuctCableRouteChannelIds = (this._shortestDuctCableCreateRouteChannelIds || []).slice();
+                                MapManager.shortestDuctCableRouteDirectionIds = Array.isArray(this._shortestDuctCableCreateRouteDirectionIds)
+                                    ? this._shortestDuctCableCreateRouteDirectionIds.slice()
+                                    : [];
                                 // продолжение от конечного колодца
                                 if (MapManager.shortestDuctCableEndWell?.id) {
                                     MapManager.shortestDuctCableStartWell = { ...MapManager.shortestDuctCableEndWell };
                                 }
                                 MapManager.shortestDuctCableEndWell = null;
                                 this._shortestDuctCableCreateRouteChannelIds = null;
+                                this._shortestDuctCableCreateRouteDirectionIds = null;
                                 // подсветим текущий маршрут кабеля без изменения зума/фокуса
                                 setTimeout(async () => {
                                     try {

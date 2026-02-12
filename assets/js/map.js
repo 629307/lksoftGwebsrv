@@ -88,6 +88,7 @@ const MapManager = {
     shortestDuctCableEndWell: null,   // { id, number }
     shortestDuctCableCableId: null,   // id созданного duct-кабеля (для достраивания по следующим колодцам)
     shortestDuctCableRouteChannelIds: [], // накопленный маршрут cable_channel_id
+    shortestDuctCableRouteDirectionIds: [], // накопленный маршрут direction_id (повторы запрещены)
     shortestDuctCableBusy: false,
 
     // Цвета для слоёв
@@ -1411,6 +1412,7 @@ const MapManager = {
                 this.shortestDuctCableEndWell = null;
                 this.shortestDuctCableCableId = null;
                 this.shortestDuctCableRouteChannelIds = [];
+                this.shortestDuctCableRouteDirectionIds = [];
                 App.notify(`Старт: ${num || wid}. Выберите следующий колодец.`, 'info');
                     return;
                 }
@@ -1814,6 +1816,7 @@ const MapManager = {
                 this.shortestDuctCableEndWell = null;
                 this.shortestDuctCableCableId = null;
                 this.shortestDuctCableRouteChannelIds = [];
+                this.shortestDuctCableRouteDirectionIds = [];
                 App.notify(`Старт: ${num || wid}. Выберите следующий колодец.`, 'info');
                 return;
             }
@@ -1863,6 +1866,7 @@ const MapManager = {
             this.shortestDuctCableEndWell = null;
             this.shortestDuctCableCableId = null;
             this.shortestDuctCableRouteChannelIds = [];
+            this.shortestDuctCableRouteDirectionIds = [];
             this.shortestDuctCableBusy = false;
             this._shortestWellHits = [];
             if (this.map) this.map.getContainer().style.cursor = 'crosshair';
@@ -1872,6 +1876,7 @@ const MapManager = {
             this.shortestDuctCableEndWell = null;
             this.shortestDuctCableCableId = null;
             this.shortestDuctCableRouteChannelIds = [];
+            this.shortestDuctCableRouteDirectionIds = [];
             this.shortestDuctCableBusy = false;
             this._shortestWellHits = [];
             if (this.map) this.map.getContainer().style.cursor = '';

@@ -344,6 +344,14 @@ class ChannelController extends BaseController
     {
         $start = (int) $this->request->query('start_well_id', 0);
         $end = (int) $this->request->query('end_well_id', 0);
+        $excludeRaw = (string) $this->request->query('exclude_direction_ids', '');
+        $excludeIds = [];
+        if (trim($excludeRaw) !== '') {
+            $excludeIds = array_values(array_filter(
+                array_map('intval', preg_split('/\s*,\s*/', trim($excludeRaw))),
+                fn($v) => $v > 0
+            ));
+        }
         if ($start <= 0 || $end <= 0) {
             Response::error('Не заданы start_well_id / end_well_id', 422);
         }
@@ -357,12 +365,14 @@ class ChannelController extends BaseController
             ]);
         }
 
-        $rows = $this->db->fetchAll(
-            "SELECT id, start_well_id, end_well_id,
-                    COALESCE(length_m, ROUND(ST_Length(geom_wgs84::geography)::numeric, 2), 0) as w
-             FROM channel_directions
-             WHERE start_well_id IS NOT NULL AND end_well_id IS NOT NULL"
-        );
+        $sql = "SELECT id, start_well_id, end_well_id,
+                       COALESCE(length_m, ROUND(ST_Length(geom_wgs84::geography)::numeric, 2), 0) as w
+                FROM channel_directions
+                WHERE start_well_id IS NOT NULL AND end_well_id IS NOT NULL";
+        if (!empty($excludeIds)) {
+            $sql .= " AND id NOT IN (" . implode(',', array_map('intval', $excludeIds)) . ")";
+        }
+        $rows = $this->db->fetchAll($sql);
 
         // adjacency list
         $adj = [];
