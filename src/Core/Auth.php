@@ -23,9 +23,11 @@ class Auth
     public function login(string $login, string $password): ?array
     {
         $user = $this->db->fetch(
-            "SELECT u.*, r.code as role_code, r.name as role_name, r.permissions 
+            "SELECT u.*, r.code as role_code, r.name as role_name, r.permissions,
+                    o.name as owner_name
              FROM users u 
              JOIN roles r ON u.role_id = r.id 
+             LEFT JOIN owners o ON u.owner_id = o.id
              WHERE u.login = :login AND u.is_active = true",
             ['login' => $login]
         );
@@ -84,10 +86,12 @@ class Auth
     {
         $session = $this->db->fetch(
             "SELECT s.*, u.login, u.email, u.full_name, u.is_active, u.role_id,
+                    u.owner_id, o.name as owner_name,
                     r.code as role_code, r.name as role_name, r.permissions
              FROM user_sessions s
              JOIN users u ON s.user_id = u.id
              JOIN roles r ON u.role_id = r.id
+             LEFT JOIN owners o ON u.owner_id = o.id
              WHERE s.session_token = :token AND s.expires_at > NOW() AND u.is_active = true",
             ['token' => $token]
         );
@@ -102,6 +106,8 @@ class Auth
             'email' => $session['email'],
             'full_name' => $session['full_name'],
             'role_id' => $session['role_id'],
+            'owner_id' => $session['owner_id'] ?? null,
+            'owner_name' => $session['owner_name'] ?? null,
             'role_code' => $session['role_code'],
             'role_name' => $session['role_name'],
             'permissions' => json_decode($session['permissions'], true),
@@ -208,16 +214,25 @@ class Auth
             return null;
         }
 
+        $ownerId = null;
+        if (array_key_exists('owner_id', $data)) {
+            $v = $data['owner_id'];
+            if ($v !== '' && $v !== null && $v !== '0' && $v !== 0) {
+                $ownerId = (int) $v;
+            }
+        }
+
         $userId = $this->db->insert('users', [
             'login' => $data['login'],
             'password_hash' => self::hashPassword($data['password']),
             'email' => $data['email'] ?? null,
             'full_name' => $data['full_name'] ?? null,
             'role_id' => $data['role_id'],
+            'owner_id' => $ownerId,
         ]);
 
         return $this->db->fetch(
-            "SELECT id, login, email, full_name, role_id, created_at FROM users WHERE id = :id",
+            "SELECT id, login, email, full_name, role_id, owner_id, created_at FROM users WHERE id = :id",
             ['id' => $userId]
         );
     }

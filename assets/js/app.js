@@ -5237,6 +5237,7 @@ const App = {
                 <td>${user.full_name || '-'}</td>
                 <td>${user.email || '-'}</td>
                 <td>${user.role_name}</td>
+                <td>${user.owner_name || '-'}</td>
                 <td><span class="status-badge ${user.is_active ? 'active' : 'inactive'}">${user.is_active ? 'Да' : 'Нет'}</span></td>
                 <td>${this.formatDate(user.last_login)}</td>
                 <td>
@@ -5417,6 +5418,11 @@ const App = {
                         <label>Роль *</label>
                         <select name="role_id" required id="user-edit-role-select"></select>
                     </div>
+                    <div class="form-group" id="user-edit-owner-group" style="display:none;">
+                        <label>Собственник (только для роли "Только чтение")</label>
+                        <select name="owner_id" id="user-edit-owner-select" disabled></select>
+                        <p class="text-muted">На карте будут видны только кабели этого собственника.</p>
+                    </div>
                     <div class="form-group">
                         <label>
                             <input type="checkbox" name="is_active" value="1" ${user.is_active ? 'checked' : ''}>
@@ -5440,6 +5446,8 @@ const App = {
 
             this.showModal(`Пользователь: ${user.login}`, content, footer);
             await this.loadRolesSelect('user-edit-role-select', user.role_code);
+            await this.loadOwnersSelect('user-edit-owner-select', user.owner_id ?? null);
+            this.bindReadonlyOwnerToUserRoleSelect('user-edit-role-select', 'user-edit-owner-group', 'user-edit-owner-select');
         } catch (e) {
             this.notify(e?.message || 'Ошибка', 'error');
         }
@@ -5459,7 +5467,12 @@ const App = {
         if (!data.password) delete data.password;
 
         // Приводим role_id к числу
-        if (data.role_id !== undefined) data.role_id = parseInt(data.role_id);
+        if (data.role_id !== undefined) data.role_id = parseInt(data.role_id, 10);
+        if (!data.owner_id) {
+            delete data.owner_id;
+        } else {
+            data.owner_id = parseInt(data.owner_id, 10);
+        }
 
         try {
             const resp = await API.users.update(id, data);
@@ -8489,6 +8502,11 @@ const App = {
                     <label>Роль * (обязательно)</label>
                     <select name="role_id" required id="user-role-select"></select>
                 </div>
+                <div class="form-group" id="user-owner-group" style="display:none;">
+                    <label>Собственник (только для роли "Только чтение")</label>
+                    <select name="owner_id" id="user-owner-select" disabled></select>
+                    <p class="text-muted">На карте будут видны только кабели этого собственника.</p>
+                </div>
             </form>
         `;
 
@@ -8498,7 +8516,10 @@ const App = {
         `;
 
         this.showModal('Добавить пользователя', content, footer);
-        this.loadRolesSelect();
+        this.loadRolesSelect().then(() => {
+            this.bindReadonlyOwnerToUserRoleSelect('user-role-select', 'user-owner-group', 'user-owner-select');
+        });
+        this.loadOwnersSelect('user-owner-select');
     },
 
     /**
@@ -8511,12 +8532,63 @@ const App = {
                 const select = document.getElementById(selectId);
                 if (!select) return;
                 select.innerHTML = response.data
-                    .map(r => `<option value="${r.id}" ${selectedRoleCode && r.code === selectedRoleCode ? 'selected' : ''}>${r.name}</option>`)
+                    .map(r => `<option value="${r.id}" data-code="${this.escapeHtml(r.code)}" ${selectedRoleCode && r.code === selectedRoleCode ? 'selected' : ''}>${this.escapeHtml(r.name)}</option>`)
                     .join('');
             }
         } catch (error) {
             console.error('Ошибка загрузки ролей:', error);
         }
+    },
+
+    async loadOwnersSelect(selectId, selectedOwnerId = null) {
+        try {
+            const resp = await API.references.all('owners');
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const list = resp?.data || resp || [];
+            const select = document.getElementById(selectId);
+            if (!select) return;
+
+            const options = [
+                `<option value="">— выберите —</option>`,
+                ...(Array.isArray(list) ? list : []).map(o => {
+                    const id = o.id;
+                    const name = this.escapeHtml(o.name || '');
+                    const code = this.escapeHtml(o.code || '');
+                    const label = code ? `${name} (${code})` : name;
+                    return `<option value="${id}">${label}</option>`;
+                }),
+            ];
+            select.innerHTML = options.join('');
+
+            if (selectedOwnerId !== null && selectedOwnerId !== undefined && String(selectedOwnerId) !== '') {
+                select.value = String(selectedOwnerId);
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки собственников:', error);
+        }
+    },
+
+    bindReadonlyOwnerToUserRoleSelect(roleSelectId, ownerGroupId, ownerSelectId) {
+        const roleSel = document.getElementById(roleSelectId);
+        const group = document.getElementById(ownerGroupId);
+        const ownerSel = document.getElementById(ownerSelectId);
+        if (!roleSel || !group || !ownerSel) return;
+
+        const update = () => {
+            const opt = roleSel.options?.[roleSel.selectedIndex];
+            const code = (opt?.dataset?.code || '').toString();
+            const isReadonly = code === 'readonly';
+            group.style.display = isReadonly ? '' : 'none';
+            ownerSel.disabled = !isReadonly;
+            ownerSel.required = isReadonly;
+            if (!isReadonly) ownerSel.value = '';
+        };
+
+        if (!roleSel._igsReadonlyOwnerBound) {
+            roleSel._igsReadonlyOwnerBound = true;
+            roleSel.addEventListener('change', update);
+        }
+        update();
     },
 
     /**
@@ -8526,6 +8598,12 @@ const App = {
         const form = document.getElementById('user-form');
         const formData = new FormData(form);
         const data = Object.fromEntries(formData.entries());
+        if (data.role_id !== undefined) data.role_id = parseInt(data.role_id, 10);
+        if (!data.owner_id) {
+            delete data.owner_id;
+        } else {
+            data.owner_id = parseInt(data.owner_id, 10);
+        }
 
         try {
             const response = await API.auth.register(data);

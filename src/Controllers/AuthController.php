@@ -55,6 +55,8 @@ class AuthController
                 'login' => $user['login'],
                 'email' => $user['email'],
                 'full_name' => $user['full_name'],
+                'owner_id' => $user['owner_id'] ?? null,
+                'owner_name' => $user['owner_name'] ?? null,
                 'role' => [
                     'code' => $user['role_code'],
                     'name' => $user['role_name'],
@@ -97,6 +99,8 @@ class AuthController
             'login' => $user['login'],
             'email' => $user['email'],
             'full_name' => $user['full_name'],
+            'owner_id' => $user['owner_id'] ?? null,
+            'owner_name' => $user['owner_name'] ?? null,
             'role' => [
                 'code' => $user['role_code'],
                 'name' => $user['role_name'],
@@ -161,7 +165,17 @@ class AuthController
             Response::error('Ошибка валидации', 422, $errors);
         }
 
-        $data = $this->request->only(['login', 'password', 'email', 'full_name', 'role_id']);
+        $data = $this->request->only(['login', 'password', 'email', 'full_name', 'role_id', 'owner_id']);
+        // owner_id имеет смысл только для роли "readonly" (ограничение видимости кабелей по собственнику)
+        try {
+            $roleRow = $this->db->fetch("SELECT code FROM roles WHERE id = :id", ['id' => (int) ($data['role_id'] ?? 0)]);
+            $roleCode = (string) ($roleRow['code'] ?? '');
+            if ($roleCode !== 'readonly') {
+                $data['owner_id'] = null;
+            }
+        } catch (\Throwable $e) {
+            // если роль не найдена — валидация/создание дальше вернёт ошибку
+        }
 
         $user = $this->auth->register($data);
 
@@ -186,9 +200,11 @@ class AuthController
 
         $users = $this->db->fetchAll(
             "SELECT u.id, u.login, u.email, u.full_name, u.is_active, u.last_login, u.created_at,
-                    r.code as role_code, r.name as role_name
+                    r.code as role_code, r.name as role_name,
+                    u.owner_id, o.name as owner_name
              FROM users u
              JOIN roles r ON u.role_id = r.id
+             LEFT JOIN owners o ON u.owner_id = o.id
              ORDER BY u.id"
         );
 
@@ -206,7 +222,7 @@ class AuthController
         }
 
         $userId = (int) $id;
-        $data = $this->request->only(['email', 'full_name', 'role_id', 'is_active']);
+        $data = $this->request->only(['email', 'full_name', 'role_id', 'is_active', 'owner_id']);
 
         // Если передан пароль, хешируем его
         if ($this->request->input('password')) {
@@ -219,12 +235,30 @@ class AuthController
             Response::error('Пользователь не найден', 404);
         }
 
+        // Нормализуем owner_id и очищаем его для не-readonly ролей
+        $roleId = array_key_exists('role_id', $data) ? (int) $data['role_id'] : (int) ($oldData['role_id'] ?? 0);
+        $roleRow = $this->db->fetch("SELECT code FROM roles WHERE id = :id", ['id' => $roleId]);
+        $roleCode = (string) ($roleRow['code'] ?? '');
+
+        if ($roleCode !== 'readonly') {
+            $data['owner_id'] = null;
+        } else {
+            if (array_key_exists('owner_id', $data)) {
+                $v = $data['owner_id'];
+                if ($v === '' || $v === null || $v === '0' || $v === 0) {
+                    $data['owner_id'] = null;
+                } else {
+                    $data['owner_id'] = (int) $v;
+                }
+            }
+        }
+
         $this->db->update('users', $data, 'id = :id', ['id' => $userId]);
         
         $this->auth->log('update', 'users', $userId, $oldData, $data);
 
         $user = $this->db->fetch(
-            "SELECT id, login, email, full_name, role_id, is_active FROM users WHERE id = :id",
+            "SELECT id, login, email, full_name, role_id, owner_id, is_active FROM users WHERE id = :id",
             ['id' => $userId]
         );
 
