@@ -101,7 +101,7 @@ const App = {
             document.getElementById('btn-edit-object')?.classList.add('hidden');
 
             // Инструменты добавления на карте тоже прячем
-            ['btn-add-direction-map', 'btn-add-well-map', 'btn-add-marker-map', 'btn-add-ground-cable-map', 'btn-add-aerial-cable-map', 'btn-add-duct-cable-map']
+            ['btn-add-direction-map', 'btn-add-well-map', 'btn-add-marker-map', 'btn-add-ground-cable-map', 'btn-add-aerial-cable-map', 'btn-add-duct-cable-map', 'btn-add-duct-cable-shortest-map', 'btn-inventory-mode']
                 .forEach(id => document.getElementById(id)?.classList.add('hidden'));
         }
         if (!this.canDelete()) {
@@ -281,6 +281,7 @@ const App = {
         const layerToCheckboxId = {
             wells: 'layer-wells',
             channels: 'layer-channels',
+            inventory: 'layer-inventory',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -301,6 +302,7 @@ const App = {
         const layerToCheckboxId = {
             wells: 'layer-wells',
             channels: 'layer-channels',
+            inventory: 'layer-inventory',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -591,9 +593,15 @@ const App = {
                     if (modal && !modal.classList.contains('hidden')) return;
                     try {
                         const mm = (typeof MapManager !== 'undefined') ? MapManager : null;
+                        if (mm?.inventoryMode && typeof mm.finishAddCableMode === 'function') {
+                            e.preventDefault();
+                            mm.finishAddCableMode();
+                            return;
+                        }
                         if (mm?.movePointMode && typeof mm.commitMovePoint === 'function') {
                             e.preventDefault();
                             mm.commitMovePoint();
+                            return;
                         }
                     } catch (_) {}
                     return;
@@ -637,6 +645,10 @@ const App = {
                     if (mm.shortestDuctCableMode) {
                         mm.toggleShortestDuctCableMode?.();
                         document.getElementById('btn-add-duct-cable-shortest-map')?.classList?.toggle('active', false);
+                    }
+                    if (mm.inventoryMode) {
+                        mm.cancelInventoryMode?.();
+                        document.getElementById('btn-inventory-mode')?.classList?.toggle('active', false);
                     }
                     if (mm.stuffWellMode) {
                         mm.toggleStuffWellMode?.();
@@ -794,6 +806,12 @@ const App = {
                 e.currentTarget?.classList?.toggle('active', !!MapManager.shortestDuctCableMode);
             } catch (_) {}
         });
+        document.getElementById('btn-inventory-mode')?.addEventListener('click', (e) => {
+            try {
+                MapManager.toggleInventoryMode?.();
+                e.currentTarget?.classList?.toggle('active', !!MapManager.inventoryMode);
+            } catch (_) {}
+        });
         document.getElementById('btn-relocate-duct-cable-map')?.addEventListener('click', (e) => {
             try {
                 MapManager.toggleRelocateDuctCableMode?.();
@@ -844,6 +862,7 @@ const App = {
             MapManager.cancelAddingObject();
             MapManager.cancelAddCableMode();
             MapManager.cancelAddDuctCableMode();
+            MapManager.cancelInventoryMode?.();
         });
         document.getElementById('btn-finish-add-mode')?.addEventListener('click', () => MapManager.finishAddCableMode());
     },
@@ -1107,6 +1126,7 @@ const App = {
         const layerMap = {
             'layer-wells': 'wells',
             'layer-channels': 'channels',
+            'layer-inventory': 'inventory',
             'layer-markers': 'markers',
             'layer-ground-cables': 'groundCables',
             'layer-aerial-cables': 'aerialCables',
@@ -1114,10 +1134,29 @@ const App = {
         };
         
         const layerName = layerMap[input.id];
-        if (layerName) {
-            MapManager.toggleLayer(layerName, input.checked);
+        if (!layerName) return;
+
+        // Инвентаризация: при включении автоматически выключаем все слои,
+        // оставляем "Колодцы" и "Инвентаризация". Слой инвентаризации ниже колодцев.
+        if (input.id === 'layer-inventory' && input.checked) {
+            const set = (id, name, checked) => {
+                const cb = document.getElementById(id);
+                if (cb) cb.checked = checked;
+                MapManager.toggleLayer(name, checked);
+            };
+            set('layer-wells', 'wells', true);
+            set('layer-inventory', 'inventory', true);
+            set('layer-channels', 'channels', false);
+            set('layer-markers', 'markers', false);
+            set('layer-ground-cables', 'groundCables', false);
+            set('layer-aerial-cables', 'aerialCables', false);
+            set('layer-duct-cables', 'ductCables', false);
             this.saveLayerPreferencesDebounced();
+            return;
         }
+
+        MapManager.toggleLayer(layerName, input.checked);
+        this.saveLayerPreferencesDebounced();
     },
 
     /**
@@ -1200,6 +1239,7 @@ const App = {
             setLayer('layer-ground-cables', 'groundCables');
             setLayer('layer-aerial-cables', 'aerialCables');
             setLayer('layer-duct-cables', 'ductCables');
+            unsetLayer('layer-inventory', 'inventory');
             unsetLayer('layer-channels', 'channels');
             unsetLayer('layer-markers', 'markers');
         }
@@ -1235,6 +1275,7 @@ const App = {
         };
         setLayer('layer-wells', 'wells', true);
         setLayer('layer-channels', 'channels', true);
+        setLayer('layer-inventory', 'inventory', false);
         setLayer('layer-markers', 'markers', true);
         setLayer('layer-ground-cables', 'groundCables', false);
         setLayer('layer-aerial-cables', 'aerialCables', false);

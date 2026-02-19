@@ -91,6 +91,15 @@ const MapManager = {
     shortestDuctCableRouteDirectionIds: [], // накопленный маршрут direction_id (повторы запрещены)
     shortestDuctCableBusy: false,
 
+    // Режим "Инвентаризация" (ввод кабелей по направлениям колодца на карте)
+    inventoryMode: false,
+    inventoryWell: null, // { id, number }
+    inventoryDirectionCounts: {}, // direction_id -> count
+    inventoryInputLayer: null,
+    inventoryLabelsLayer: null,
+    _inventoryDirectionsCache: new Map(), // direction_id -> { number, start/end, ... }
+    _inventoryCablesPopupCache: new Map(), // direction_id -> html
+
     // Цвета для слоёв
     colors: {
         wells: '#fa00fa',
@@ -417,11 +426,25 @@ const MapManager = {
         this.layers = {
             wells: L.featureGroup().addTo(this.map),
             channels: L.featureGroup().addTo(this.map),
+            inventory: L.featureGroup().addTo(this.map),
             markers: L.featureGroup().addTo(this.map),
             groundCables: L.featureGroup().addTo(this.map),
             aerialCables: L.featureGroup().addTo(this.map),
             ductCables: L.featureGroup().addTo(this.map),
         };
+
+        // Панели (панes) для порядка отрисовки:
+        // - inventory ниже колодцев
+        try {
+            if (!this.map.getPane('inventoryPane')) {
+                this.map.createPane('inventoryPane');
+                this.map.getPane('inventoryPane').style.zIndex = '380';
+            }
+            if (!this.map.getPane('inventoryLabelPane')) {
+                this.map.createPane('inventoryLabelPane');
+                this.map.getPane('inventoryLabelPane').style.zIndex = '395';
+            }
+        } catch (_) {}
 
         // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
         this.wellLabelsLayer = L.featureGroup().addTo(this.map);
@@ -429,6 +452,11 @@ const MapManager = {
         this.objectCoordinatesLabelsLayer = L.featureGroup().addTo(this.map);
         // Отдельный слой подписей длин направлений
         this.directionLengthLabelsLayer = L.featureGroup().addTo(this.map);
+        // Отдельный слой подписей инвентаризации (значение "неучтенных")
+        // Добавляем/убираем вместе со слоем inventory
+        this.inventoryLabelsLayer = L.featureGroup();
+        // Отдельный слой инпутов для режима инвентаризации (режим инструментов, поверх карты)
+        this.inventoryInputLayer = L.featureGroup().addTo(this.map);
 
         // Легенда по собственникам (DOM overlay поверх карты)
         try {
@@ -489,6 +517,286 @@ const MapManager = {
         this.updateObjectCoordinatesLabelsVisibility();
 
         console.log('Карта инициализирована');
+    },
+
+    async loadInventoryLayer() {
+        try {
+            const resp = await API.inventory.geojson(this.filters || {});
+            if (resp?.success === false) return;
+            if (!resp?.type || resp.type !== 'FeatureCollection') return;
+
+            const maxInv = Number(resp?.properties?.max_inv_cables ?? 0) || 0;
+            const features = Array.isArray(resp.features) ? resp.features : [];
+
+            this.layers.inventory.clearLayers();
+            if (this.inventoryLabelsLayer) this.inventoryLabelsLayer.clearLayers();
+
+            const darkGreen = [0, 80, 0];
+            const darkRed = [128, 0, 0];
+            const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+            const toHex = (v) => v.toString(16).padStart(2, '0');
+            const rgb = (r, g, b) => `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+            const colorForUnaccounted = (u) => {
+                const n = Number(u);
+                if (!Number.isFinite(n)) return '#555555';
+                if (n < 0) return '#000000';
+                if (maxInv <= 0) return rgb(...darkGreen);
+                const t = Math.max(0, Math.min(1, n / maxInv));
+                return rgb(lerp(darkGreen[0], darkRed[0], t), lerp(darkGreen[1], darkRed[1], t), lerp(darkGreen[2], darkRed[2], t));
+            };
+
+            const buildInvLabel = (latlng, text) => {
+                const html = `<div style="background: rgba(255,255,255,0.85); color:#111; padding:2px 6px; border-radius:6px; border:1px solid rgba(0,0,0,0.25); font-size:12px; font-weight:600; white-space:nowrap;">${text}</div>`;
+                return L.marker(latlng, {
+                    icon: L.divIcon({ className: 'inv-unacc-label', html, iconSize: null }),
+                    interactive: false,
+                    pane: 'inventoryLabelPane',
+                });
+            };
+
+            const getMidpoint = (latlngs) => {
+                try {
+                    const pts = Array.isArray(latlngs) ? latlngs.flat(Infinity) : [];
+                    const ll = pts.filter(p => p && typeof p.lat === 'number' && typeof p.lng === 'number');
+                    if (!ll.length) return null;
+                    return ll[Math.floor(ll.length / 2)];
+                } catch (_) {
+                    return null;
+                }
+            };
+
+            // Рендерим линии
+            L.geoJSON({ type: 'FeatureCollection', features }, {
+                pane: 'inventoryPane',
+                style: (feature) => {
+                    const p = feature?.properties || {};
+                    const u = p.inv_unaccounted;
+                    const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
+                    const color = hasInv ? colorForUnaccounted(u) : '#555555';
+                    const weight = hasInv ? (this.getDirectionLineWeight() * 2) : this.getDirectionLineWeight();
+                    return { color, weight, opacity: 0.85 };
+                },
+                onEachFeature: (feature, layer) => {
+                    const p = feature?.properties || {};
+                    const dirId = parseInt(p.id || 0, 10);
+                    layer._igsMeta = { objectType: 'channel_direction', properties: p };
+                    try {
+                        // Интерактивность: для направлений без инвентаризации — hover popup со списком кабелей
+                        const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
+                        if (!hasInv && dirId) {
+                            layer.on('mouseover', async (e) => {
+                                try {
+                                    const cached = this._inventoryCablesPopupCache.get(dirId);
+                                    if (cached) {
+                                        layer.bindPopup(cached, { maxWidth: 360 });
+                                        layer.openPopup(e.latlng);
+                                        return;
+                                    }
+                                    const r = await API.unifiedCables.byDirection(dirId);
+                                    const list = r?.data || r || [];
+                                    const html = (Array.isArray(list) && list.length)
+                                        ? `<div style="max-height:200px; overflow:auto;">${list.map(c => `<div style="margin-bottom:4px;">${String(c.number || c.id || '')}</div>`).join('')}</div>`
+                                        : '<div class="text-muted">Кабели не найдены</div>';
+                                    this._inventoryCablesPopupCache.set(dirId, html);
+                                    layer.bindPopup(html, { maxWidth: 360 });
+                                    layer.openPopup(e.latlng);
+                                } catch (_) {}
+                            });
+                            layer.on('mouseout', () => {
+                                try { layer.closePopup(); } catch (_) {}
+                            });
+                        }
+                    } catch (_) {}
+
+                    // Подпись "неучтенных"
+                    try {
+                        const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
+                        if (hasInv) {
+                            const latlngs = layer.getLatLngs?.();
+                            const mid = getMidpoint(latlngs);
+                            if (mid && this.inventoryLabelsLayer) {
+                                buildInvLabel(mid, String(p.inv_unaccounted)).addTo(this.inventoryLabelsLayer);
+                            }
+                        }
+                    } catch (_) {}
+                },
+            }).addTo(this.layers.inventory);
+        } catch (_) {
+            // ignore
+        }
+    },
+
+    toggleInventoryMode() {
+        this.inventoryMode = !this.inventoryMode;
+        if (this.inventoryMode) {
+            // выключаем конфликтующие режимы
+            try { this.cancelAddDirectionMode?.(); } catch (_) {}
+            try { this.cancelAddingObject?.(); } catch (_) {}
+            try { this.cancelAddCableMode?.({ notify: false }); } catch (_) {}
+            try { this.cancelAddDuctCableMode?.({ notify: false }); } catch (_) {}
+            try {
+                if (this.shortestDuctCableMode) this.toggleShortestDuctCableMode?.();
+            } catch (_) {}
+
+            this.inventoryWell = null;
+            this.inventoryDirectionCounts = {};
+            try { this.inventoryInputLayer?.clearLayers?.(); } catch (_) {}
+
+            if (this.map) this.map.getContainer().style.cursor = 'crosshair';
+            const statusEl = document.getElementById('add-mode-status');
+            const textEl = document.getElementById('add-mode-text');
+            const finishBtn = document.getElementById('btn-finish-add-mode');
+            if (statusEl) statusEl.classList.remove('hidden');
+            if (finishBtn) finishBtn.classList.remove('hidden');
+            if (textEl) textEl.textContent = 'Инвентаризация: выберите колодец, заполните значения на направлениях. Нажмите Enter или «Создать»';
+
+            App.notify('Режим инвентаризации включён: выберите колодец', 'info');
+        } else {
+            this.cancelInventoryMode();
+        }
+    },
+
+    cancelInventoryMode() {
+        if (!this.inventoryMode) return;
+        this.inventoryMode = false;
+        this.inventoryWell = null;
+        this.inventoryDirectionCounts = {};
+        try { this.inventoryInputLayer?.clearLayers?.(); } catch (_) {}
+        if (this.map) this.map.getContainer().style.cursor = '';
+        // если не активны другие режимы — прячем add-mode-status
+        try {
+            const any = !!this.addDirectionMode || !!this.addCableMode || !!this.addDuctCableMode || !!this.addingObject;
+            if (!any) document.getElementById('add-mode-status')?.classList?.add('hidden');
+        } catch (_) {}
+        try { document.getElementById('btn-inventory-mode')?.classList?.remove('active'); } catch (_) {}
+        App.notify('Режим инвентаризации выключен', 'info');
+    },
+
+    async _inventoryPickWell(wellProps) {
+        try {
+            const wid = parseInt(wellProps?.id || 0, 10);
+            const num = (wellProps?.number || '').toString();
+            if (!wid) return;
+            this.inventoryWell = { id: wid, number: num };
+            this.inventoryDirectionCounts = {};
+            this.inventoryInputLayer?.clearLayers?.();
+
+            App.notify(`Инвентаризация: ${num || wid}. Заполните направления и нажмите «Создать».`, 'info');
+
+            const dirsResp = await API.inventory.wellDirections(wid);
+            const dirs = dirsResp?.data || dirsResp || [];
+            const dirIds = (dirs || []).map(d => parseInt(d.id || 0, 10)).filter(n => n > 0);
+            if (!dirIds.length) {
+                App.notify('У колодца нет направлений', 'warning');
+                return;
+            }
+
+            // Подсветим направления и построим инпуты на их серединах
+            const fc = await API.channelDirections.geojsonByIds(dirIds);
+            if (!fc || fc.type !== 'FeatureCollection') return;
+
+            // кэш метаданных
+            try {
+                (dirs || []).forEach(d => {
+                    const did = parseInt(d.id || 0, 10);
+                    if (did) this._inventoryDirectionsCache.set(did, d);
+                });
+            } catch (_) {}
+
+            const inputMarkerFor = (directionId, latlng) => {
+                const safeId = String(directionId);
+                const html = `
+                    <div style="background: rgba(255,255,255,0.85); padding:4px 6px; border-radius:8px; border:1px solid rgba(0,0,0,0.25); box-shadow: 0 2px 6px rgba(0,0,0,0.25);">
+                        <input type="number" data-direction-id="${safeId}" min="0" max="100" value="0"
+                            style="width: 66px; background: transparent; color:#111; border:1px solid rgba(0,0,0,0.25); border-radius:6px; padding:2px 6px;">
+                    </div>
+                `;
+                const marker = L.marker(latlng, {
+                    pane: 'inventoryLabelPane',
+                    icon: L.divIcon({ className: 'inv-dir-input', html, iconSize: null }),
+                    interactive: true,
+                    keyboard: false,
+                });
+                marker.on('add', () => {
+                    try {
+                        const el = marker.getElement();
+                        if (!el) return;
+                        const inp = el.querySelector('input[data-direction-id]');
+                        if (!inp) return;
+                        L.DomEvent.disableClickPropagation(el);
+                        L.DomEvent.disableScrollPropagation(el);
+                        inp.addEventListener('click', (e) => { try { e.stopPropagation(); } catch (_) {} });
+                        inp.addEventListener('wheel', (e) => { try { e.stopPropagation(); } catch (_) {} });
+                        inp.addEventListener('input', () => {
+                            let v = parseInt(inp.value || '0', 10);
+                            if (!Number.isFinite(v) || Number.isNaN(v)) v = 0;
+                            v = Math.max(0, Math.min(100, v));
+                            inp.value = String(v);
+                            this.inventoryDirectionCounts[directionId] = v;
+                        });
+                    } catch (_) {}
+                });
+                return marker;
+            };
+
+            // Создаём инпуты
+            const tmp = L.geoJSON(fc, {
+                onEachFeature: (feature, layer) => {
+                    try {
+                        const p = feature?.properties || {};
+                        const did = parseInt(p.id || 0, 10);
+                        if (!did) return;
+                        const latlngs = layer.getLatLngs?.();
+                        const pts = Array.isArray(latlngs) ? latlngs.flat(Infinity) : [];
+                        const ll = pts.filter(x => x && typeof x.lat === 'number');
+                        if (!ll.length) return;
+                        const mid = ll[Math.floor(ll.length / 2)];
+                        inputMarkerFor(did, mid).addTo(this.inventoryInputLayer);
+                        this.inventoryDirectionCounts[did] = 0;
+                    } catch (_) {}
+                },
+            });
+            try { tmp.remove?.(); } catch (_) {}
+        } catch (_) {}
+    },
+
+    finishAddCableMode() {
+        // Инвентаризация: открыть форму создания карточки с введёнными значениями
+        if (this.inventoryMode) {
+            if (!this.inventoryWell?.id) {
+                App.notify('Выберите колодец', 'warning');
+                return;
+            }
+            const counts = { ...(this.inventoryDirectionCounts || {}) };
+            App.showAddInventoryCardModal?.(this.inventoryWell.id, { directionCounts: counts });
+            return;
+        }
+
+        // Если активен режим duct — создаём duct кабель
+        if (this.addDuctCableMode) {
+            if (this.selectedDuctCableChannels.length < 1) {
+                App.notify('Выберите минимум 1 канал', 'warning');
+                return;
+            }
+            const selected = [...this.selectedDuctCableChannels];
+            this.cancelAddDuctCableMode({ notify: false });
+            App.showAddDuctCableModalFromMap(selected);
+            return;
+        }
+
+        // Иначе — обычный режим ломаной (грунт/воздух)
+        if (!this.addCableMode) return;
+        if (this.selectedCablePoints.length < 2) {
+            App.notify('Нужно указать минимум 2 точки', 'warning');
+            return;
+        }
+
+        const typeCode = this.addCableTypeCode;
+        const coords = [...this.selectedCablePoints];
+
+        this.cancelAddCableMode({ notify: false });
+
+        App.showAddCableModalFromMap(typeCode, coords);
     },
 
     initBoxSelection() {
@@ -780,6 +1088,13 @@ const MapManager = {
         try {
             if (this.map && curCenter && typeof curZoom === 'number') {
                 this.map.setView(curCenter, curZoom, { animate: false });
+            }
+        } catch (_) {}
+
+        // Если включён слой инвентаризации — обновляем его (без влияния на центр/зум)
+        try {
+            if (this.map && this.layers?.inventory && this.map.hasLayer(this.layers.inventory)) {
+                await this.loadInventoryLayer?.();
             }
         } catch (_) {}
     },
@@ -1322,7 +1637,7 @@ const MapManager = {
         const isCtrl = !!(e?.originalEvent && (e.originalEvent.ctrlKey || e.originalEvent.metaKey));
 
         // Множественный выбор (Ctrl+клик) — только в обычном режиме
-        if (isCtrl && !this.groupPickMode && !this.incidentSelectMode && !this.addDirectionMode && !this.addingObject && !this.addCableMode && !this.addDuctCableMode) {
+        if (isCtrl && !this.groupPickMode && !this.incidentSelectMode && !this.inventoryMode && !this.addDirectionMode && !this.addingObject && !this.addCableMode && !this.addDuctCableMode) {
             if (hits.length <= 1) {
                 const h = hits[0];
                 if (h) this.toggleMultiSelection(h);
@@ -1395,6 +1710,39 @@ const MapManager = {
             `;
             const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
             App.showModal('Выберите объект', content, footer);
+            return;
+        }
+
+        // "Режим инвентаризация" (ввод кол-ва кабелей по направлениям колодца)
+        if (this.inventoryMode) {
+            const wellHits = (hits || []).filter(h => h?.objectType === 'well');
+            const pickWell = (h) => {
+                if (!h) return;
+                const wid = parseInt(h?.properties?.id || 0, 10);
+                if (!wid) return;
+                this._inventoryPickWell?.(h?.properties || {});
+            };
+            if (wellHits.length <= 1) {
+                if (!wellHits.length) {
+                    App.notify('Выберите колодец', 'warning');
+                    return;
+                }
+                pickWell(wellHits[0]);
+                return;
+            }
+            const content = `
+                <div style="max-height: 60vh; overflow:auto;">
+                    ${(wellHits || []).map((h, idx) => `
+                        <button class="btn btn-secondary btn-block" style="margin-bottom:8px;" onclick="MapManager._inventoryPickWellFromHits(${idx})">
+                            ${h.title}
+                        </button>
+                    `).join('')}
+                </div>
+                <p class="text-muted" style="margin-top:8px;">Выберите колодец.</p>
+            `;
+            const footer = `<button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>`;
+            this._inventoryWellHits = wellHits;
+            App.showModal('Выберите колодец', content, footer);
             return;
         }
 
@@ -1860,6 +2208,16 @@ const MapManager = {
         } catch (_) {}
     },
 
+    _inventoryPickWellFromHits(idx) {
+        try {
+            const h = (this._inventoryWellHits || [])[idx];
+            if (!h) return;
+            App.hideModal();
+            this._inventoryWellHits = [];
+            this._inventoryPickWell?.(h?.properties || {});
+        } catch (_) {}
+    },
+
     toggleShortestDuctCableMode() {
         this.shortestDuctCableMode = !this.shortestDuctCableMode;
         if (this.shortestDuctCableMode) {
@@ -2228,8 +2586,18 @@ const MapManager = {
         if (layer) {
             if (visible) {
                 this.map.addLayer(layer);
+                if (layerName === 'inventory') {
+                    try { if (this.inventoryLabelsLayer) this.map.addLayer(this.inventoryLabelsLayer); } catch (_) {}
+                    // при включении слоя инвентаризации — загружаем его содержимое
+                    this.loadInventoryLayer?.();
+                }
             } else {
                 this.map.removeLayer(layer);
+                if (layerName === 'inventory') {
+                    try { this.layers.inventory?.clearLayers?.(); } catch (_) {}
+                    try { this.inventoryLabelsLayer?.clearLayers?.(); } catch (_) {}
+                    try { if (this.inventoryLabelsLayer) this.map.removeLayer(this.inventoryLabelsLayer); } catch (_) {}
+                }
             }
         }
     },
@@ -2832,34 +3200,6 @@ const MapManager = {
         const textEl = document.getElementById('add-mode-text');
         if (textEl) textEl.textContent = `Выбрано каналов: ${this.selectedDuctCableChannels.length}. Нажмите «Создать»`;
         App.notify(`Выбрано каналов: ${this.selectedDuctCableChannels.length}`, 'success');
-    },
-
-    finishAddCableMode() {
-        // Если активен режим duct — создаём duct кабель
-        if (this.addDuctCableMode) {
-            if (this.selectedDuctCableChannels.length < 1) {
-                App.notify('Выберите минимум 1 канал', 'warning');
-                return;
-            }
-            const selected = [...this.selectedDuctCableChannels];
-            this.cancelAddDuctCableMode({ notify: false });
-            App.showAddDuctCableModalFromMap(selected);
-            return;
-        }
-
-        // Иначе — обычный режим ломаной (грунт/воздух)
-        if (!this.addCableMode) return;
-        if (this.selectedCablePoints.length < 2) {
-            App.notify('Нужно указать минимум 2 точки', 'warning');
-            return;
-        }
-
-        const typeCode = this.addCableTypeCode;
-        const coords = [...this.selectedCablePoints];
-
-        this.cancelAddCableMode({ notify: false });
-
-        App.showAddCableModalFromMap(typeCode, coords);
     },
 
     /**
