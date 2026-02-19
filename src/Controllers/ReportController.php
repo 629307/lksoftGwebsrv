@@ -6,6 +6,7 @@
 namespace App\Controllers;
 
 use App\Core\Response;
+use App\Core\Auth;
 
 class ReportController extends BaseController
 {
@@ -247,6 +248,77 @@ class ReportController extends BaseController
                 ],
                 'cables' => $uncontractedCables,
             ],
+        ]);
+    }
+
+    /**
+     * GET /api/reports/inventory
+     * Отчёт по инвентаризации (по направлениям, где есть inventory_summary)
+     */
+    public function inventory(): void
+    {
+        // Разрешаем всем авторизованным (в т.ч. readonly)
+        if (!Auth::user()) {
+            Response::error('Требуется авторизация', 401);
+        }
+        try { $this->log('report', 'reports', null, null, ['type' => 'inventory']); } catch (\Throwable $e) {}
+
+        // latest card per well
+        $rows = $this->db->fetchAll(
+            "WITH latest_cards AS (
+                SELECT DISTINCT ON (well_id) id as card_id, well_id, filled_date
+                FROM inventory_cards
+                ORDER BY well_id, filled_date DESC, id DESC
+            ),
+            tags_by_card AS (
+                SELECT it.card_id,
+                       STRING_AGG(DISTINCT o.name, E'\n' ORDER BY o.name) as tag_owners
+                FROM inventory_tags it
+                JOIN owners o ON it.owner_id = o.id
+                GROUP BY it.card_id
+            ),
+            cables_by_direction AS (
+                SELECT cd.id as direction_id,
+                       STRING_AGG(DISTINCT c.number, E'\n' ORDER BY c.number) as cable_numbers
+                FROM channel_directions cd
+                LEFT JOIN cable_channels ch ON ch.direction_id = cd.id
+                LEFT JOIN cable_route_channels crc ON crc.cable_channel_id = ch.id
+                LEFT JOIN cables c ON c.id = crc.cable_id
+                GROUP BY cd.id
+            )
+            SELECT
+                cd.id as direction_id,
+                cd.number as direction_number,
+                COALESCE(cd.length_m, ROUND(ST_Length(cd.geom_wgs84::geography)::numeric, 2), 0) as direction_length_m,
+                sw.number as start_well_number,
+                ew.number as end_well_number,
+                COALESCE(cbd.cable_numbers, '') as cable_numbers,
+                COALESCE(s.unaccounted_cables, 0) as unaccounted_cables,
+                COALESCE(s.max_inventory_cables, 0) as max_inventory_cables,
+
+                sc.card_id as start_card_id,
+                COALESCE(sdc.cable_count, 0) as start_inventory_cables,
+                COALESCE(st.tag_owners, '') as start_tag_owners,
+
+                ec.card_id as end_card_id,
+                COALESCE(edc.cable_count, 0) as end_inventory_cables,
+                COALESCE(et.tag_owners, '') as end_tag_owners
+            FROM inventory_summary s
+            JOIN channel_directions cd ON cd.id = s.direction_id
+            LEFT JOIN wells sw ON cd.start_well_id = sw.id
+            LEFT JOIN wells ew ON cd.end_well_id = ew.id
+            LEFT JOIN cables_by_direction cbd ON cbd.direction_id = cd.id
+            LEFT JOIN latest_cards sc ON sc.well_id = cd.start_well_id
+            LEFT JOIN latest_cards ec ON ec.well_id = cd.end_well_id
+            LEFT JOIN inventory_direction_cables sdc ON sdc.card_id = sc.card_id AND sdc.direction_id = cd.id
+            LEFT JOIN inventory_direction_cables edc ON edc.card_id = ec.card_id AND edc.direction_id = cd.id
+            LEFT JOIN tags_by_card st ON st.card_id = sc.card_id
+            LEFT JOIN tags_by_card et ON et.card_id = ec.card_id
+            ORDER BY cd.number"
+        );
+
+        Response::success([
+            'rows' => $rows,
         ]);
     }
 
