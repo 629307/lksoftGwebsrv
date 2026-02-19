@@ -119,6 +119,8 @@ use App\Controllers\ReportController;
 use App\Controllers\SettingsController;
 use App\Controllers\DbBackupController;
 use App\Controllers\AuditLogController;
+use App\Controllers\InventoryCardController;
+use App\Controllers\InventoryAttachmentController;
 
 $router = new Router();
 $request = new Request();
@@ -243,6 +245,25 @@ $router->post('/api/unified-cables/recalculate-lengths', [UnifiedCableController
 $router->post('/api/unified-cables', [UnifiedCableController::class, 'store'], ['auth']);
 $router->put('/api/unified-cables/{id}', [UnifiedCableController::class, 'update'], ['auth']);
 $router->delete('/api/unified-cables/{id}', [UnifiedCableController::class, 'destroy'], ['auth']);
+
+// ========================
+// Инвентаризация (инвентарные карточки)
+// ========================
+$router->get('/api/inventory-cards', [InventoryCardController::class, 'index'], ['auth']);
+$router->get('/api/inventory-cards/well/{id}', [InventoryCardController::class, 'byWell'], ['auth']);
+$router->get('/api/inventory-cards/well/{id}/directions', [InventoryCardController::class, 'wellDirections'], ['auth']);
+$router->get('/api/inventory-cards/{id}', [InventoryCardController::class, 'show'], ['auth']);
+$router->post('/api/inventory-cards', [InventoryCardController::class, 'store'], ['auth']);
+$router->put('/api/inventory-cards/{id}', [InventoryCardController::class, 'update'], ['auth']);
+$router->delete('/api/inventory-cards/{id}', [InventoryCardController::class, 'destroy'], ['auth']);
+
+// Вложения карточек
+$router->get('/api/inventory-cards/{id}/attachments', [InventoryAttachmentController::class, 'byCard'], ['auth']);
+$router->post('/api/inventory-cards/{id}/attachments', [InventoryAttachmentController::class, 'upload'], ['auth']);
+$router->delete('/api/inventory-cards/attachments/{id}', [InventoryAttachmentController::class, 'destroy'], ['auth']);
+
+// Слой карты: GeoJSON направлений с данными инвентаризации
+$router->get('/api/inventory/geojson', [InventoryCardController::class, 'directionsGeojson'], ['auth']);
 
 // Столбики
 $router->get('/api/marker-posts', [MarkerPostController::class, 'index'], ['auth']);
