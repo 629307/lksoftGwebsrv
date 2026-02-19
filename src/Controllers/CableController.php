@@ -38,6 +38,7 @@ class CableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         // Общее количество
         $totalSql = "SELECT COUNT(*) as cnt FROM {$table} c";
@@ -95,6 +96,7 @@ class CableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         // Обязательно фильтруем по наличию геометрии
         $geomCondition = 'c.geom_wgs84 IS NOT NULL';
@@ -153,6 +155,7 @@ class CableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         // Обязательно фильтруем по наличию геометрии
         $geomCondition = 'c.geom_wgs84 IS NOT NULL';
@@ -454,6 +457,7 @@ class CableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         $sql = "SELECT c.number,
                        o.name as owner, ct.number as contract,
@@ -487,6 +491,26 @@ class CableController extends BaseController
         
         fclose($output);
         exit;
+    }
+
+    private function applyReadonlyCableOwnerScope(string &$where, array &$params, string $alias = 'c'): void
+    {
+        if (!Auth::hasRole('readonly')) return;
+        $user = Auth::user() ?: [];
+        $ownerId = (int) ($user['owner_id'] ?? 0);
+
+        if ($ownerId <= 0) {
+            $cond = "1=0";
+        } else {
+            $cond = "{$alias}.owner_id = :ro_owner_id";
+            $params['ro_owner_id'] = $ownerId;
+        }
+
+        if (trim($where) !== '') {
+            $where = "{$cond} AND ({$where})";
+        } else {
+            $where = $cond;
+        }
     }
 
     /**

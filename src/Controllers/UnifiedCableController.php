@@ -33,6 +33,7 @@ class UnifiedCableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         // total с JOIN'ами, чтобы работал поиск по cc.marking
         $totalSql = "SELECT COUNT(*) as cnt
@@ -92,6 +93,7 @@ class UnifiedCableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
         $delimiter = $this->normalizeCsvDelimiter($this->request->query('delimiter'), ';');
 
         $sql = "SELECT c.number,
@@ -158,6 +160,7 @@ class UnifiedCableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         $sql = "SELECT COUNT(*) as cnt,
                        COALESCE(SUM(c.length_calculated), 0) as length_sum
@@ -190,6 +193,7 @@ class UnifiedCableController extends BaseController
 
         $where = $filters['where'];
         $params = $filters['params'];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
 
         // Кабели с геометрией: грунт/воздух — из geom_wgs84, канализация — собираем из направлений маршрута
         $geomCondition = "(c.geom_wgs84 IS NOT NULL OR ot.code = 'cable_duct')";
@@ -250,6 +254,10 @@ class UnifiedCableController extends BaseController
      */
     public function show(string $id): void
     {
+        $where = "c.id = :id";
+        $params = ['id' => (int) $id];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
+
         $cable = $this->db->fetch(
             "SELECT c.*, 
                     CASE
@@ -275,8 +283,8 @@ class UnifiedCableController extends BaseController
              LEFT JOIN object_types ot ON c.object_type_id = ot.id
              LEFT JOIN object_status os ON c.status_id = os.id
              LEFT JOIN contracts con ON c.contract_id = con.id
-             WHERE c.id = :id",
-            ['id' => (int) $id]
+             WHERE {$where}",
+            $params
         );
 
         if (!$cable) {
@@ -904,6 +912,26 @@ class UnifiedCableController extends BaseController
         );
     }
 
+    private function applyReadonlyCableOwnerScope(string &$where, array &$params, string $alias = 'c'): void
+    {
+        if (!Auth::hasRole('readonly')) return;
+        $user = Auth::user() ?: [];
+        $ownerId = (int) ($user['owner_id'] ?? 0);
+
+        if ($ownerId <= 0) {
+            $cond = "1=0";
+        } else {
+            $cond = "{$alias}.owner_id = :ro_owner_id";
+            $params['ro_owner_id'] = $ownerId;
+        }
+
+        if (trim($where) !== '') {
+            $where = "{$cond} AND ({$where})";
+        } else {
+            $where = $cond;
+        }
+    }
+
     /**
      * GET /api/unified-cables/by-well/{id}
      * Список кабелей, где колодец входит в маршрут
@@ -911,6 +939,9 @@ class UnifiedCableController extends BaseController
     public function byWell(string $id): void
     {
         $wellId = (int) $id;
+        $where = "crw.well_id = :id";
+        $params = ['id' => $wellId];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
         $rows = $this->db->fetchAll(
             "SELECT DISTINCT c.id, c.number,
                     ct.name as cable_type_name,
@@ -926,9 +957,9 @@ class UnifiedCableController extends BaseController
              LEFT JOIN owners o ON c.owner_id = o.id
              LEFT JOIN object_types ot ON c.object_type_id = ot.id
              LEFT JOIN object_status os ON c.status_id = os.id
-             WHERE crw.well_id = :id
+             WHERE {$where}
              ORDER BY c.number",
-            ['id' => $wellId]
+            $params
         );
         Response::success($rows);
     }
@@ -940,6 +971,9 @@ class UnifiedCableController extends BaseController
     public function byDirection(string $id): void
     {
         $directionId = (int) $id;
+        $where = "ch.direction_id = :id";
+        $params = ['id' => $directionId];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
         $rows = $this->db->fetchAll(
             "SELECT DISTINCT c.id, c.number,
                     ct.name as cable_type_name,
@@ -956,9 +990,9 @@ class UnifiedCableController extends BaseController
              LEFT JOIN owners o ON c.owner_id = o.id
              LEFT JOIN object_types ot ON c.object_type_id = ot.id
              LEFT JOIN object_status os ON c.status_id = os.id
-             WHERE ch.direction_id = :id
+             WHERE {$where}
              ORDER BY c.number",
-            ['id' => $directionId]
+            $params
         );
         Response::success($rows);
     }
@@ -970,6 +1004,9 @@ class UnifiedCableController extends BaseController
     public function byChannel(string $id): void
     {
         $channelId = (int) $id;
+        $where = "crc.cable_channel_id = :id";
+        $params = ['id' => $channelId];
+        $this->applyReadonlyCableOwnerScope($where, $params, 'c');
         $rows = $this->db->fetchAll(
             "SELECT DISTINCT c.id, c.number,
                     ct.name as cable_type_name,
@@ -985,9 +1022,9 @@ class UnifiedCableController extends BaseController
              LEFT JOIN owners o ON c.owner_id = o.id
              LEFT JOIN object_types ot ON c.object_type_id = ot.id
              LEFT JOIN object_status os ON c.status_id = os.id
-             WHERE crc.cable_channel_id = :id
+             WHERE {$where}
              ORDER BY c.number",
-            ['id' => $channelId]
+            $params
         );
         Response::success($rows);
     }
@@ -999,6 +1036,15 @@ class UnifiedCableController extends BaseController
     public function routeDirectionsGeojson(string $id): void
     {
         $cableId = (int) $id;
+        // Для роли readonly проверяем видимость кабеля по собственнику
+        $cWhere = "c.id = :id";
+        $cParams = ['id' => $cableId];
+        $this->applyReadonlyCableOwnerScope($cWhere, $cParams, 'c');
+        $exists = $this->db->fetch("SELECT c.id FROM cables c WHERE {$cWhere} LIMIT 1", $cParams);
+        if (!$exists) {
+            Response::geojson([], ['layer' => 'route_directions', 'count' => 0]);
+            return;
+        }
         try {
             $rows = $this->db->fetchAll(
                 "SELECT cd.id, cd.number,
