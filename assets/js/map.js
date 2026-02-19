@@ -531,18 +531,27 @@ const MapManager = {
             this.layers.inventory.clearLayers();
             if (this.inventoryLabelsLayer) this.inventoryLabelsLayer.clearLayers();
 
-            const darkGreen = [0, 80, 0];
-            const darkRed = [128, 0, 0];
             const lerp = (a, b, t) => Math.round(a + (b - a) * t);
             const toHex = (v) => v.toString(16).padStart(2, '0');
             const rgb = (r, g, b) => `#${toHex(r)}${toHex(g)}${toHex(b)}`;
             const colorForUnaccounted = (u) => {
-                const n = Number(u);
-                if (!Number.isFinite(n)) return '#555555';
-                if (n < 0) return '#000000';
-                if (maxInv <= 0) return rgb(...darkGreen);
-                const t = Math.max(0, Math.min(1, n / maxInv));
-                return rgb(lerp(darkGreen[0], darkRed[0], t), lerp(darkGreen[1], darkRed[1], t), lerp(darkGreen[2], darkRed[2], t));
+                const n0 = Number(u);
+                const n = Number.isFinite(n0) ? Math.trunc(n0) : null;
+                if (n === null) return '#777777';
+                if (n < 0) return '#0098ff';
+                if (n === 0) return '#01b73f';
+                if (n === 1) return '#f9adad';
+                // Градиент от #f9adad (1) до #ff0000 (maxInv)
+                const start = [0xF9, 0xAD, 0xAD];
+                const end = [0xFF, 0x00, 0x00];
+                const max = Math.max(1, Math.trunc(maxInv || 0));
+                if (max <= 1) return '#ff0000';
+                const t = Math.max(0, Math.min(1, (n - 1) / (max - 1)));
+                return rgb(
+                    lerp(start[0], end[0], t),
+                    lerp(start[1], end[1], t),
+                    lerp(start[2], end[2], t),
+                );
             };
 
             const buildInvLabel = (latlng, text, angleDeg) => {

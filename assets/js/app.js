@@ -4112,7 +4112,7 @@ const App = {
                     break;
             }
 
-            const exportBtn = (type === 'incidents' || type === 'inventory')
+            const exportBtn = (type === 'incidents')
                 ? ''
                 : `<button class="btn btn-secondary" onclick="App.showReportExportModal('${type}')">
                         <i class="fas fa-download"></i> Выгрузить отчет
