@@ -1719,7 +1719,7 @@ const App = {
                 ${this.canWrite() ? `<button class="btn btn-primary" onclick="App.showEditInventoryCardModal(${id})"><i class="fas fa-edit"></i> Редактировать</button>` : ''}
             `;
 
-            this.showModal('Инвентарная карточка', content, footer);
+            this.showModal('Инвентарная карточка', content, footer, { fitContent: true });
         } catch (e) {
             this.notify(e?.message || 'Ошибка', 'error');
         }
@@ -1851,7 +1851,7 @@ const App = {
                 <button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>
                 <button class="btn btn-primary" onclick="App.submitInventoryCardUpdate(${id}, ${wellId})"><i class="fas fa-save"></i> Сохранить</button>
             `;
-            this.showModal('Инвентарная карточка — редактирование', content, footer);
+            this.showModal('Инвентарная карточка — редактирование', content, footer, { fitContent: true });
             // fill tag selects
             try {
                 const sels = Array.from(document.querySelectorAll('#inv-tags .inv-tag-owner'));
@@ -4106,9 +4106,13 @@ const App = {
                     response = await API.reports.incidents();
                     html = this.renderIncidentsReport(response.data);
                     break;
+                case 'inventory':
+                    response = await API.reports.inventory();
+                    html = this.renderInventoryReport(response.data);
+                    break;
             }
 
-            const exportBtn = (type === 'incidents')
+            const exportBtn = (type === 'incidents' || type === 'inventory')
                 ? ''
                 : `<button class="btn btn-secondary" onclick="App.showReportExportModal('${type}')">
                         <i class="fas fa-download"></i> Выгрузить отчет
@@ -4138,8 +4142,105 @@ const App = {
             contracts: 'Отчёт по контрактам',
             owners: 'Отчёт по собственникам',
             incidents: 'Отчёт по инцидентам',
+            inventory: 'Отчёт по инвентаризации',
         };
         return titles[type] || 'Отчёт';
+    },
+
+    renderInventoryReport(data) {
+        const rows = data?.rows || [];
+        const esc = (s) => this.escapeHtml((s ?? '').toString());
+        const nl = (s) => esc(s).replace(/\n/g, '<br>');
+        const fmtLen = (v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '-';
+            return n.toFixed(2);
+        };
+
+        return `
+            <div class="text-muted" style="margin: 8px 0 12px 0;">Сортировка: по номеру направления.</div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">№</th>
+                        <th>Номер направления</th>
+                        <th>Длина (м)</th>
+                        <th>Кабели в направлении</th>
+                        <th>Начальный колодец</th>
+                        <th>Обнаружено (старт)</th>
+                        <th>Бирки (старт)</th>
+                        <th>Конечный колодец</th>
+                        <th>Обнаружено (конец)</th>
+                        <th>Бирки (конец)</th>
+                        <th>Неучтённые</th>
+                        <th style="width: 140px;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${(rows || []).map((r, idx) => `
+                        <tr>
+                            <td>${idx + 1}</td>
+                            <td>${esc(r.direction_number || r.direction_id || '')}</td>
+                            <td>${fmtLen(r.direction_length_m)}</td>
+                            <td style="white-space: pre-line;">${nl(r.cable_numbers || '') || '-'}</td>
+                            <td>${esc(r.start_well_number || '-')}</td>
+                            <td>${Number(r.start_inventory_cables || 0)}</td>
+                            <td style="white-space: pre-line;">${nl(r.start_tag_owners || '') || '-'}</td>
+                            <td>${esc(r.end_well_number || '-')}</td>
+                            <td>${Number(r.end_inventory_cables || 0)}</td>
+                            <td style="white-space: pre-line;">${nl(r.end_tag_owners || '') || '-'}</td>
+                            <td>${Number(r.unaccounted_cables || 0)}</td>
+                            <td style="white-space: nowrap;">
+                                <button class="btn btn-sm btn-secondary" title="Показать на карте"
+                                        onclick="App.showInventoryDirectionOnMap(${Number(r.direction_id)})">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                ${this.canWrite() ? `
+                                    <button class="btn btn-sm btn-primary" title="Редактировать направление"
+                                            onclick="App.editDirectionFromInventoryReport(${Number(r.direction_id)})">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                ` : ``}
+                            </td>
+                        </tr>
+                    `).join('') || '<tr><td colspan="12">Нет данных</td></tr>'}
+                </tbody>
+            </table>
+        `;
+    },
+
+    async showInventoryDirectionOnMap(directionId) {
+        const did = parseInt(directionId || 0, 10);
+        if (!did) return;
+        try {
+            // Переходим на карту
+            this.switchPanel?.('map');
+        } catch (_) {}
+
+        // включаем слой инвентаризации
+        try {
+            const cb = document.getElementById('layer-inventory');
+            if (cb) {
+                cb.checked = true;
+                this.handleLayerToggle(cb);
+            }
+        } catch (_) {}
+
+        try {
+            await MapManager.showObjectOnMap('channel_direction', did);
+        } catch (_) {}
+    },
+
+    editDirectionFromInventoryReport(directionId) {
+        const did = parseInt(directionId || 0, 10);
+        if (!did) return;
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        try {
+            this.showEditObjectModal('directions', did);
+        } catch (_) {}
     },
 
     renderObjectsReport(data) {

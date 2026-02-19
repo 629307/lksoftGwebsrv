@@ -159,7 +159,9 @@ class WellController extends BaseController
                        o.name as owner_name, o.short_name as owner_short_name, COALESCE(uoc.color, o.color) as owner_color,
                        ot.name as type_name, ot.color as type_color,
                        ok.code as kind_code, ok.name as kind_name,
-                       os.code as status_code, os.name as status_name, os.color as status_color
+                       os.code as status_code, os.name as status_name, os.color as status_color,
+                       (SELECT COUNT(*) FROM inventory_cards ic WHERE ic.well_id = w.id) as inventory_cards_count,
+                       (SELECT ic.id FROM inventory_cards ic WHERE ic.well_id = w.id ORDER BY ic.filled_date DESC, ic.id DESC LIMIT 1) as last_inventory_card_id
                 FROM wells w
                 LEFT JOIN owners o ON w.owner_id = o.id
                 LEFT JOIN user_owner_colors uoc ON uoc.owner_id = o.id AND uoc.user_id = :uid

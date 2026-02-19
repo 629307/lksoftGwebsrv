@@ -545,8 +545,9 @@ const MapManager = {
                 return rgb(lerp(darkGreen[0], darkRed[0], t), lerp(darkGreen[1], darkRed[1], t), lerp(darkGreen[2], darkRed[2], t));
             };
 
-            const buildInvLabel = (latlng, text) => {
-                const html = `<div style="transform: translate(-50%, -50%) rotate(var(--inv-angle, 0deg));">
+            const buildInvLabel = (latlng, text, angleDeg) => {
+                const a = Number(angleDeg || 0) || 0;
+                const html = `<div style="transform: translate(-50%, -50%) rotate(${a}deg); transform-origin:center;">
                     <div style="background: rgba(255,255,255,0.85); color:#111; padding:2px 6px; border-radius:6px; border:1px solid rgba(0,0,0,0.25); font-size:12px; font-weight:600; white-space:nowrap;">
                         ${text}
                     </div>
@@ -607,20 +608,7 @@ const MapManager = {
                             const latlngs = layer.getLatLngs?.();
                             const g = this._polylineMidpointAndAngle(latlngs);
                             if (g?.mid && this.inventoryLabelsLayer) {
-                                const m = buildInvLabel(g.mid, String(p.inv_unaccounted));
-                                try {
-                                    // пробрасываем угол как CSS-переменную через style
-                                    const el = m.getElement?.();
-                                    if (el) el.style.setProperty('--inv-angle', `${g.angle}deg`);
-                                } catch (_) {}
-                                // leaflets markers: зададим через onAdd
-                                m.on('add', () => {
-                                    try {
-                                        const el = m.getElement();
-                                        if (el) el.style.setProperty('--inv-angle', `${g.angle}deg`);
-                                    } catch (_) {}
-                                });
-                                m.addTo(this.inventoryLabelsLayer);
+                                buildInvLabel(g.mid, String(p.inv_unaccounted), g.angle).addTo(this.inventoryLabelsLayer);
                             }
                         }
                     } catch (_) {}
@@ -700,7 +688,9 @@ const MapManager = {
                     const mid = L.latLng(a.lat + (b.lat - a.lat) * t, a.lng + (b.lng - a.lng) * t);
                     const p1 = this.map.latLngToLayerPoint(a);
                     const p2 = this.map.latLngToLayerPoint(b);
-                    const angle = Math.atan2((p2.y - p1.y), (p2.x - p1.x)) * 180 / Math.PI;
+                    let angle = Math.atan2((p2.y - p1.y), (p2.x - p1.x)) * 180 / Math.PI;
+                    // нормализация, чтобы текст читался слева направо (как в подсказках длины)
+                    if (angle > 90 || angle < -90) angle += 180;
                     return { mid, angle };
                 }
                 acc += seg;
@@ -711,7 +701,8 @@ const MapManager = {
             const b = pts[Math.min(pts.length - 1, Math.floor(pts.length / 2) + 1)];
             const p1 = this.map.latLngToLayerPoint(a);
             const p2 = this.map.latLngToLayerPoint(b);
-            const angle = Math.atan2((p2.y - p1.y), (p2.x - p1.x)) * 180 / Math.PI;
+            let angle = Math.atan2((p2.y - p1.y), (p2.x - p1.x)) * 180 / Math.PI;
+            if (angle > 90 || angle < -90) angle += 180;
             return { mid, angle };
         } catch (_) {
             return null;
@@ -2743,10 +2734,16 @@ const MapManager = {
         // Доп. действия для карты
         if (objectType === 'well') {
             const canWrite = (typeof App !== 'undefined' && typeof App.canWrite === 'function' && App.canWrite());
+            const invId = parseInt(properties?.last_inventory_card_id || 0, 10);
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInWell(${properties.id})">
                     Показать кабели в колодце
                 </button>
+                ${invId > 0 ? `
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="App.openInventoryCard(${invId})">
+                        Показать инвентарную карточку
+                    </button>
+                ` : ``}
                 ${canWrite ? `
                     <button type="button" class="btn btn-sm btn-danger" onclick="App.dismantleWell(${properties.id})" title="Демонтаж возможен только если у колодца ровно 2 направления">
                         Демонтаж колодца
