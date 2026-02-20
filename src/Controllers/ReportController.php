@@ -263,13 +263,23 @@ class ReportController extends BaseController
         }
         try { $this->log('report', 'reports', null, null, ['type' => 'inventory']); } catch (\Throwable $e) {}
 
-        $ownerId = (int) $this->request->query('owner_id', 0);
-        $ownerWhere = '';
+        $ownerId = (int) $this->request->query('owner_id', 0); // собственник направления
+        $tagOwnerId = (int) $this->request->query('tag_owner_id', 0); // собственник бирки
+        $whereParts = [];
         $params = [];
         if ($ownerId > 0) {
-            $ownerWhere = "WHERE cd.owner_id = :oid";
+            $whereParts[] = "cd.owner_id = :oid";
             $params['oid'] = $ownerId;
         }
+        if ($tagOwnerId > 0) {
+            $whereParts[] = "(
+                EXISTS (SELECT 1 FROM inventory_tags itx WHERE itx.card_id = sc.card_id AND itx.owner_id = :toid)
+                OR
+                EXISTS (SELECT 1 FROM inventory_tags itx WHERE itx.card_id = ec.card_id AND itx.owner_id = :toid)
+            )";
+            $params['toid'] = $tagOwnerId;
+        }
+        $whereSql = $whereParts ? ("WHERE " . implode(" AND ", $whereParts)) : "";
 
         // latest card per well
         $rows = $this->db->fetchAll(
@@ -280,14 +290,16 @@ class ReportController extends BaseController
             ),
             tags_by_card AS (
                 SELECT it.card_id,
-                       STRING_AGG(o.name, E'\n' ORDER BY it.id) as tag_owners
+                       STRING_AGG(o.name, E'\n' ORDER BY it.id) as tag_owners,
+                       STRING_AGG(it.owner_id::text, E'\n' ORDER BY it.id) as tag_owner_ids
                 FROM inventory_tags it
                 JOIN owners o ON it.owner_id = o.id
                 GROUP BY it.card_id
             ),
             cables_by_direction AS (
                 SELECT cd.id as direction_id,
-                       STRING_AGG(DISTINCT c.number, E'\n' ORDER BY c.number) as cable_numbers
+                       STRING_AGG(DISTINCT c.number, E'\n' ORDER BY c.number) as cable_numbers,
+                       STRING_AGG(DISTINCT c.owner_id::text, ',' ORDER BY c.owner_id) as cable_owner_ids
                 FROM channel_directions cd
                 LEFT JOIN cable_channels ch ON ch.direction_id = cd.id
                 LEFT JOIN cable_route_channels crc ON crc.cable_channel_id = ch.id
@@ -301,16 +313,19 @@ class ReportController extends BaseController
                 sw.number as start_well_number,
                 ew.number as end_well_number,
                 COALESCE(cbd.cable_numbers, '') as cable_numbers,
+                COALESCE(cbd.cable_owner_ids, '') as cable_owner_ids,
                 COALESCE(s.unaccounted_cables, 0) as unaccounted_cables,
                 COALESCE(s.max_inventory_cables, 0) as max_inventory_cables,
 
                 sc.card_id as start_card_id,
                 COALESCE(sdc.cable_count, 0) as start_inventory_cables,
                 COALESCE(st.tag_owners, '') as start_tag_owners,
+                COALESCE(st.tag_owner_ids, '') as start_tag_owner_ids,
 
                 ec.card_id as end_card_id,
                 COALESCE(edc.cable_count, 0) as end_inventory_cables,
-                COALESCE(et.tag_owners, '') as end_tag_owners
+                COALESCE(et.tag_owners, '') as end_tag_owners,
+                COALESCE(et.tag_owner_ids, '') as end_tag_owner_ids
             FROM inventory_summary s
             JOIN channel_directions cd ON cd.id = s.direction_id
             LEFT JOIN wells sw ON cd.start_well_id = sw.id
@@ -322,7 +337,7 @@ class ReportController extends BaseController
             LEFT JOIN inventory_direction_cables edc ON edc.card_id = ec.card_id AND edc.direction_id = cd.id
             LEFT JOIN tags_by_card st ON st.card_id = sc.card_id
             LEFT JOIN tags_by_card et ON et.card_id = ec.card_id
-            {$ownerWhere}
+            {$whereSql}
             ORDER BY cd.number"
             ,
             $params
@@ -702,13 +717,23 @@ class ReportController extends BaseController
                     'Неучтённые',
                 ];
 
-                $ownerId = (int) $this->request->query('owner_id', 0);
-                $ownerWhere = '';
+                $ownerId = (int) $this->request->query('owner_id', 0); // собственник направления
+                $tagOwnerId = (int) $this->request->query('tag_owner_id', 0); // собственник бирки
+                $whereParts = [];
                 $params = [];
                 if ($ownerId > 0) {
-                    $ownerWhere = "WHERE cd.owner_id = :oid";
+                    $whereParts[] = "cd.owner_id = :oid";
                     $params['oid'] = $ownerId;
                 }
+                if ($tagOwnerId > 0) {
+                    $whereParts[] = "(
+                        EXISTS (SELECT 1 FROM inventory_tags itx WHERE itx.card_id = sc.card_id AND itx.owner_id = :toid)
+                        OR
+                        EXISTS (SELECT 1 FROM inventory_tags itx WHERE itx.card_id = ec.card_id AND itx.owner_id = :toid)
+                    )";
+                    $params['toid'] = $tagOwnerId;
+                }
+                $whereSql = $whereParts ? ("WHERE " . implode(" AND ", $whereParts)) : "";
 
                 $rows = $this->db->fetchAll(
                     "WITH latest_cards AS (
@@ -718,14 +743,16 @@ class ReportController extends BaseController
                     ),
                     tags_by_card AS (
                         SELECT it.card_id,
-                               STRING_AGG(o.name, E'\n' ORDER BY it.id) as tag_owners
+                               STRING_AGG(o.name, E'\n' ORDER BY it.id) as tag_owners,
+                               STRING_AGG(it.owner_id::text, E'\n' ORDER BY it.id) as tag_owner_ids
                         FROM inventory_tags it
                         JOIN owners o ON it.owner_id = o.id
                         GROUP BY it.card_id
                     ),
                     cables_by_direction AS (
                         SELECT cd.id as direction_id,
-                               STRING_AGG(DISTINCT c.number, E'\n' ORDER BY c.number) as cable_numbers
+                               STRING_AGG(DISTINCT c.number, E'\n' ORDER BY c.number) as cable_numbers,
+                               STRING_AGG(DISTINCT c.owner_id::text, ',' ORDER BY c.owner_id) as cable_owner_ids
                         FROM channel_directions cd
                         LEFT JOIN cable_channels ch ON ch.direction_id = cd.id
                         LEFT JOIN cable_route_channels crc ON crc.cable_channel_id = ch.id
@@ -739,13 +766,16 @@ class ReportController extends BaseController
                         sw.number as start_well_number,
                         ew.number as end_well_number,
                         COALESCE(cbd.cable_numbers, '') as cable_numbers,
+                        COALESCE(cbd.cable_owner_ids, '') as cable_owner_ids,
                         COALESCE(s.unaccounted_cables, 0) as unaccounted_cables,
                         sc.card_id as start_card_id,
                         COALESCE(sdc.cable_count, 0) as start_inventory_cables,
                         COALESCE(st.tag_owners, '') as start_tag_owners,
+                        COALESCE(st.tag_owner_ids, '') as start_tag_owner_ids,
                         ec.card_id as end_card_id,
                         COALESCE(edc.cable_count, 0) as end_inventory_cables,
-                        COALESCE(et.tag_owners, '') as end_tag_owners
+                        COALESCE(et.tag_owners, '') as end_tag_owners,
+                        COALESCE(et.tag_owner_ids, '') as end_tag_owner_ids
                     FROM inventory_summary s
                     JOIN channel_directions cd ON cd.id = s.direction_id
                     LEFT JOIN wells sw ON cd.start_well_id = sw.id
@@ -757,7 +787,7 @@ class ReportController extends BaseController
                     LEFT JOIN inventory_direction_cables edc ON edc.card_id = ec.card_id AND edc.direction_id = cd.id
                     LEFT JOIN tags_by_card st ON st.card_id = sc.card_id
                     LEFT JOIN tags_by_card et ON et.card_id = ec.card_id
-                    {$ownerWhere}
+                    {$whereSql}
                     ORDER BY cd.number"
                     ,
                     $params

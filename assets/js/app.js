@@ -4125,7 +4125,7 @@ const App = {
 
         // Инвентаризация: отдельная отрисовка (с фильтром и счётчиком)
         if (type === 'inventory') {
-            await this.applyInventoryReportFilter('');
+            await this.applyInventoryReportFilter();
             return;
         }
 
@@ -4193,7 +4193,9 @@ const App = {
     renderInventoryReport(data) {
         const rows = data?.rows || [];
         const owners = data?.owners || [];
-        const selectedOwnerId = (data?.selected_owner_id ?? '').toString();
+        const selectedOwnerId = (data?.selected_owner_id ?? '').toString(); // собственник направления
+        const selectedTagOwnerId = (data?.selected_tag_owner_id ?? '').toString(); // собственник бирки
+        const confirmTags = !!data?.confirm_tags;
         const esc = (s) => this.escapeHtml((s ?? '').toString());
         const nl = (s) => esc(s).replace(/\n/g, '<br>');
         const fmtLen = (v) => {
@@ -4202,13 +4204,51 @@ const App = {
             return n.toFixed(2);
         };
 
+        const parseLines = (s) => {
+            const x = (s ?? '').toString();
+            if (!x.trim()) return [];
+            return x.split('\n').map(v => v.toString()).filter(v => v !== '');
+        };
+        const parseIds = (s) => {
+            const x = (s ?? '').toString();
+            if (!x.trim()) return [];
+            return x.split('\n').map(v => parseInt(v || '0', 10)).map(v => (Number.isFinite(v) ? v : 0));
+        };
+        const parseCsvIds = (s) => {
+            const x = (s ?? '').toString().trim();
+            if (!x) return [];
+            return x.split(',').map(v => parseInt(v || '0', 10)).filter(n => Number.isFinite(n) && n > 0);
+        };
+        const uniqSet = (arr) => new Set((arr || []).filter(n => Number.isFinite(n) && n > 0));
+
+        const decorateTags = (namesStr, idsStr, confirmedOwnerIds) => {
+            const names = parseLines(namesStr);
+            const ids = parseIds(idsStr);
+            if (!names.length) return '';
+            const out = names.map((name, idx) => {
+                const oid = ids[idx] || 0;
+                const ok = oid > 0 && confirmedOwnerIds.has(oid);
+                if (ok) return `(П) ${name}`;
+                return `${name} (НП)`;
+            });
+            return out.join('\n');
+        };
+
         return `
             <div class="filters-row" style="margin: 12px 0;">
                 <select id="report-inventory-owner">
                     <option value="">Собственник: все</option>
                     ${owners.map(o => `<option value="${o.id}">${esc(o.name || '')}</option>`).join('')}
                 </select>
-                <button class="btn btn-primary btn-sm" onclick="App.applyInventoryReportFilter(document.getElementById('report-inventory-owner')?.value || '')">
+                <select id="report-inventory-tag-owner">
+                    <option value="">Бирки: собственник — все</option>
+                    ${owners.map(o => `<option value="${o.id}">${esc(o.name || '')}</option>`).join('')}
+                </select>
+                <label class="text-secondary" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+                    <input type="checkbox" id="report-inventory-confirm-tags" ${confirmTags ? 'checked' : ''}>
+                    <span>Отобразить подтверждение Бирки</span>
+                </label>
+                <button class="btn btn-primary btn-sm" onclick="App.applyInventoryReportFilterFromUi()">
                     <i class="fas fa-filter"></i> Применить
                 </button>
             </div>
@@ -4249,7 +4289,14 @@ const App = {
                                 </div>
                             </td>
                             <td>${Number(r.start_inventory_cables || 0)}</td>
-                            <td style="white-space: pre-line;">${nl(r.start_tag_owners || '') || '-'}</td>
+                            <td style="white-space: pre-line;">${nl((confirmTags ? (decorateTags(r.start_tag_owners || '', r.start_tag_owner_ids || '', (() => {
+                                const c = uniqSet(parseCsvIds(r.cable_owner_ids || ''));
+                                const s = uniqSet(parseIds(r.start_tag_owner_ids || ''));
+                                const e = uniqSet(parseIds(r.end_tag_owner_ids || ''));
+                                const inter = new Set();
+                                for (const id of c) { if (s.has(id) && e.has(id)) inter.add(id); }
+                                return inter;
+                            })())) : (r.start_tag_owners || '')) ) || '-'}</td>
                             <td>
                                 <div style="display:flex; align-items:center; gap:6px; justify-content:space-between;">
                                     <span>${esc(r.end_well_number || '-')}</span>
@@ -4262,7 +4309,14 @@ const App = {
                                 </div>
                             </td>
                             <td>${Number(r.end_inventory_cables || 0)}</td>
-                            <td style="white-space: pre-line;">${nl(r.end_tag_owners || '') || '-'}</td>
+                            <td style="white-space: pre-line;">${nl((confirmTags ? (decorateTags(r.end_tag_owners || '', r.end_tag_owner_ids || '', (() => {
+                                const c = uniqSet(parseCsvIds(r.cable_owner_ids || ''));
+                                const s = uniqSet(parseIds(r.start_tag_owner_ids || ''));
+                                const e = uniqSet(parseIds(r.end_tag_owner_ids || ''));
+                                const inter = new Set();
+                                for (const id of c) { if (s.has(id) && e.has(id)) inter.add(id); }
+                                return inter;
+                            })())) : (r.end_tag_owners || '')) ) || '-'}</td>
                             <td>${Number(r.unaccounted_cables || 0)}</td>
                             <td style="white-space: nowrap;">
                                 <button class="btn btn-sm btn-secondary" title="Показать на карте"
@@ -4283,15 +4337,26 @@ const App = {
         `;
     },
 
-    async applyInventoryReportFilter(ownerId = '') {
+    applyInventoryReportFilterFromUi() {
+        const ownerId = document.getElementById('report-inventory-owner')?.value || '';
+        const tagOwnerId = document.getElementById('report-inventory-tag-owner')?.value || '';
+        const confirmTags = !!document.getElementById('report-inventory-confirm-tags')?.checked;
+        return this.applyInventoryReportFilter({ ownerId, tagOwnerId, confirmTags });
+    },
+
+    async applyInventoryReportFilter(opts = null) {
         const container = document.getElementById('report-content');
         if (!container) return;
         container.classList.remove('hidden');
         container.innerHTML = '<p>Загрузка...</p>';
 
-        const oid = (ownerId || '').toString().trim();
+        const o = opts || {};
+        const oid = (o.ownerId || '').toString().trim();
+        const toid = (o.tagOwnerId || '').toString().trim();
+        const confirmTags = !!o.confirmTags;
         const params = {};
         if (oid) params.owner_id = oid;
+        if (toid) params.tag_owner_id = toid;
 
         try {
             const [reportResp, ownersResp] = await Promise.all([
@@ -4316,12 +4381,14 @@ const App = {
                         <i class="fas fa-download"></i> Выгрузить отчет
                     </button>
                 </div>
-                ${this.renderInventoryReport({ rows, owners, selected_owner_id: oid })}
+                ${this.renderInventoryReport({ rows, owners, selected_owner_id: oid, selected_tag_owner_id: toid, confirm_tags: confirmTags })}
             `;
 
             // восстановить выбранный фильтр
             const sel = container.querySelector('#report-inventory-owner');
             if (sel) sel.value = oid;
+            const sel2 = container.querySelector('#report-inventory-tag-owner');
+            if (sel2) sel2.value = toid;
         } catch (e) {
             container.innerHTML = '<p style="color: var(--danger-color);">Ошибка загрузки отчёта</p>';
         }
@@ -7451,6 +7518,8 @@ const App = {
             if (type === 'inventory') {
                 const ownerId = document.getElementById('report-inventory-owner')?.value || '';
                 if (ownerId) params.owner_id = ownerId;
+                const tagOwnerId = document.getElementById('report-inventory-tag-owner')?.value || '';
+                if (tagOwnerId) params.tag_owner_id = tagOwnerId;
             }
 
             return API.reports.export(type, params, delimiter);
