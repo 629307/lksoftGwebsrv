@@ -392,10 +392,16 @@
                         <select id="objects-filter-owner">
                             <option value="">Собственник: все</option>
                         </select>
-                        <label id="wells-only-inventory-wrap" class="text-secondary" style="display:none; align-items:center; gap:8px; white-space:nowrap;">
-                            <input type="checkbox" id="wells-filter-has-inventory">
-                            <span>Колодцы только с инвентаризационной карточкой</span>
-                        </label>
+                        <div id="wells-extra-filters" style="display:none; flex-direction:column; gap:6px;">
+                            <label id="wells-only-inventory-wrap" class="text-secondary" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+                                <input type="checkbox" id="wells-filter-has-inventory">
+                                <span>Колодцы только с инвентаризационной карточкой</span>
+                            </label>
+                            <label id="wells-only-coords-refine-wrap" class="text-secondary" style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+                                <input type="checkbox" id="wells-filter-coords-needs-refine">
+                                <span>Колодцы требующие уточнения координат</span>
+                            </label>
+                        </div>
                         <div class="objects-totals" id="objects-totals" style="margin-left:auto; display:flex; gap:14px; flex-wrap:wrap; align-items:center; color: var(--text-secondary);">
                         </div>
                     </div>

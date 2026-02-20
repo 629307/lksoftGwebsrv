@@ -515,6 +515,10 @@ const App = {
             this.pagination.page = 1;
             this.loadObjects();
         });
+        document.getElementById('wells-filter-coords-needs-refine')?.addEventListener('change', () => {
+            this.pagination.page = 1;
+            this.loadObjects();
+        });
         document.getElementById('objects-filter-type')?.addEventListener('change', () => {
             this.pagination.page = 1;
             this.loadObjects();
@@ -1355,9 +1359,9 @@ const App = {
         document.getElementById('btn-recalc-cable-lengths')?.classList.toggle('hidden', tab !== 'unified_cables' || !this.canWrite());
         // Кнопка "Найти клоны" — только для "Колодцы"
         document.getElementById('btn-find-clones')?.classList.toggle('hidden', tab !== 'wells');
-        // Чекбокс "только с инвентаризацией" — только для "Колодцы"
+        // Чекбоксы "Колодцы ..." — только для "Колодцы"
         try {
-            const wrap = document.getElementById('wells-only-inventory-wrap');
+            const wrap = document.getElementById('wells-extra-filters');
             if (wrap) wrap.style.display = (tab === 'wells') ? 'flex' : 'none';
         } catch (_) {}
 
@@ -2102,6 +2106,8 @@ const App = {
             if (this.currentTab === 'wells') {
                 const hasInv = !!document.getElementById('wells-filter-has-inventory')?.checked;
                 if (hasInv) params.has_inventory = 1;
+                const needRefine = !!document.getElementById('wells-filter-coords-needs-refine')?.checked;
+                if (needRefine) params.coords_needs_refine = 1;
             }
             if (kind) {
                 // Для большинства вкладок фильтруем по kind_id (object_kinds)
@@ -2699,6 +2705,13 @@ const App = {
                 formHtml = `
                     <form id="edit-object-form">
                         <input type="hidden" name="id" value="${obj.id}">
+                        <div class="form-group">
+                            <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+                                <input type="hidden" name="coords_needs_refine" value="0">
+                                <input type="checkbox" name="coords_needs_refine" value="1" ${obj.coords_needs_refine ? 'checked' : ''}>
+                                Требуется уточнить координаты
+                            </label>
+                        </div>
                         <div class="form-group">
                             <label>Номер *</label>
                             <div style="display:flex; gap:8px; align-items:center;">

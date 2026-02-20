@@ -18,6 +18,7 @@ class WellController extends BaseController
     {
         $pagination = $this->getPagination();
         $hasInventory = (int) $this->request->query('has_inventory', 0);
+        $needsRefine = (int) $this->request->query('coords_needs_refine', 0);
         
         $filters = $this->buildFilters([
             'owner_id' => 'w.owner_id',
@@ -34,6 +35,10 @@ class WellController extends BaseController
             $invWhere = "EXISTS (SELECT 1 FROM inventory_cards ic WHERE ic.well_id = w.id)";
             $where = $where ? ($where . " AND " . $invWhere) : $invWhere;
         }
+        if ($needsRefine) {
+            $refWhere = "w.coords_needs_refine = true";
+            $where = $where ? ($where . " AND " . $refWhere) : $refWhere;
+        }
 
         // Общее количество (передаём алиас 'w' для корректной работы с WHERE)
         $total = $this->getTotal('wells', $where, $params, 'w');
@@ -43,6 +48,7 @@ class WellController extends BaseController
                        ST_X(w.geom_wgs84) as longitude, ST_Y(w.geom_wgs84) as latitude,
                        ST_X(w.geom_msk86) as x_msk86, ST_Y(w.geom_msk86) as y_msk86,
                        w.owner_id, w.type_id, w.kind_id, w.status_id,
+                       w.coords_needs_refine,
                        w.depth, w.material, w.installation_date, w.notes,
                        (SELECT COUNT(*) FROM object_photos op WHERE op.object_table = 'wells' AND op.object_id = w.id) as photo_count,
                        (SELECT COUNT(*) FROM inventory_cards ic WHERE ic.well_id = w.id) as inventory_cards_count,
@@ -156,6 +162,7 @@ class WellController extends BaseController
         $sql = "SELECT w.id, w.number, 
                        ST_AsGeoJSON(w.geom_wgs84)::json as geometry,
                        w.owner_id, w.type_id, w.kind_id, w.status_id,
+                       w.coords_needs_refine,
                        o.name as owner_name, o.short_name as owner_short_name, COALESCE(uoc.color, o.color) as owner_color,
                        ot.name as type_name, ot.color as type_color,
                        ok.code as kind_code, ok.name as kind_name,
@@ -271,7 +278,8 @@ class WellController extends BaseController
 
         $data = $this->request->only([
             'owner_id', 'type_id', 'kind_id', 'status_id',
-            'depth', 'material', 'installation_date', 'notes'
+            'depth', 'material', 'installation_date', 'notes',
+            'coords_needs_refine'
         ]);
 
         // Формирование номера:
@@ -304,12 +312,15 @@ class WellController extends BaseController
         );
 
         // Убедиться, что все необязательные поля присутствуют (даже если null)
-        $optionalFields = ['depth', 'material', 'installation_date', 'notes'];
+        $optionalFields = ['depth', 'material', 'installation_date', 'notes', 'coords_needs_refine'];
         foreach ($optionalFields as $field) {
             if (!array_key_exists($field, $data)) {
                 $data[$field] = null;
             }
         }
+
+        // normalize checkbox
+        $data['coords_needs_refine'] = !empty($data['coords_needs_refine']) && (string) $data['coords_needs_refine'] !== '0';
 
         // Координаты - либо WGS84, либо МСК86
         $longitude = $this->request->input('longitude');
@@ -332,10 +343,10 @@ class WellController extends BaseController
             if ($longitude && $latitude) {
                 // WGS84 -> автоматически пересчитается в МСК86 триггером
                 $sql = "INSERT INTO wells (number, geom_wgs84, owner_id, type_id, kind_id, status_id, 
-                                           depth, material, installation_date, notes, created_by, updated_by)
+                                           coords_needs_refine, depth, material, installation_date, notes, created_by, updated_by)
                         VALUES (:number, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), 
                                 :owner_id, :type_id, :kind_id, :status_id,
-                                :depth, :material, :installation_date, :notes, :created_by, :updated_by)
+                                :coords_needs_refine, :depth, :material, :installation_date, :notes, :created_by, :updated_by)
                         RETURNING id";
                 $data['lon'] = $longitude;
                 $data['lat'] = $latitude;
@@ -347,12 +358,12 @@ class WellController extends BaseController
                             SELECT ST_SetSRID(ST_MakePoint(:x, :y), 200004) as msk86_point
                         )
                         INSERT INTO wells (number, geom_wgs84, geom_msk86, owner_id, type_id, kind_id, status_id,
-                                           depth, material, installation_date, notes, created_by, updated_by)
+                                           coords_needs_refine, depth, material, installation_date, notes, created_by, updated_by)
                         SELECT :number, 
                                ST_Transform(msk86_point, 4326),
                                msk86_point,
                                :owner_id, :type_id, :kind_id, :status_id,
-                               :depth, :material, :installation_date, :notes, :created_by, :updated_by
+                               :coords_needs_refine, :depth, :material, :installation_date, :notes, :created_by, :updated_by
                         FROM geom_point
                         RETURNING id";
                 $data['x'] = $xMsk86;
@@ -426,9 +437,14 @@ class WellController extends BaseController
         // Требование: при смене собственника должен меняться код собственника в номере.
         $data = $this->request->only([
             'owner_id', 'type_id', 'kind_id', 'status_id',
-            'depth', 'material', 'installation_date', 'notes'
+            'depth', 'material', 'installation_date', 'notes',
+            'coords_needs_refine'
         ]);
         $data = array_filter($data, fn($v) => $v !== null);
+
+        if (array_key_exists('coords_needs_refine', $data)) {
+            $data['coords_needs_refine'] = !empty($data['coords_needs_refine']) && (string) $data['coords_needs_refine'] !== '0';
+        }
 
         // Пересобираем номер при необходимости (owner/type/suffix)
         $oldNumber = (string) ($oldWell['number'] ?? '');
