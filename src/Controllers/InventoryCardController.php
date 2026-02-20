@@ -354,6 +354,49 @@ class InventoryCardController extends BaseController
         ]);
     }
 
+    /**
+     * POST /api/inventory/recalculate-unaccounted
+     * Пересчёт поля inventory_summary.unaccounted_cables по текущим кабелям (без пересборки max_inventory_cables).
+     */
+    public function recalculateUnaccounted(): void
+    {
+        if (!(Auth::isAdmin() || Auth::canWrite())) {
+            Response::error('Недостаточно прав', 403);
+        }
+
+        try {
+            $updated = $this->recalculateUnaccountedInternal();
+            try { $this->log('inventory_recalc_unaccounted', 'inventory_summary', null, null, ['updated' => $updated]); } catch (\Throwable $e) {}
+            Response::success(['updated' => $updated], 'Неучтенные кабели пересчитаны');
+        } catch (\Throwable $e) {
+            Response::error('Ошибка пересчёта неучтенных кабелей', 500);
+        }
+    }
+
+    private function recalculateUnaccountedInternal(): int
+    {
+        try {
+            $stmt = $this->db->query(
+                "WITH actual AS (
+                    SELECT cd.id as direction_id, COUNT(DISTINCT crc.cable_id)::int as actual_cables
+                    FROM channel_directions cd
+                    LEFT JOIN cable_channels cc ON cc.direction_id = cd.id
+                    LEFT JOIN cable_route_channels crc ON crc.cable_channel_id = cc.id
+                    GROUP BY cd.id
+                )
+                UPDATE inventory_summary s
+                SET unaccounted_cables = (s.max_inventory_cables - COALESCE(a.actual_cables, 0))::int,
+                    updated_at = NOW()
+                FROM actual a
+                WHERE a.direction_id = s.direction_id"
+            );
+            return (int) ($stmt ? $stmt->rowCount() : 0);
+        } catch (\Throwable $e) {
+            // если таблицы нет или миграции не применены — обновлять нечего
+            return 0;
+        }
+    }
+
     private function rebuildInventorySummary(): void
     {
         // Полная пересборка: truncate + insert

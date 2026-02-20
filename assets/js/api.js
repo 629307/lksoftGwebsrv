@@ -874,5 +874,8 @@ const API = {
         geojson(params = {}) {
             return API.get('/inventory/geojson', params);
         },
+        recalculateUnaccounted() {
+            return API.post('/inventory/recalculate-unaccounted', {});
+        },
     },
 };

@@ -264,6 +264,7 @@ $router->delete('/api/inventory-cards/attachments/{id}', [InventoryAttachmentCon
 
 // Слой карты: GeoJSON направлений с данными инвентаризации
 $router->get('/api/inventory/geojson', [InventoryCardController::class, 'directionsGeojson'], ['auth']);
+$router->post('/api/inventory/recalculate-unaccounted', [InventoryCardController::class, 'recalculateUnaccounted'], ['auth']);
 
 // Столбики
 $router->get('/api/marker-posts', [MarkerPostController::class, 'index'], ['auth']);

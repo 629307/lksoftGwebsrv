@@ -389,6 +389,7 @@ class UnifiedCableController extends BaseController
         $user = Auth::user();
         $data['created_by'] = $user['id'];
         $data['updated_by'] = $user['id'];
+        $isDuct = ($objectType['code'] === 'cable_duct');
 
         try {
             $this->db->beginTransaction();
@@ -515,10 +516,37 @@ class UnifiedCableController extends BaseController
 
             $this->log('create', 'cables', $id, null, $cable);
 
+            // Автопересчёт "неучтенных кабелей" (инвентаризация) после создания duct-кабеля
+            if ($isDuct) {
+                $this->recalculateInventoryUnaccountedBestEffort();
+            }
+
             Response::success($cable, 'Кабель создан', 201);
         } catch (\PDOException $e) {
             $this->db->rollback();
             throw $e;
+        }
+    }
+
+    private function recalculateInventoryUnaccountedBestEffort(): void
+    {
+        try {
+            $this->db->query(
+                "WITH actual AS (
+                    SELECT cd.id as direction_id, COUNT(DISTINCT crc.cable_id)::int as actual_cables
+                    FROM channel_directions cd
+                    LEFT JOIN cable_channels cc ON cc.direction_id = cd.id
+                    LEFT JOIN cable_route_channels crc ON crc.cable_channel_id = cc.id
+                    GROUP BY cd.id
+                )
+                UPDATE inventory_summary s
+                SET unaccounted_cables = (s.max_inventory_cables - COALESCE(a.actual_cables, 0))::int,
+                    updated_at = NOW()
+                FROM actual a
+                WHERE a.direction_id = s.direction_id"
+            );
+        } catch (\Throwable $e) {
+            // best-effort: если инвентаризация не настроена/таблицы нет — игнорируем
         }
     }
 

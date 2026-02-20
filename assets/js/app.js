@@ -503,6 +503,7 @@ const App = {
         // Кнопки добавления
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
         document.getElementById('btn-find-clones')?.addEventListener('click', () => this.findWellClones());
+        document.getElementById('btn-recalc-inventory-unaccounted')?.addEventListener('click', () => this.recalculateInventoryUnaccounted());
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
         document.getElementById('btn-export').addEventListener('click', () => this.exportObjects());
         document.getElementById('btn-recalc-cable-lengths')?.addEventListener('click', () => this.recalculateCableLengths());
@@ -1357,6 +1358,8 @@ const App = {
         }
         // Кнопка "Пересчитать длины" — только для вкладки "Кабели"
         document.getElementById('btn-recalc-cable-lengths')?.classList.toggle('hidden', tab !== 'unified_cables' || !this.canWrite());
+        // Кнопка "Пересчитать неучтенные" — только для "Колодцы"
+        document.getElementById('btn-recalc-inventory-unaccounted')?.classList.toggle('hidden', tab !== 'wells' || !this.canWrite());
         // Кнопка "Найти клоны" — только для "Колодцы"
         document.getElementById('btn-find-clones')?.classList.toggle('hidden', tab !== 'wells');
         // Чекбоксы "Колодцы ..." — только для "Колодцы"
@@ -1985,6 +1988,32 @@ const App = {
             const cnt = meta?.cables_total ?? meta?.updated ?? null;
             this.notify(`Длины пересчитаны${cnt !== null ? ` (кабелей: ${cnt})` : ''}`, 'success');
             // Обновим список и суммы
+            this.loadObjects();
+            try { MapManager.loadAllLayers?.(); } catch (_) {}
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка пересчёта', 'error');
+        }
+    },
+
+    async recalculateInventoryUnaccounted() {
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (this.currentTab !== 'wells') {
+            this.switchTab('wells');
+        }
+        if (!confirm('Пересчитать неучтенные кабели (Инвентаризация) по текущим кабелям в направлениях?')) return;
+        try {
+            this.notify('Пересчёт неучтенных кабелей...', 'info');
+            const resp = await API.inventory.recalculateUnaccounted();
+            if (resp?.success === false) {
+                this.notify(resp?.message || 'Ошибка пересчёта', 'error');
+                return;
+            }
+            const meta = resp?.data || resp || {};
+            const cnt = meta?.updated ?? null;
+            this.notify(`Неучтенные пересчитаны${cnt !== null ? ` (направлений: ${cnt})` : ''}`, 'success');
             this.loadObjects();
             try { MapManager.loadAllLayers?.(); } catch (_) {}
         } catch (e) {
