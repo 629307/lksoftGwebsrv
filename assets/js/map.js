@@ -445,6 +445,11 @@ const MapManager = {
                 this.map.createPane('inventoryLabelPane');
                 this.map.getPane('inventoryLabelPane').style.zIndex = '395';
             }
+            // Инпуты режима инвентаризации должны быть поверх всех слоёв (выше направлений/подсказок/попапов)
+            if (!this.map.getPane('inventoryInputPane')) {
+                this.map.createPane('inventoryInputPane');
+                this.map.getPane('inventoryInputPane').style.zIndex = '900';
+            }
         } catch (_) {}
 
         // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
@@ -803,7 +808,8 @@ const MapManager = {
                     </div>
                 `;
                 const marker = L.marker(latlng, {
-                    pane: 'inventoryLabelPane',
+                    pane: 'inventoryInputPane',
+                    zIndexOffset: 1000,
                     icon: L.divIcon({ className: 'inv-dir-input', html, iconSize: null }),
                     interactive: true,
                     keyboard: false,
