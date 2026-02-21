@@ -878,4 +878,16 @@ const API = {
             return API.post('/inventory/recalculate-unaccounted', {});
         },
     },
+
+    // ========================
+    // Предполагаемые кабели (3 варианта)
+    // ========================
+    assumedCables: {
+        rebuild() {
+            return API.post('/assumed-cables/rebuild', {});
+        },
+        geojson(variantNo = 1) {
+            return API.get('/assumed-cables/geojson', { variant: variantNo });
+        },
+    },
 };

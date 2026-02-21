@@ -101,6 +101,9 @@ const MapManager = {
     _inventoryDirectionsCache: new Map(), // direction_id -> { number, start/end, ... }
     _inventoryCablesPopupCache: new Map(), // direction_id -> html
 
+    // Предполагаемые кабели (слой)
+    assumedCablesVariantNo: 1,
+
     // Цвета для слоёв
     colors: {
         wells: '#fa00fa',
@@ -109,6 +112,7 @@ const MapManager = {
         groundCables: '#551b1b',
         aerialCables: '#009dff',
         ductCables: '#00bd26',
+        assumedCables: '#a855f7',
     },
 
     // Цвета статусов
@@ -428,6 +432,7 @@ const MapManager = {
             wells: L.featureGroup().addTo(this.map),
             channels: L.featureGroup().addTo(this.map),
             inventory: L.featureGroup().addTo(this.map),
+            assumedCables: L.featureGroup().addTo(this.map),
             markers: L.featureGroup().addTo(this.map),
             groundCables: L.featureGroup().addTo(this.map),
             aerialCables: L.featureGroup().addTo(this.map),
@@ -449,6 +454,12 @@ const MapManager = {
             if (!this.map.getPane('inventoryInputPane')) {
                 this.map.createPane('inventoryInputPane');
                 this.map.getPane('inventoryInputPane').style.zIndex = '900';
+            }
+            if (!this.map.getPane('assumedCablesPane')) {
+                this.map.createPane('assumedCablesPane');
+                this.map.getPane('assumedCablesPane').style.zIndex = '410';
+                // не должен перехватывать клики по направлениям/кабелям
+                this.map.getPane('assumedCablesPane').style.pointerEvents = 'none';
             }
         } catch (_) {}
 
@@ -1192,6 +1203,13 @@ const MapManager = {
                 await this.loadInventoryLayer?.();
             }
         } catch (_) {}
+
+        // Если включён слой предполагаемых кабелей — обновляем его
+        try {
+            if (this.map && this.layers?.assumedCables && this.map.hasLayer(this.layers.assumedCables)) {
+                await this.loadAssumedCablesLayer?.();
+            }
+        } catch (_) {}
     },
 
     /**
@@ -1532,6 +1550,50 @@ const MapManager = {
 
     toggleOwnersLegend() {
         this.setOwnersLegendEnabled(!this.ownersLegendEnabled);
+    },
+
+    async loadAssumedCablesLayer(variantNo = null) {
+        try {
+            const v0 = (variantNo === null || variantNo === undefined)
+                ? (this.assumedCablesVariantNo || 1)
+                : variantNo;
+            const v = [1, 2, 3].includes(Number(v0)) ? Number(v0) : 1;
+            this.assumedCablesVariantNo = v;
+
+            const resp = await API.assumedCables.geojson(v);
+            if (resp?.success === false) return;
+            if (!resp?.type || resp.type !== 'FeatureCollection' || !Array.isArray(resp.features)) return;
+
+            this.layers.assumedCables?.clearLayers?.();
+            const features = resp.features.filter(f => f && f.geometry && f.geometry.type);
+            if (!features.length) return;
+
+            const baseWeight = Math.max(1, this.getDirectionLineWeight());
+            const pickColor = (props) => {
+                const owners = Array.isArray(props?.owners) ? props.owners : [];
+                if (owners.length === 1) {
+                    const c = (owners[0]?.owner_color || '').toString().trim();
+                    if (c) return c;
+                }
+                return this.colors.assumedCables || '#a855f7';
+            };
+
+            L.geoJSON({ type: 'FeatureCollection', features }, {
+                pane: 'assumedCablesPane',
+                interactive: false,
+                style: (feature) => {
+                    const p = feature?.properties || {};
+                    return {
+                        color: pickColor(p),
+                        weight: baseWeight + 2,
+                        opacity: 0.85,
+                        dashArray: '6, 6',
+                    };
+                },
+            }).addTo(this.layers.assumedCables);
+        } catch (e) {
+            console.error('Ошибка загрузки предполагаемых кабелей:', e);
+        }
     },
 
     /**
@@ -2690,12 +2752,19 @@ const MapManager = {
                     // при включении слоя инвентаризации — загружаем его содержимое
                     this.loadInventoryLayer?.();
                 }
+                if (layerName === 'assumedCables') {
+                    // при включении слоя предполагаемых кабелей — загружаем его содержимое
+                    this.loadAssumedCablesLayer?.();
+                }
             } else {
                 this.map.removeLayer(layer);
                 if (layerName === 'inventory') {
                     try { this.layers.inventory?.clearLayers?.(); } catch (_) {}
                     try { this.inventoryLabelsLayer?.clearLayers?.(); } catch (_) {}
                     try { if (this.inventoryLabelsLayer) this.map.removeLayer(this.inventoryLabelsLayer); } catch (_) {}
+                }
+                if (layerName === 'assumedCables') {
+                    try { this.layers.assumedCables?.clearLayers?.(); } catch (_) {}
                 }
             }
         }

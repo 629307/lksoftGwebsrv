@@ -494,6 +494,29 @@ a:hover {
     color: white;
 }
 
+.layer-inline-controls {
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.layer-inline-controls .layer-inline-btn {
+    margin-left: 0;
+}
+
+.layer-inline-select {
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    padding: 0 6px;
+    font-size: 12px;
+    line-height: 26px;
+}
+
 /* Filters */
 .filters-panel .form-group {
     margin-bottom: 12px;

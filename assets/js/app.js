@@ -162,6 +162,19 @@ const App = {
         // Подтягиваем цвета типов объектов (слои + отрисовка на карте)
         this.refreshObjectTypeColors().catch(() => {});
 
+        // Предполагаемые кабели: вариант (localStorage) + доступность кнопки пересчёта
+        try {
+            const rawV = localStorage.getItem('igs_assumed_cables_variant');
+            const v = parseInt(rawV || '1', 10);
+            const vv = [1, 2, 3].includes(v) ? v : 1;
+            MapManager.assumedCablesVariantNo = vv;
+            const sel = document.getElementById('assumed-cables-variant');
+            if (sel) sel.value = String(vv);
+        } catch (_) {}
+        try {
+            document.getElementById('btn-assumed-cables-rebuild')?.classList?.toggle('hidden', !this.canWrite());
+        } catch (_) {}
+
         // Применяем начальную видимость слоёв (с учётом персональных настроек пользователя)
         this._suppressLayerPrefSave = true;
         this.applyLayerPreferencesFromSettings();
@@ -282,6 +295,7 @@ const App = {
             wells: 'layer-wells',
             channels: 'layer-channels',
             inventory: 'layer-inventory',
+            assumedCables: 'layer-assumed-cables',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -303,6 +317,7 @@ const App = {
             wells: 'layer-wells',
             channels: 'layer-channels',
             inventory: 'layer-inventory',
+            assumedCables: 'layer-assumed-cables',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -412,6 +427,32 @@ const App = {
                 MapManager.toggleInventoryUnaccountedLabels?.();
                 e.currentTarget?.classList?.toggle('active', !!MapManager.inventoryUnaccountedLabelsEnabled);
             } catch (_) {}
+        });
+
+        // Предполагаемые кабели: выбор варианта (1/2/3) + пересчёт
+        const assumedVariant = document.getElementById('assumed-cables-variant');
+        if (assumedVariant) {
+            assumedVariant.addEventListener('click', (e) => {
+                try { e.stopPropagation(); } catch (_) {}
+            });
+            assumedVariant.addEventListener('change', (e) => {
+                try { e.stopPropagation(); } catch (_) {}
+                const v = parseInt(e?.target?.value || '1', 10);
+                const vv = [1, 2, 3].includes(v) ? v : 1;
+                MapManager.assumedCablesVariantNo = vv;
+                try { localStorage.setItem('igs_assumed_cables_variant', String(vv)); } catch (_) {}
+                try {
+                    const cb = document.getElementById('layer-assumed-cables');
+                    if (cb?.checked) MapManager.loadAssumedCablesLayer?.();
+                } catch (_) {}
+            });
+        }
+        document.getElementById('btn-assumed-cables-rebuild')?.addEventListener('click', (e) => {
+            try {
+                e.preventDefault();
+                e.stopPropagation();
+            } catch (_) {}
+            this.rebuildAssumedCables();
         });
 
         // Фильтры (авто-применение при выборе)
@@ -1148,6 +1189,7 @@ const App = {
             'layer-wells': 'wells',
             'layer-channels': 'channels',
             'layer-inventory': 'inventory',
+            'layer-assumed-cables': 'assumedCables',
             'layer-markers': 'markers',
             'layer-ground-cables': 'groundCables',
             'layer-aerial-cables': 'aerialCables',
@@ -1176,6 +1218,7 @@ const App = {
             set('layer-wells', 'wells', true);
             set('layer-inventory', 'inventory', true);
             set('layer-channels', 'channels', false);
+            set('layer-assumed-cables', 'assumedCables', false);
             set('layer-markers', 'markers', false);
             set('layer-ground-cables', 'groundCables', false);
             set('layer-aerial-cables', 'aerialCables', false);
@@ -1275,6 +1318,7 @@ const App = {
             setLayer('layer-duct-cables', 'ductCables');
             unsetLayer('layer-inventory', 'inventory');
             unsetLayer('layer-channels', 'channels');
+            unsetLayer('layer-assumed-cables', 'assumedCables');
             unsetLayer('layer-markers', 'markers');
         }
         
@@ -1310,6 +1354,7 @@ const App = {
         setLayer('layer-wells', 'wells', true);
         setLayer('layer-channels', 'channels', true);
         setLayer('layer-inventory', 'inventory', false);
+        setLayer('layer-assumed-cables', 'assumedCables', false);
         setLayer('layer-markers', 'markers', true);
         setLayer('layer-ground-cables', 'groundCables', false);
         setLayer('layer-aerial-cables', 'aerialCables', false);
@@ -2016,6 +2061,31 @@ const App = {
             this.notify(`Неучтенные пересчитаны${cnt !== null ? ` (направлений: ${cnt})` : ''}`, 'success');
             this.loadObjects();
             try { MapManager.loadAllLayers?.(); } catch (_) {}
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка пересчёта', 'error');
+        }
+    },
+
+    async rebuildAssumedCables() {
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (!confirm('Пересчитать предполагаемые кабели (варианты 1/2/3) по данным инвентаризации?')) return;
+        try {
+            this.notify('Пересчёт предполагаемых кабелей...', 'info');
+            const resp = await API.assumedCables.rebuild();
+            if (resp?.success === false) {
+                this.notify(resp?.message || 'Ошибка пересчёта', 'error');
+                return;
+            }
+            this.notify('Предполагаемые кабели пересчитаны', 'success');
+            try {
+                const cb = document.getElementById('layer-assumed-cables');
+                if (cb?.checked) {
+                    MapManager.loadAssumedCablesLayer?.();
+                }
+            } catch (_) {}
         } catch (e) {
             this.notify(e?.message || 'Ошибка пересчёта', 'error');
         }
