@@ -121,6 +121,7 @@ use App\Controllers\DbBackupController;
 use App\Controllers\AuditLogController;
 use App\Controllers\InventoryCardController;
 use App\Controllers\InventoryAttachmentController;
+use App\Controllers\AssumedCableController;
 
 $router = new Router();
 $request = new Request();
@@ -265,6 +266,12 @@ $router->delete('/api/inventory-cards/attachments/{id}', [InventoryAttachmentCon
 // Слой карты: GeoJSON направлений с данными инвентаризации
 $router->get('/api/inventory/geojson', [InventoryCardController::class, 'directionsGeojson'], ['auth']);
 $router->post('/api/inventory/recalculate-unaccounted', [InventoryCardController::class, 'recalculateUnaccounted'], ['auth']);
+
+// ========================
+// Предполагаемые кабели (3 варианта)
+// ========================
+$router->post('/api/assumed-cables/rebuild', [AssumedCableController::class, 'rebuild'], ['auth']);
+$router->get('/api/assumed-cables/geojson', [AssumedCableController::class, 'geojson'], ['auth']);
 
 // Столбики
 $router->get('/api/marker-posts', [MarkerPostController::class, 'index'], ['auth']);
