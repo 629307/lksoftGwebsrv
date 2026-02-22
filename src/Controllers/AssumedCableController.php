@@ -515,7 +515,7 @@ class AssumedCableController extends BaseController
                             (scenario_id, owner_id, confidence, start_well_id, end_well_id, length_m, geom_wgs84, evidence_json)
                             VALUES
                             (:sid, :oid, :conf, :sw, :ew, :len,
-                             CASE WHEN :geom IS NULL OR :geom = '' THEN NULL ELSE ST_SetSRID(ST_GeomFromGeoJSON(:geom), 4326) END,
+                             ST_SetSRID(ST_GeomFromGeoJSON(NULLIF(:geom, '')), 4326),
                              :ev::jsonb)
                             RETURNING id";
                     $stmt = $this->db->query($sql, [
@@ -566,6 +566,13 @@ class AssumedCableController extends BaseController
             $this->db->commit();
         } catch (\Throwable $e) {
             $this->db->rollback();
+            try {
+                $this->logError('Assumed cables rebuild failed', [
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+            } catch (\Throwable $ee) {}
             Response::error('Ошибка пересчёта предполагаемых кабелей', 500);
         }
 
@@ -742,11 +749,17 @@ class AssumedCableController extends BaseController
         );
 
         $summary = $this->db->fetch(
-            "SELECT
-                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid AND owner_id IS NOT NULL) AS used_unaccounted,
-                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid) AS assumed_total,
+            "WITH r AS (
+                SELECT owner_id
+                FROM assumed_cable_routes
+                WHERE scenario_id = :sid
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN r.owner_id IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS used_unaccounted,
+                COUNT(*)::int AS assumed_total,
                 (SELECT COALESCE(SUM(unaccounted_cables), 0)::int FROM inventory_summary WHERE unaccounted_cables > 0) AS total_unaccounted,
-                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid) AS rows",
+                COUNT(*)::int AS rows
+            FROM r",
             ['sid' => $scenarioId]
         ) ?? [];
 
