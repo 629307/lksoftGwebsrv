@@ -1720,13 +1720,14 @@ const MapManager = {
     ensureRulerCursorLabel(latlng, html) {
         try {
             const icon = L.divIcon({
-                className: 'ruler-cursor-label',
+                className: 'ruler-div-icon ruler-cursor-label',
                 html: `<div style="transform: translate(-50%, -110%);">
                     <div style="background: rgba(255,255,255,0.9); color:#111; padding:2px 6px; border-radius:6px; border:1px solid rgba(0,0,0,0.2); font-size:12px; font-weight:700; white-space:nowrap; text-align:center;">
                         ${html}
                     </div>
                 </div>`,
                 iconAnchor: [0, 0],
+                iconSize: null,
             });
             if (!this.rulerCursorLabel) {
                 this.rulerCursorLabel = L.marker(latlng, { icon, interactive: false, keyboard: false, pane: 'rulerPane' });
@@ -1776,7 +1777,10 @@ const MapManager = {
             this.ensureRulerCursorLabel(latlng, this.formatRulerDistance(tailMeters));
         } else {
             const total = sumBuilt + tailMeters;
-            this.ensureRulerCursorLabel(latlng, `${this.formatRulerDistance(total)}<br><span style="font-weight:600; color:#444;">${this.formatRulerDistance(sumBuilt)}</span>`);
+            this.ensureRulerCursorLabel(
+                latlng,
+                `${this.formatRulerDistance(total)}<br><span style="font-weight:800; color:#ef4444;">${this.formatRulerDistance(sumBuilt)}</span>`
+            );
         }
     },
 
@@ -1803,13 +1807,14 @@ const MapManager = {
 
         const [lat, lng] = this.formatRulerCoords(latlng);
         const coordIcon = L.divIcon({
-            className: 'ruler-point-coords',
+            className: 'ruler-div-icon ruler-point-coords',
             html: `<div style="transform: translate(8px, -8px);">
                 <div style="background: rgba(255,255,255,0.85); color:#111; padding:2px 6px; border-radius:6px; border:1px solid rgba(0,0,0,0.15); font-size:11px; font-weight:700; white-space:nowrap;">
                     ${lat}<br>${lng}
                 </div>
             </div>`,
             iconAnchor: [0, 0],
+            iconSize: null,
         });
         const label = L.marker(latlng, { icon: coordIcon, interactive: false, keyboard: false, pane: 'rulerPane' }).addTo(this.rulerLayer);
 
@@ -1832,13 +1837,14 @@ const MapManager = {
             const { pos, angle } = this.rulerMidpointAndAngle(prev, latlng);
             const distText = this.formatRulerDistance(meters);
             const segIcon = L.divIcon({
-                className: 'ruler-seg-label',
+                className: 'ruler-div-icon ruler-seg-label',
                 html: `<div style="transform: translate(-50%, -50%) rotate(${angle}deg); transform-origin:center;">
                     <div style="background: rgba(255,255,255,0.85); color:#111; padding:2px 6px; border-radius:6px; border:1px solid rgba(0,0,0,0.15); font-size:12px; font-weight:800; white-space:nowrap;">
                         ${distText}
                     </div>
                 </div>`,
                 iconAnchor: [0, 0],
+                iconSize: null,
             });
             const segLabel = L.marker(pos, { icon: segIcon, interactive: false, keyboard: false, pane: 'rulerPane' }).addTo(this.rulerLayer);
             this.rulerFixedSegments.push({ line, label: segLabel, meters });

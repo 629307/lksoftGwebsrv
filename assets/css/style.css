@@ -390,6 +390,13 @@ body.sidebar-resizing {
     cursor: col-resize;
 }
 
+/* Map ruler: make div icons autosize (avoid 12x12 clipping) */
+.ruler-div-icon {
+    background: transparent !important;
+    border: none !important;
+    overflow: visible !important;
+}
+
 .sidebar-nav {
     display: flex;
     flex-direction: column;
