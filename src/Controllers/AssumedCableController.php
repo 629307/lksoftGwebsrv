@@ -500,7 +500,7 @@ class AssumedCableController extends BaseController
                 return $bestPath;
             };
 
-            $buildAllComponents = function(array $dirs, array $rem) use ($weightFor, $variantNo): array {
+            $buildAllComponents = function(array $dirs, array $rem) use ($weightFor, $variantNo, $bestPathForEdges): array {
                 // Компоненты считаем по ВСЕЙ сети направлений (а не только по rem>0),
                 // чтобы приоритет "магистрального" графа учитывал полную топологию.
                 $adj = []; // wellId => [ [toWellId, dirId], ...]
@@ -554,10 +554,26 @@ class AssumedCableController extends BaseController
                         $sumAll += (float) $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
                     }
 
+                    // "Магистраль" компоненты: путь максимальной длины в топологии компоненты (на всей сети, не по rem).
+                    $edgesAll = [];
+                    foreach ($dirIdsAll as $dirId) {
+                        $dirId = (int) $dirId;
+                        $d = $dirs[$dirId] ?? null;
+                        if (!$d) continue;
+                        $a = (int) ($d['a'] ?? 0);
+                        $b = (int) ($d['b'] ?? 0);
+                        if ($a <= 0 || $b <= 0) continue;
+                        $w = (float) $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
+                        $edgesAll[] = ['dir' => $dirId, 'a' => $a, 'b' => $b, 'w' => $w];
+                    }
+                    $backbone = $bestPathForEdges($edgesAll);
+                    $backboneDirIds = array_values(array_map('intval', (array) ($backbone['direction_ids'] ?? [])));
+
                     $components[] = [
                         'dir_ids_all' => $dirIdsAll,
                         'dir_ids_rem' => $dirIdsRem,
                         'weight' => $sumAll,
+                        'backbone_dir_ids' => $backboneDirIds,
                     ];
                 }
 
@@ -570,6 +586,36 @@ class AssumedCableController extends BaseController
             $components = $buildAllComponents($dirs, $rem);
 
             foreach ($components as $c) {
+                // 1) Сначала ищем самый длинный кабель внутри "самого длинного графа" по его магистрали (backbone),
+                // чтобы не "склеивать" отводы через магистраль в один маршрут.
+                $backboneDirIds = array_values(array_map('intval', (array) ($c['backbone_dir_ids'] ?? [])));
+                if ($backboneDirIds) {
+                    while (true) {
+                        $edges = $buildEdges($rem, $backboneDirIds);
+                        if (!$edges) break;
+                        $bestPath = $bestPathForEdges($edges);
+                        if ($bestPath === null) {
+                            // fallback: single best remaining edge on backbone
+                            $e = $edges[0] ?? null;
+                            if (!$e) break;
+                            $bestPath = [
+                                'start_well_id' => (int) ($e['a'] ?? 0),
+                                'end_well_id' => (int) ($e['b'] ?? 0),
+                                'direction_ids' => [(int) ($e['dir'] ?? 0)],
+                                'weight' => (float) ($e['w'] ?? 0),
+                            ];
+                        }
+                        if (!$bestPath || empty($bestPath['direction_ids'])) break;
+                        foreach ($bestPath['direction_ids'] as $dirId) {
+                            $dirId = (int) $dirId;
+                            if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
+                            $rem[$dirId] = (int) $rem[$dirId] - 1;
+                        }
+                        $routes[] = $bestPath;
+                    }
+                }
+
+                // 2) Затем добираем оставшийся ресурс по rem>0 внутри этой же компоненты (отводы).
                 $dirIdsRem = $c['dir_ids_rem'] ?? [];
                 if (!$dirIdsRem) continue;
                 while (true) {
