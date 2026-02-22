@@ -21,7 +21,7 @@ class AssumedCableController extends BaseController
         // Если таблиц нет (миграция не применена) — не падать 500.
         try {
             $this->db->fetch("SELECT 1 FROM assumed_cable_scenarios LIMIT 1");
-            $this->db->fetch("SELECT 1 FROM assumed_cables LIMIT 1");
+            $this->db->fetch("SELECT 1 FROM assumed_cable_routes LIMIT 1");
         } catch (\Throwable $e) {
             Response::success(null, 'Таблицы предполагаемых кабелей отсутствуют (примените миграции)', 200);
         }
@@ -29,86 +29,71 @@ class AssumedCableController extends BaseController
         $user = Auth::user();
         $userId = (int) ($user['id'] ?? 0);
 
-        // 1) Направления с неучтёнными кабелями
-        $edges = $this->db->fetchAll(
-            "SELECT s.direction_id,
-                    s.max_inventory_cables,
-                    s.unaccounted_cables,
-                    cd.number AS direction_number,
+        // 1) Граф направлений (вся сеть) + ёмкости (неучтенные)
+        $dirRows = $this->db->fetchAll(
+            "SELECT cd.id,
+                    cd.number,
                     cd.start_well_id,
-                    cd.end_well_id
-             FROM inventory_summary s
-             JOIN channel_directions cd ON cd.id = s.direction_id
-             WHERE s.unaccounted_cables > 0
-               AND cd.start_well_id IS NOT NULL
+                    cd.end_well_id,
+                    COALESCE(cd.length_m, ROUND(ST_Length(cd.geom_wgs84::geography)::numeric, 2), 0)::numeric AS length_m,
+                    ST_AsGeoJSON(cd.geom_wgs84)::text AS geom
+             FROM channel_directions cd
+             WHERE cd.start_well_id IS NOT NULL
                AND cd.end_well_id IS NOT NULL
-             ORDER BY cd.number"
+               AND cd.geom_wgs84 IS NOT NULL"
         );
 
-        // Нечего строить — очистим существующее и вернём OK
-        if (!$edges) {
+        $dirs = []; // dirId => {a,b,length_m,geom_coords,number}
+        foreach ($dirRows as $r) {
+            $id = (int) ($r['id'] ?? 0);
+            $a = (int) ($r['start_well_id'] ?? 0);
+            $b = (int) ($r['end_well_id'] ?? 0);
+            if ($id <= 0 || $a <= 0 || $b <= 0) continue;
+            $geom = $r['geom'] ?? null;
+            $g = $geom ? json_decode((string) $geom, true) : null;
+            $coords = (is_array($g) && ($g['type'] ?? '') === 'LineString' && is_array($g['coordinates'] ?? null)) ? $g['coordinates'] : null;
+            if (!$coords || count($coords) < 2) continue;
+            $dirs[$id] = [
+                'id' => $id,
+                'number' => (string) ($r['number'] ?? ''),
+                'a' => $a,
+                'b' => $b,
+                'length_m' => (float) ($r['length_m'] ?? 0),
+                'coords' => $coords, // [[lng,lat],...]
+            ];
+        }
+
+        $capRows = $this->db->fetchAll("SELECT direction_id, unaccounted_cables FROM inventory_summary WHERE unaccounted_cables > 0");
+        $baseRem = []; // dirId => remaining capacity
+        $totalUnaccounted = 0;
+        foreach ($capRows as $r) {
+            $dirId = (int) ($r['direction_id'] ?? 0);
+            $u = (int) ($r['unaccounted_cables'] ?? 0);
+            if ($dirId <= 0 || $u <= 0) continue;
+            if (!isset($dirs[$dirId])) continue; // нет геометрии/направления
+            $baseRem[$dirId] = $u;
+            $totalUnaccounted += $u;
+        }
+
+        if ($totalUnaccounted <= 0 || !$baseRem) {
             $this->db->beginTransaction();
             try {
+                $this->db->query("DELETE FROM assumed_cable_routes");
+                $this->db->query("DELETE FROM assumed_cable_route_directions");
                 $this->db->query("DELETE FROM assumed_cables");
                 $this->db->query("DELETE FROM assumed_cable_scenarios");
                 $this->db->commit();
             } catch (\Throwable $e) {
                 $this->db->rollback();
             }
-            Response::success([
-                'variants' => [
-                    ['variant_no' => 1, 'direction_rows' => 0],
-                    ['variant_no' => 2, 'direction_rows' => 0],
-                    ['variant_no' => 3, 'direction_rows' => 0],
-                ],
-            ], 'Нет направлений с неучтёнными кабелями');
+            Response::success(['variants' => []], 'Нет направлений с неучтёнными кабелями');
         }
 
-        $edgeByDir = [];
-        $wellIds = [];
-        $totalUnaccounted = 0;
-        foreach ($edges as $r) {
-            $dirId = (int) $r['direction_id'];
-            $a = (int) $r['start_well_id'];
-            $b = (int) $r['end_well_id'];
-            $u = (int) $r['unaccounted_cables'];
-            if ($dirId <= 0 || $a <= 0 || $b <= 0 || $u <= 0) continue;
-            $edgeByDir[$dirId] = [
-                'dir_id' => $dirId,
-                'a' => $a,
-                'b' => $b,
-                'u' => $u,
-                'max_inv' => (int) ($r['max_inventory_cables'] ?? 0),
-                'direction_number' => (string) ($r['direction_number'] ?? ''),
-            ];
-            $wellIds[$a] = true;
-            $wellIds[$b] = true;
-            $totalUnaccounted += $u;
-        }
-
-        if (!$edgeByDir) {
-            Response::success(null, 'Нет корректных данных для построения', 200);
-        }
-
-        // 2) Справочник собственников (для имён/цветов)
-        $ownersRows = $this->db->fetchAll("SELECT id, code, name, color FROM owners ORDER BY id");
-        $ownersById = [];
-        foreach ($ownersRows as $o) {
-            $oid = (int) ($o['id'] ?? 0);
-            if ($oid <= 0) continue;
-            $ownersById[$oid] = [
-                'id' => $oid,
-                'code' => (string) ($o['code'] ?? ''),
-                'name' => (string) ($o['name'] ?? ''),
-                'color' => (string) ($o['color'] ?? ''),
-            ];
-        }
-
-        // 3) Тип "кабель в канализации" (для учёта существующих)
+        // 2) Тип "кабель в канализации" (для учёта существующих)
         $ductType = $this->db->fetch("SELECT id FROM object_types WHERE code = 'cable_duct' LIMIT 1");
         $ductTypeId = (int) ($ductType['id'] ?? 0);
 
-        // 4) Бирки по последней инвентарной карточке каждого колодца
+        // 3) Бирки по последней карточке колодца + существующие кабели в колодце (вычитаем)
         $tagCounts = []; // [wellId][ownerId] => int
         try {
             $tagRows = $this->db->fetchAll(
@@ -130,11 +115,8 @@ class AssumedCableController extends BaseController
                 if (!isset($tagCounts[$w])) $tagCounts[$w] = [];
                 $tagCounts[$w][$o] = $c;
             }
-        } catch (\Throwable $e) {
-            $tagCounts = [];
-        }
+        } catch (\Throwable $e) {}
 
-        // 5) Существующие кабели по колодцу и собственнику (объясняют часть бирок)
         $existingWellOwner = []; // [wellId][ownerId] => int
         if ($ductTypeId > 0) {
             try {
@@ -155,12 +137,24 @@ class AssumedCableController extends BaseController
                     if (!isset($existingWellOwner[$w])) $existingWellOwner[$w] = [];
                     $existingWellOwner[$w][$o] = $c;
                 }
-            } catch (\Throwable $e) {
-                $existingWellOwner = [];
+            } catch (\Throwable $e) {}
+        }
+
+        $supply0 = []; // [wellId][ownerId] => int
+        foreach ($tagCounts as $w => $byOwner) {
+            $w = (int) $w;
+            foreach ($byOwner as $o => $t) {
+                $o = (int) $o;
+                $t = (int) $t;
+                $e = (int) ($existingWellOwner[$w][$o] ?? 0);
+                $s = $t - $e;
+                if ($s <= 0) continue;
+                if (!isset($supply0[$w])) $supply0[$w] = [];
+                $supply0[$w][$o] = $s;
             }
         }
 
-        // 6) Собственники существующих кабелей на направлении (для варианта 3)
+        // 4) Реальные собственники по направлениям (фоллбек для варианта 3)
         $realDirOwners = []; // [directionId][ownerId] => int
         if ($ductTypeId > 0) {
             try {
@@ -182,386 +176,393 @@ class AssumedCableController extends BaseController
                     if (!isset($realDirOwners[$d])) $realDirOwners[$d] = [];
                     $realDirOwners[$d][$o] = $c;
                 }
-            } catch (\Throwable $e) {
-                $realDirOwners = [];
-            }
+            } catch (\Throwable $e) {}
         }
 
-        // 7) Supply по биркам: supply = max(0, tags - existingWellOwner)
-        $supply0 = []; // [wellId][ownerId] => int
-        foreach ($tagCounts as $w => $byOwner) {
-            $w = (int) $w;
-            foreach ($byOwner as $o => $cntTags) {
-                $o = (int) $o;
-                $t = (int) $cntTags;
-                if ($w <= 0 || $o <= 0 || $t <= 0) continue;
-                $e = (int) ($existingWellOwner[$w][$o] ?? 0);
-                $s = $t - $e;
-                if ($s <= 0) continue;
-                if (!isset($supply0[$w])) $supply0[$w] = [];
-                $supply0[$w][$o] = $s;
-            }
-        }
-
-        // 8) Построение 3 вариантов
-        $variants = [];
-
-        $buildVariant = function(int $variantNo) use ($edgeByDir, $supply0, $tagCounts, $existingWellOwner, $ownersById): array {
-            $rem = [];
-            foreach ($edgeByDir as $dirId => $e) {
-                $rem[$dirId] = (int) $e['u'];
-            }
-
-            // глубокая копия supply
-            $supply = [];
-            foreach ($supply0 as $w => $byOwner) {
-                $supply[$w] = $byOwner ? array_map(fn($v) => (int) $v, $byOwner) : [];
-            }
-
-            $alloc = []; // [dirId][ownerId|null] => int (null key handled separately)
-
-            $candidatesForEdge = function(array $edge) use (&$supply, $variantNo): array {
-                $a = (int) $edge['a'];
-                $b = (int) $edge['b'];
-                $ca = $supply[$a] ?? [];
-                $cb = $supply[$b] ?? [];
-
-                $owners = [];
-                if ($variantNo === 1) {
-                    foreach ($ca as $oid => $sa) {
-                        $oid = (int) $oid;
-                        if ($sa <= 0) continue;
-                        $sb = (int) ($cb[$oid] ?? 0);
-                        if ($sb <= 0) continue;
-                        $owners[$oid] = ['mode' => 'both'];
-                    }
-                    return $owners;
-                }
-
-                // variant 2/3 base: allow tags on one end (consumes only that end)
-                foreach ($ca as $oid => $sa) {
-                    $oid = (int) $oid;
-                    if ($sa <= 0) continue;
-                    $sb = (int) ($cb[$oid] ?? 0);
-                    if ($sb > 0) $owners[$oid] = ['mode' => 'both'];
-                    else $owners[$oid] = ['mode' => 'one_a'];
-                }
-                foreach ($cb as $oid => $sb) {
-                    $oid = (int) $oid;
-                    if ($sb <= 0) continue;
-                    if (isset($owners[$oid])) continue;
-                    $owners[$oid] = ['mode' => 'one_b'];
-                }
-                return $owners;
-            };
-
-            $availFor = function(array $edge, int $ownerId, string $mode) use (&$supply, $variantNo): int {
-                $a = (int) $edge['a'];
-                $b = (int) $edge['b'];
-                $sa = (int) ($supply[$a][$ownerId] ?? 0);
-                $sb = (int) ($supply[$b][$ownerId] ?? 0);
-                if ($mode === 'both') return min($sa, $sb);
-                if ($variantNo === 1) return 0;
-                if ($mode === 'one_a') return $sa;
-                if ($mode === 'one_b') return $sb;
-                return 0;
-            };
-
-            $consume = function(array $edge, int $ownerId, string $mode, int $k) use (&$supply, $variantNo): void {
-                if ($k <= 0) return;
-                $a = (int) $edge['a'];
-                $b = (int) $edge['b'];
-                if ($mode === 'both') {
-                    $supply[$a][$ownerId] = max(0, (int) ($supply[$a][$ownerId] ?? 0) - $k);
-                    $supply[$b][$ownerId] = max(0, (int) ($supply[$b][$ownerId] ?? 0) - $k);
-                    return;
-                }
-                if ($variantNo === 1) return;
-                if ($mode === 'one_a') {
-                    $supply[$a][$ownerId] = max(0, (int) ($supply[$a][$ownerId] ?? 0) - $k);
-                    return;
-                }
-                if ($mode === 'one_b') {
-                    $supply[$b][$ownerId] = max(0, (int) ($supply[$b][$ownerId] ?? 0) - $k);
-                    return;
-                }
-            };
-
-            // Forced allocations: edges with only 1 possible owner at the moment
-            while (true) {
-                $changed = false;
-                foreach ($edgeByDir as $dirId => $edge) {
-                    $dirId = (int) $dirId;
-                    if (($rem[$dirId] ?? 0) <= 0) continue;
-                    $cands = $candidatesForEdge($edge);
-                    if (!$cands) continue;
-                    // compute owners with avail>0
-                    $availOwners = [];
-                    foreach ($cands as $oid => $info) {
-                        $oid = (int) $oid;
-                        $a = $availFor($edge, $oid, (string) $info['mode']);
-                        if ($a <= 0) continue;
-                        $availOwners[$oid] = ['mode' => (string) $info['mode'], 'avail' => $a];
-                    }
-                    if (count($availOwners) !== 1) continue;
-                    $oid = (int) array_key_first($availOwners);
-                    $mode = (string) $availOwners[$oid]['mode'];
-                    $k = min((int) $rem[$dirId], (int) $availOwners[$oid]['avail']);
-                    if ($k <= 0) continue;
-                    if (!isset($alloc[$dirId])) $alloc[$dirId] = [];
-                    $alloc[$dirId][$oid] = (int) ($alloc[$dirId][$oid] ?? 0) + $k;
-                    $rem[$dirId] -= $k;
-                    $consume($edge, $oid, $mode, $k);
-                    $changed = true;
-                }
-                if (!$changed) break;
-            }
-
-            // Greedy: pick best (edge, owner) and allocate batch
-            $guard = 0;
-            while (true) {
-                $guard++;
-                if ($guard > 200000) break;
-
-                $best = null;
-                foreach ($edgeByDir as $dirId => $edge) {
-                    $dirId = (int) $dirId;
-                    $r = (int) ($rem[$dirId] ?? 0);
-                    if ($r <= 0) continue;
-                    $cands = $candidatesForEdge($edge);
-                    if (!$cands) continue;
-
-                    $candAvail = [];
-                    foreach ($cands as $oid => $info) {
-                        $oid = (int) $oid;
-                        $mode = (string) $info['mode'];
-                        $a = $availFor($edge, $oid, $mode);
-                        if ($a <= 0) continue;
-                        $candAvail[$oid] = ['mode' => $mode, 'avail' => $a];
-                    }
-                    if (!$candAvail) continue;
-
-                    $amb = count($candAvail);
-                    foreach ($candAvail as $oid => $info) {
-                        $oid = (int) $oid;
-                        $mode = (string) $info['mode'];
-                        $avail = (int) $info['avail'];
-                        $a = (int) $edge['a'];
-                        $b = (int) $edge['b'];
-                        $tagsA = (int) ($tagCounts[$a][$oid] ?? 0);
-                        $tagsB = (int) ($tagCounts[$b][$oid] ?? 0);
-                        $exA = (int) ($existingWellOwner[$a][$oid] ?? 0);
-                        $exB = (int) ($existingWellOwner[$b][$oid] ?? 0);
-                        $minSupply = ($mode === 'both') ? min((int) ($supply[$a][$oid] ?? 0), (int) ($supply[$b][$oid] ?? 0))
-                            : (($mode === 'one_a') ? (int) ($supply[$a][$oid] ?? 0) : (int) ($supply[$b][$oid] ?? 0));
-
-                        $modeBonus = ($mode === 'both') ? 3000 : 0;
-                        $uniqBonus = ($amb === 1) ? 5000 : 0;
-                        $support = ($tagsA + $tagsB) - ($exA + $exB);
-                        $support = max(0, $support);
-                        $score = $uniqBonus + $modeBonus + ($support * 10) + ($minSupply * 3) - ($amb * 5);
-                        if ($best === null || $score > $best['score']) {
-                            $best = [
-                                'dir_id' => $dirId,
-                                'edge' => $edge,
-                                'owner_id' => $oid,
-                                'mode' => $mode,
-                                'avail' => $avail,
-                                'score' => $score,
-                            ];
-                        }
-                    }
-                }
-
-                if ($best === null) break;
-
-                $dirId = (int) $best['dir_id'];
-                $oid = (int) $best['owner_id'];
-                $mode = (string) $best['mode'];
-                $edge = (array) $best['edge'];
-                $k = min((int) ($rem[$dirId] ?? 0), (int) $best['avail']);
-                if ($k <= 0) continue;
-
-                if (!isset($alloc[$dirId])) $alloc[$dirId] = [];
-                $alloc[$dirId][$oid] = (int) ($alloc[$dirId][$oid] ?? 0) + $k;
-                $rem[$dirId] -= $k;
-                $consume($edge, $oid, $mode, $k);
-            }
-
-            // Unknown остаток (owner_id NULL)
-            foreach ($edgeByDir as $dirId => $_edge) {
-                $dirId = (int) $dirId;
-                $r = (int) ($rem[$dirId] ?? 0);
-                if ($r <= 0) continue;
-                if (!isset($alloc[$dirId])) $alloc[$dirId] = [];
-                $alloc[$dirId]['__unknown__'] = (int) ($alloc[$dirId]['__unknown__'] ?? 0) + $r;
-                $rem[$dirId] = 0;
-            }
-
-            return [
-                'alloc' => $alloc,
-            ];
+        // helpers
+        $weightFor = function(int $variantNo, float $lengthM): float {
+            // v1: max accuracy -> max length
+            // v2: balance -> prefer longer routes with more edges (edge bonus)
+            // v3: max coverage -> strong edge bonus (prefer consuming more edges)
+            $bonus = 0.0;
+            if ($variantNo === 2) $bonus = 50.0;
+            if ($variantNo === 3) $bonus = 5000.0;
+            return $lengthM + $bonus;
         };
 
-        // Variant 1
-        $v1 = $buildVariant(1);
-        // Variant 2
-        $v2 = $buildVariant(2);
-        // Variant 3 starts with variant 2 and fills remainder by real cable owners (direction-local)
-        $v3Alloc = $v2['alloc'];
-        foreach ($edgeByDir as $dirId => $edge) {
-            $dirId = (int) $dirId;
-            $u = (int) $edge['u'];
-            $byOwner = $v3Alloc[$dirId] ?? [];
-            $sum = 0;
-            foreach ($byOwner as $k => $cnt) {
-                $sum += (int) $cnt;
+        $deepCopySupply = function(array $s) {
+            $out = [];
+            foreach ($s as $w => $byOwner) {
+                $out[(int) $w] = [];
+                foreach ($byOwner as $o => $v) $out[(int) $w][(int) $o] = (int) $v;
             }
-            $rem = $u - $sum;
-            if ($rem <= 0) continue;
+            return $out;
+        };
 
-            // сначала попробуем заполнить реальными собственниками существующих кабелей на направлении
-            $real = $realDirOwners[$dirId] ?? [];
-            if ($real) {
-                arsort($real);
-                $totalReal = 0;
-                foreach ($real as $oid => $c) $totalReal += (int) $c;
-                if ($totalReal > 0) {
-                    $allocTmp = [];
-                    $left = $rem;
-                    foreach ($real as $oid => $c) {
-                        $oid = (int) $oid;
-                        $c = (int) $c;
-                        if ($oid <= 0 || $c <= 0) continue;
-                        $k = (int) floor($rem * ($c / $totalReal));
-                        if ($k <= 0) continue;
-                        $allocTmp[$oid] = $k;
-                        $left -= $k;
-                    }
-                    // раздать остаток самым вероятным
-                    if ($left > 0) {
-                        foreach ($real as $oid => $c) {
-                            $oid = (int) $oid;
-                            if ($oid <= 0) continue;
-                            if ($left <= 0) break;
-                            $allocTmp[$oid] = (int) ($allocTmp[$oid] ?? 0) + 1;
-                            $left--;
+        $buildRouteGeometry = function(array $route) use ($dirs): array {
+            $dirIds = $route['direction_ids'] ?? [];
+            $cur = (int) ($route['start_well_id'] ?? 0);
+            $line = [];
+            $length = 0.0;
+            foreach ($dirIds as $dirId) {
+                $dirId = (int) $dirId;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $length += (float) ($d['length_m'] ?? 0);
+                $coords = $d['coords'] ?? [];
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                $needReverse = ($cur && $cur === $b);
+                if ($needReverse) $coords = array_reverse($coords);
+                // concat
+                if (!$line) {
+                    $line = $coords;
+                } else {
+                    // skip duplicate join point
+                    $first = $coords[0] ?? null;
+                    $last = $line[count($line) - 1] ?? null;
+                    if ($first && $last && is_array($first) && is_array($last) && count($first) >= 2 && count($last) >= 2) {
+                        if ($first[0] === $last[0] && $first[1] === $last[1]) {
+                            array_shift($coords);
                         }
                     }
-                    if ($left > 0) {
-                        // если что-то осталось (редкий случай) — в unknown
-                        $allocTmp['__unknown__'] = (int) ($allocTmp['__unknown__'] ?? 0) + $left;
-                    }
+                    $line = array_merge($line, $coords);
+                }
+                // advance current
+                if ($cur === $a) $cur = $b;
+                else if ($cur === $b) $cur = $a;
+                else $cur = $b;
+            }
+            $geom = null;
+            if ($line && count($line) >= 2) {
+                $geom = json_encode(['type' => 'LineString', 'coordinates' => $line], JSON_UNESCAPED_UNICODE);
+            }
+            return ['geom' => $geom, 'length_m' => round($length, 2)];
+        };
 
-                    foreach ($allocTmp as $oid => $k) {
-                        if ($k <= 0) continue;
-                        if (!isset($v3Alloc[$dirId])) $v3Alloc[$dirId] = [];
-                        $v3Alloc[$dirId][$oid] = (int) ($v3Alloc[$dirId][$oid] ?? 0) + (int) $k;
+        $inferOwnerForRoute = function(int $variantNo, array $route, array &$supply) use ($realDirOwners): array {
+            $a = (int) ($route['start_well_id'] ?? 0);
+            $b = (int) ($route['end_well_id'] ?? 0);
+            $dirIds = array_map('intval', (array) ($route['direction_ids'] ?? []));
+
+            $bestBoth = null;
+            if ($a > 0 && $b > 0) {
+                $sa = $supply[$a] ?? [];
+                $sb = $supply[$b] ?? [];
+                foreach ($sa as $oid => $va) {
+                    $oid = (int) $oid;
+                    $va = (int) $va;
+                    if ($oid <= 0 || $va <= 0) continue;
+                    $vb = (int) ($sb[$oid] ?? 0);
+                    if ($vb <= 0) continue;
+                    $score = min($va, $vb);
+                    if ($bestBoth === null || $score > $bestBoth['score']) {
+                        $bestBoth = ['owner_id' => $oid, 'score' => $score];
                     }
-                    continue;
+                }
+            }
+            if ($bestBoth) {
+                $oid = (int) $bestBoth['owner_id'];
+                $supply[$a][$oid] = max(0, (int) ($supply[$a][$oid] ?? 0) - 1);
+                $supply[$b][$oid] = max(0, (int) ($supply[$b][$oid] ?? 0) - 1);
+                return ['owner_id' => $oid, 'confidence' => 0.90, 'mode' => 'tags_both_ends'];
+            }
+
+            if ($variantNo >= 2) {
+                // one-end tags
+                $bestOne = null;
+                foreach ([$a, $b] as $w) {
+                    if ($w <= 0) continue;
+                    foreach (($supply[$w] ?? []) as $oid => $v) {
+                        $oid = (int) $oid; $v = (int) $v;
+                        if ($oid <= 0 || $v <= 0) continue;
+                        if ($bestOne === null || $v > $bestOne['score']) {
+                            $bestOne = ['well' => $w, 'owner_id' => $oid, 'score' => $v];
+                        }
+                    }
+                }
+                if ($bestOne) {
+                    $w = (int) $bestOne['well'];
+                    $oid = (int) $bestOne['owner_id'];
+                    $supply[$w][$oid] = max(0, (int) ($supply[$w][$oid] ?? 0) - 1);
+                    return ['owner_id' => $oid, 'confidence' => 0.60, 'mode' => 'tags_one_end'];
                 }
             }
 
-            // иначе всё в unknown
-            if (!isset($v3Alloc[$dirId])) $v3Alloc[$dirId] = [];
-            $v3Alloc[$dirId]['__unknown__'] = (int) ($v3Alloc[$dirId]['__unknown__'] ?? 0) + $rem;
-        }
+            if ($variantNo >= 3) {
+                // fallback: existing real cables owners on directions of route
+                $votes = [];
+                foreach ($dirIds as $dirId) {
+                    foreach (($realDirOwners[$dirId] ?? []) as $oid => $cnt) {
+                        $oid = (int) $oid; $cnt = (int) $cnt;
+                        if ($oid <= 0 || $cnt <= 0) continue;
+                        $votes[$oid] = (int) ($votes[$oid] ?? 0) + $cnt;
+                    }
+                }
+                if ($votes) {
+                    arsort($votes);
+                    $oid = (int) array_key_first($votes);
+                    if ($oid > 0) return ['owner_id' => $oid, 'confidence' => 0.35, 'mode' => 'real_cables_fallback'];
+                }
+            }
 
-        $variants = [
-            1 => $v1['alloc'],
-            2 => $v2['alloc'],
-            3 => $v3Alloc,
-        ];
+            return ['owner_id' => null, 'confidence' => 0.15, 'mode' => 'unknown'];
+        };
 
-        // 9) Сохранение (перезаписываем текущие сценарии каждого варианта)
+        $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($dirs, $weightFor): array {
+            $rem = $baseRem;
+            $routes = [];
+
+            // union-find helpers
+            $ufInit = function(array $nodes) {
+                $p = [];
+                $r = [];
+                foreach ($nodes as $n) {
+                    $p[$n] = $n;
+                    $r[$n] = 0;
+                }
+                return [$p, $r];
+            };
+
+            $find = null;
+            $find = function($x, &$p) use (&$find) {
+                if (!isset($p[$x])) $p[$x] = $x;
+                if ($p[$x] !== $x) $p[$x] = $find($p[$x], $p);
+                return $p[$x];
+            };
+            $union = function($a, $b, &$p, &$r) use ($find) {
+                $ra = $find($a, $p);
+                $rb = $find($b, $p);
+                if ($ra === $rb) return false;
+                $rka = $r[$ra] ?? 0;
+                $rkb = $r[$rb] ?? 0;
+                if ($rka < $rkb) { $p[$ra] = $rb; }
+                elseif ($rka > $rkb) { $p[$rb] = $ra; }
+                else { $p[$rb] = $ra; $r[$ra] = $rka + 1; }
+                return true;
+            };
+
+            $anyRem = function(array $rem): bool {
+                foreach ($rem as $v) if ((int) $v > 0) return true;
+                return false;
+            };
+
+            $farthestFrom = function(int $start, array $adj): array {
+                $stack = [[$start, 0]];
+                $dist = [$start => 0.0];
+                $parentNode = [$start => 0];
+                $parentEdge = [];
+                $nodes = [];
+                while ($stack) {
+                    [$u, $p] = array_pop($stack);
+                    $nodes[] = $u;
+                    foreach (($adj[$u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        if ($v <= 0) continue;
+                        if ($v === (int) $p) continue;
+                        if (isset($dist[$v])) continue;
+                        $parentNode[$v] = $u;
+                        $parentEdge[$v] = (int) ($e['dir'] ?? 0);
+                        $dist[$v] = (float) ($dist[$u] ?? 0) + (float) ($e['w'] ?? 0);
+                        $stack[] = [$v, $u];
+                    }
+                }
+                $far = $start;
+                $best = -1.0;
+                foreach ($dist as $n => $d) {
+                    if ($d > $best) { $best = $d; $far = (int) $n; }
+                }
+                return [$far, $best, $dist, $parentNode, $parentEdge, $nodes];
+            };
+
+            while ($anyRem($rem)) {
+                // edges with remaining capacity
+                $edges = [];
+                $nodesSet = [];
+                foreach ($rem as $dirId => $cap) {
+                    $cap = (int) $cap;
+                    if ($cap <= 0) continue;
+                    $d = $dirs[(int) $dirId] ?? null;
+                    if (!$d) continue;
+                    $a = (int) $d['a']; $b = (int) $d['b'];
+                    $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
+                    $edges[] = ['dir' => (int) $dirId, 'a' => $a, 'b' => $b, 'w' => $w];
+                    $nodesSet[$a] = true; $nodesSet[$b] = true;
+                }
+                if (!$edges) break;
+                usort($edges, fn($x, $y) => ($y['w'] <=> $x['w']));
+
+                $nodes = array_keys($nodesSet);
+                [$p, $rk] = $ufInit($nodes);
+                $adj = [];
+                foreach ($nodes as $n) $adj[(int) $n] = [];
+                foreach ($edges as $e) {
+                    $a = (int) $e['a']; $b = (int) $e['b'];
+                    if ($union($a, $b, $p, $rk)) {
+                        $adj[$a][] = ['to' => $b, 'dir' => (int) $e['dir'], 'w' => (float) $e['w']];
+                        $adj[$b][] = ['to' => $a, 'dir' => (int) $e['dir'], 'w' => (float) $e['w']];
+                    }
+                }
+
+                // find best diameter among components
+                $visited = [];
+                $bestPath = null;
+                foreach ($nodes as $n0) {
+                    $n0 = (int) $n0;
+                    if (isset($visited[$n0])) continue;
+                    if (empty($adj[$n0])) { $visited[$n0] = true; continue; }
+                    [$aNode, $_d1, $_dist1, $_pn1, $_pe1, $compNodes] = $farthestFrom($n0, $adj);
+                    foreach ($compNodes as $cn) $visited[(int) $cn] = true;
+                    [$bNode, $diam, $_dist2, $pn2, $pe2] = $farthestFrom($aNode, $adj);
+                    if ($diam < 0) continue;
+                    // reconstruct path dir ids from bNode to aNode
+                    $dirsPath = [];
+                    $cur = $bNode;
+                    while ($cur !== $aNode && isset($pn2[$cur])) {
+                        $eid = (int) ($pe2[$cur] ?? 0);
+                        if ($eid > 0) $dirsPath[] = $eid;
+                        $cur = (int) $pn2[$cur];
+                        if ($cur <= 0) break;
+                    }
+                    $dirsPath = array_reverse($dirsPath);
+                    if (!$dirsPath) continue;
+                    if ($bestPath === null || $diam > $bestPath['weight']) {
+                        $bestPath = [
+                            'start_well_id' => $aNode,
+                            'end_well_id' => $bNode,
+                            'direction_ids' => $dirsPath,
+                            'weight' => $diam,
+                        ];
+                    }
+                }
+
+                if ($bestPath === null) {
+                    // fallback: any single remaining edge
+                    foreach ($edges as $e) {
+                        $dirId = (int) $e['dir'];
+                        if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
+                        $bestPath = [
+                            'start_well_id' => (int) $e['a'],
+                            'end_well_id' => (int) $e['b'],
+                            'direction_ids' => [$dirId],
+                            'weight' => (float) $e['w'],
+                        ];
+                        break;
+                    }
+                }
+
+                if ($bestPath === null) break;
+
+                // consume 1 along path
+                foreach ($bestPath['direction_ids'] as $dirId) {
+                    $dirId = (int) $dirId;
+                    if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
+                    $rem[$dirId] = (int) $rem[$dirId] - 1;
+                }
+                $routes[] = $bestPath;
+            }
+
+            return $routes;
+        };
+
+        // 5) Сохранение: 3 варианта (маршруты + собственник)
+        $resultVariants = [];
         $this->db->beginTransaction();
         try {
             for ($variantNo = 1; $variantNo <= 3; $variantNo++) {
-                $this->db->query(
-                    "DELETE FROM assumed_cables
-                     WHERE scenario_id IN (SELECT id FROM assumed_cable_scenarios WHERE variant_no = :v)",
-                    ['v' => $variantNo]
-                );
+                // очистим старые сценарии (cascade)
                 $this->db->query("DELETE FROM assumed_cable_scenarios WHERE variant_no = :v", ['v' => $variantNo]);
 
                 $scenarioId = (int) $this->db->insert('assumed_cable_scenarios', [
                     'variant_no' => $variantNo,
                     'built_by' => $userId > 0 ? $userId : null,
                     'params_json' => json_encode([
-                        'build' => 'assumed_cables_v1',
-                        'note' => 'inventory/tags/existing duct cables',
+                        'build' => 'assumed_routes_v1',
+                        'graph' => 'all_wells_and_directions',
+                        'capacity' => 'inventory_summary.unaccounted_cables',
+                        'weight' => ($variantNo === 1 ? 'length_m' : ($variantNo === 2 ? 'length_m+edge_bonus' : 'length_m+strong_edge_bonus')),
                     ], JSON_UNESCAPED_UNICODE),
                     'stats_json' => json_encode([
-                        'directions' => count($edgeByDir),
                         'total_unaccounted' => $totalUnaccounted,
                     ], JSON_UNESCAPED_UNICODE),
                 ]);
 
-                $dirAlloc = $variants[$variantNo] ?? [];
-                $rowsInserted = 0;
-                foreach ($dirAlloc as $dirId => $byOwner) {
-                    $dirId = (int) $dirId;
-                    $edge = $edgeByDir[$dirId] ?? null;
-                    if (!$edge) continue;
-                    $a = (int) $edge['a'];
-                    $b = (int) $edge['b'];
+                $routes = $buildRoutesForVariant($variantNo, $baseRem);
+                $supply = $deepCopySupply($supply0);
 
-                    foreach ($byOwner as $ownerKey => $cnt) {
-                        $cnt = (int) $cnt;
-                        if ($cnt <= 0) continue;
-                        $ownerId = null;
-                        $mode = 'unknown';
-                        $confidence = 0.15;
+                $routesTotal = 0;
+                $ownersAssigned = 0;
+                foreach ($routes as $rt) {
+                    $rt['variant_no'] = $variantNo;
+                    $geo = $buildRouteGeometry($rt);
+                    $geomJson = $geo['geom'];
+                    $lenM = (float) ($geo['length_m'] ?? 0);
+                    $rt['length_m'] = $lenM;
+                    $owner = $inferOwnerForRoute($variantNo, $rt, $supply);
+                    $ownerId = $owner['owner_id'] ?? null;
+                    $confidence = (float) ($owner['confidence'] ?? 0);
+                    $mode = (string) ($owner['mode'] ?? 'unknown');
+                    if ($ownerId) $ownersAssigned++;
 
-                        if ($ownerKey !== '__unknown__') {
-                            $ownerId = (int) $ownerKey;
-                            if ($variantNo === 1) {
-                                $mode = 'tags_both_ends';
-                                $confidence = 0.90;
-                            } elseif ($variantNo === 2) {
-                                // approx: both if supply existed on both ends at some point — estimate by raw tags
-                                $hasA = ((int) ($tagCounts[$a][$ownerId] ?? 0)) > 0;
-                                $hasB = ((int) ($tagCounts[$b][$ownerId] ?? 0)) > 0;
-                                $mode = ($hasA && $hasB) ? 'tags_both_ends' : 'tags_one_end';
-                                $confidence = ($mode === 'tags_both_ends') ? 0.70 : 0.50;
-                            } else {
-                                $mode = 'mixed';
-                                $confidence = 0.35;
-                            }
-                        } else {
-                            $mode = 'unknown';
-                            $confidence = ($variantNo === 1) ? 0.20 : (($variantNo === 2) ? 0.18 : 0.10);
-                        }
+                    $evidence = [
+                        'mode' => $mode,
+                        'direction_ids' => array_values(array_map('intval', (array) ($rt['direction_ids'] ?? []))),
+                        'start_well_id' => (int) ($rt['start_well_id'] ?? 0),
+                        'end_well_id' => (int) ($rt['end_well_id'] ?? 0),
+                    ];
 
-                        $evidence = [
-                            'mode' => $mode,
-                            'start_well_id' => $a,
-                            'end_well_id' => $b,
-                            'tags_start' => $ownerId ? (int) ($tagCounts[$a][$ownerId] ?? 0) : null,
-                            'tags_end' => $ownerId ? (int) ($tagCounts[$b][$ownerId] ?? 0) : null,
-                            'existing_start' => $ownerId ? (int) ($existingWellOwner[$a][$ownerId] ?? 0) : null,
-                            'existing_end' => $ownerId ? (int) ($existingWellOwner[$b][$ownerId] ?? 0) : null,
-                        ];
+                    $sql = "INSERT INTO assumed_cable_routes
+                            (scenario_id, owner_id, confidence, start_well_id, end_well_id, length_m, geom_wgs84, evidence_json)
+                            VALUES
+                            (:sid, :oid, :conf, :sw, :ew, :len,
+                             CASE WHEN :geom IS NULL OR :geom = '' THEN NULL ELSE ST_SetSRID(ST_GeomFromGeoJSON(:geom), 4326) END,
+                             :ev::jsonb)
+                            RETURNING id";
+                    $stmt = $this->db->query($sql, [
+                        'sid' => $scenarioId,
+                        'oid' => $ownerId ? (int) $ownerId : null,
+                        'conf' => $confidence,
+                        'sw' => (int) ($rt['start_well_id'] ?? 0) ?: null,
+                        'ew' => (int) ($rt['end_well_id'] ?? 0) ?: null,
+                        'len' => $lenM,
+                        'geom' => $geomJson,
+                        'ev' => json_encode($evidence, JSON_UNESCAPED_UNICODE),
+                    ]);
+                    $routeId = (int) $stmt->fetchColumn();
 
-                        $this->db->insert('assumed_cables', [
-                            'scenario_id' => $scenarioId,
+                    $seq = 1;
+                    foreach (($rt['direction_ids'] ?? []) as $dirId) {
+                        $dirId = (int) $dirId;
+                        $d = $dirs[$dirId] ?? null;
+                        if (!$d) continue;
+                        $this->db->insert('assumed_cable_route_directions', [
+                            'route_id' => $routeId,
+                            'seq' => $seq++,
                             'direction_id' => $dirId,
-                            'owner_id' => $ownerId,
-                            'assumed_count' => $cnt,
-                            'confidence' => $confidence,
-                            'evidence_json' => json_encode($evidence, JSON_UNESCAPED_UNICODE),
+                            'length_m' => round((float) ($d['length_m'] ?? 0), 2),
                         ]);
-                        $rowsInserted++;
                     }
+                    $routesTotal++;
                 }
 
-                $variants[$variantNo] = [
+                // обновим stats_json сценария
+                $stats = [
+                    'total_unaccounted' => $totalUnaccounted,
+                    'routes_total' => $routesTotal,
+                    'owners_assigned' => $ownersAssigned,
+                    'owners_unknown' => max(0, $routesTotal - $ownersAssigned),
+                ];
+                $this->db->query("UPDATE assumed_cable_scenarios SET stats_json = :s::jsonb WHERE id = :id", [
+                    's' => json_encode($stats, JSON_UNESCAPED_UNICODE),
+                    'id' => $scenarioId,
+                ]);
+
+                $resultVariants[] = [
                     'scenario_id' => $scenarioId,
                     'variant_no' => $variantNo,
-                    'rows' => $rowsInserted,
+                    'routes' => $routesTotal,
                 ];
             }
-
             $this->db->commit();
         } catch (\Throwable $e) {
             $this->db->rollback();
@@ -570,13 +571,7 @@ class AssumedCableController extends BaseController
 
         try { $this->log('rebuild_assumed_cables', 'assumed_cable_scenarios', null, null, ['variants' => [1,2,3]]); } catch (\Throwable $e) {}
 
-        Response::success([
-            'variants' => [
-                $variants[1],
-                $variants[2],
-                $variants[3],
-            ],
-        ], 'Сценарии предполагаемых кабелей пересчитаны');
+        Response::success(['variants' => $resultVariants], 'Сценарии предполагаемых кабелей пересчитаны');
     }
 
     /**
@@ -611,36 +606,22 @@ class AssumedCableController extends BaseController
         if ($scenarioId <= 0) Response::geojson([], ['variant' => $variantNo]);
 
         $rows = $this->db->fetchAll(
-            "WITH agg AS (
-                 SELECT ac.direction_id,
-                        SUM(ac.assumed_count)::int AS assumed_total,
-                        json_agg(
-                            json_build_object(
-                                'owner_id', ac.owner_id,
-                                'owner_name', COALESCE(o.name, 'Не определён'),
-                                'owner_color', COALESCE(o.color, ''),
-                                'count', ac.assumed_count,
-                                'confidence', ac.confidence
-                            )
-                            ORDER BY ac.assumed_count DESC, COALESCE(o.name, 'Не определён')
-                        ) AS owners
-                 FROM assumed_cables ac
-                 LEFT JOIN owners o ON ac.owner_id = o.id
-                 WHERE ac.scenario_id = :sid
-                 GROUP BY ac.direction_id
-             )
-             SELECT cd.id AS direction_id,
-                    cd.number AS direction_number,
-                    ST_AsGeoJSON(cd.geom_wgs84)::text AS geom,
-                    COALESCE(s.unaccounted_cables, 0)::int AS inv_unaccounted,
-                    COALESCE(s.max_inventory_cables, 0)::int AS inv_max,
-                    a.assumed_total,
-                    a.owners
-             FROM agg a
-             JOIN channel_directions cd ON cd.id = a.direction_id
-             LEFT JOIN inventory_summary s ON s.direction_id = cd.id
-             WHERE cd.geom_wgs84 IS NOT NULL
-             ORDER BY cd.number",
+            "SELECT r.id AS route_id,
+                    ST_AsGeoJSON(r.geom_wgs84)::text AS geom,
+                    r.owner_id,
+                    COALESCE(o.name, 'Не определён') AS owner_name,
+                    COALESCE(o.color, '') AS owner_color,
+                    r.confidence,
+                    r.length_m,
+                    sw.number AS start_well_number,
+                    ew.number AS end_well_number
+             FROM assumed_cable_routes r
+             LEFT JOIN owners o ON r.owner_id = o.id
+             LEFT JOIN wells sw ON r.start_well_id = sw.id
+             LEFT JOIN wells ew ON r.end_well_id = ew.id
+             WHERE r.scenario_id = :sid
+               AND r.geom_wgs84 IS NOT NULL
+             ORDER BY r.id",
             ['sid' => $scenarioId]
         );
 
@@ -651,24 +632,20 @@ class AssumedCableController extends BaseController
             $geom = json_decode($geomJson, true);
             if (!$geom) continue;
 
-            $owners = $r['owners'] ?? [];
-            if (is_string($owners)) {
-                $owners = json_decode($owners, true);
-                if (!$owners) $owners = [];
-            }
-
             $features[] = [
                 'type' => 'Feature',
                 'geometry' => $geom,
                 'properties' => [
-                    'direction_id' => (int) ($r['direction_id'] ?? 0),
-                    'direction_number' => (string) ($r['direction_number'] ?? ''),
+                    'route_id' => (int) ($r['route_id'] ?? 0),
                     'variant_no' => $variantNo,
                     'scenario_id' => $scenarioId,
-                    'inv_unaccounted' => (int) ($r['inv_unaccounted'] ?? 0),
-                    'inv_max' => (int) ($r['inv_max'] ?? 0),
-                    'assumed_total' => (int) ($r['assumed_total'] ?? 0),
-                    'owners' => $owners,
+                    'owner_id' => (int) ($r['owner_id'] ?? 0) ?: null,
+                    'owner_name' => (string) ($r['owner_name'] ?? ''),
+                    'owner_color' => (string) ($r['owner_color'] ?? ''),
+                    'confidence' => (float) ($r['confidence'] ?? 0),
+                    'length_m' => (float) ($r['length_m'] ?? 0),
+                    'start_well_number' => (string) ($r['start_well_number'] ?? ''),
+                    'end_well_number' => (string) ($r['end_well_number'] ?? ''),
                 ],
             ];
         }
@@ -682,7 +659,7 @@ class AssumedCableController extends BaseController
 
     /**
      * GET /api/assumed-cables/list?variant=1
-     * Данные для правой панели: строки (direction x owner) + сводные счётчики.
+     * Данные для правой панели: список маршрутов (предполагаемые кабели) + сводные счётчики.
      */
     public function list(): void
     {
@@ -748,42 +725,28 @@ class AssumedCableController extends BaseController
 
         $rows = $this->db->fetchAll(
             "SELECT
-                ac.direction_id,
-                cd.number AS direction_number,
-                COALESCE(cd.length_m, ROUND(ST_Length(cd.geom_wgs84::geography)::numeric, 2), 0)::numeric AS direction_length_m,
-                sw.number AS start_well_number,
-                ew.number AS end_well_number,
-                ac.owner_id,
+                r.id AS route_id,
+                r.owner_id,
                 COALESCE(o.name, '') AS owner_name,
-                ac.assumed_count,
-                ac.confidence
-             FROM assumed_cables ac
-             JOIN channel_directions cd ON cd.id = ac.direction_id
-             LEFT JOIN wells sw ON cd.start_well_id = sw.id
-             LEFT JOIN wells ew ON cd.end_well_id = ew.id
-             LEFT JOIN owners o ON ac.owner_id = o.id
-             WHERE ac.scenario_id = :sid
-             ORDER BY cd.number, COALESCE(o.name, '')",
+                r.confidence,
+                r.length_m,
+                sw.number AS start_well_number,
+                ew.number AS end_well_number
+             FROM assumed_cable_routes r
+             LEFT JOIN owners o ON r.owner_id = o.id
+             LEFT JOIN wells sw ON r.start_well_id = sw.id
+             LEFT JOIN wells ew ON r.end_well_id = ew.id
+             WHERE r.scenario_id = :sid
+             ORDER BY r.id",
             ['sid' => $scenarioId]
         );
 
         $summary = $this->db->fetch(
-            "WITH sc_rows AS (
-                SELECT direction_id, owner_id, assumed_count
-                FROM assumed_cables
-                WHERE scenario_id = :sid
-            ),
-            dirs AS (
-                SELECT DISTINCT direction_id FROM sc_rows
-            )
-            SELECT
-                (SELECT COALESCE(SUM(CASE WHEN owner_id IS NOT NULL THEN assumed_count ELSE 0 END), 0)::int FROM sc_rows) AS used_unaccounted,
-                (SELECT COALESCE(SUM(assumed_count), 0)::int FROM sc_rows) AS assumed_total,
-                (SELECT COALESCE(SUM(COALESCE(s.unaccounted_cables, 0)), 0)::int
-                 FROM dirs d
-                 LEFT JOIN inventory_summary s ON s.direction_id = d.direction_id
-                ) AS total_unaccounted,
-                (SELECT COUNT(*)::int FROM sc_rows) AS rows",
+            "SELECT
+                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid AND owner_id IS NOT NULL) AS used_unaccounted,
+                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid) AS assumed_total,
+                (SELECT COALESCE(SUM(unaccounted_cables), 0)::int FROM inventory_summary WHERE unaccounted_cables > 0) AS total_unaccounted,
+                (SELECT COUNT(*)::int FROM assumed_cable_routes WHERE scenario_id = :sid) AS rows",
             ['sid' => $scenarioId]
         ) ?? [];
 
@@ -829,45 +792,50 @@ class AssumedCableController extends BaseController
             $scenarioId = (int) $sc['id'];
             $rows = $this->db->fetchAll(
                 "SELECT
-                    cd.number AS direction_number,
+                    r.id AS route_id,
                     COALESCE(o.name, 'Не определён') AS owner_name,
-                    ac.assumed_count,
-                    ac.confidence,
-                    COALESCE(cd.length_m, ROUND(ST_Length(cd.geom_wgs84::geography)::numeric, 2), 0)::numeric AS direction_length_m,
+                    r.owner_id,
+                    r.confidence,
+                    r.length_m,
                     sw.number AS start_well_number,
-                    ew.number AS end_well_number
-                 FROM assumed_cables ac
-                 JOIN channel_directions cd ON cd.id = ac.direction_id
-                 LEFT JOIN wells sw ON cd.start_well_id = sw.id
-                 LEFT JOIN wells ew ON cd.end_well_id = ew.id
-                 LEFT JOIN owners o ON ac.owner_id = o.id
-                 WHERE ac.scenario_id = :sid
-                 ORDER BY cd.number, owner_name",
+                    ew.number AS end_well_number,
+                    COALESCE((
+                        SELECT STRING_AGG(cd.number, ' -> ' ORDER BY rd.seq)
+                        FROM assumed_cable_route_directions rd
+                        JOIN channel_directions cd ON cd.id = rd.direction_id
+                        WHERE rd.route_id = r.id
+                    ), '') AS route_directions
+                 FROM assumed_cable_routes r
+                 LEFT JOIN owners o ON r.owner_id = o.id
+                 LEFT JOIN wells sw ON r.start_well_id = sw.id
+                 LEFT JOIN wells ew ON r.end_well_id = ew.id
+                 WHERE r.scenario_id = :sid
+                 ORDER BY r.id",
                 ['sid' => $scenarioId]
             );
         }
 
-        $filename = 'assumed_cables_v' . $variantNo . '_' . date('Y-m-d') . '.csv';
+        $filename = 'assumed_cables_routes_v' . $variantNo . '_' . date('Y-m-d') . '.csv';
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
 
         $output = fopen('php://output', 'w');
         fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
 
-        $headers = ['№', 'Вариант', 'Номер направления', 'Собственник', 'Количество', 'Уверенность', 'Длина (м)', 'Начальный колодец', 'Конечный колодец'];
+        $headers = ['№', 'Вариант', 'ID', 'Собственник', 'Уверенность', 'Длина (м)', 'Начальный колодец', 'Конечный колодец', 'Маршрут (направления)'];
         fputcsv($output, $headers, $delimiter);
         $i = 1;
         foreach ($rows as $r) {
             fputcsv($output, [
                 $i++,
                 $variantNo,
-                (string) ($r['direction_number'] ?? ''),
+                (string) ($r['route_id'] ?? ''),
                 (string) ($r['owner_name'] ?? ''),
-                (string) ($r['assumed_count'] ?? 0),
                 (string) ($r['confidence'] ?? ''),
-                (string) ($r['direction_length_m'] ?? 0),
+                (string) ($r['length_m'] ?? 0),
                 (string) ($r['start_well_number'] ?? ''),
                 (string) ($r['end_well_number'] ?? ''),
+                (string) ($r['route_directions'] ?? ''),
             ], $delimiter);
         }
 
