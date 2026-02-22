@@ -35,6 +35,7 @@
 \i database/migration_v19.sql
 \i database/migration_v20.sql
 \i database/migration_v21.sql
+\i database/migration_v22.sql
 
 \echo '== IGS lksoftGwebsrv: post-finalization patches =='
 
