@@ -111,6 +111,7 @@ const MapManager = {
     _assumedBaseDirLatLngsById: new Map(), // direction_id -> LatLng[]
     _assumedRoutesPopupHtml: null, // legacy fallback
     _assumedRoutesPopup: null,
+    _assumedRoutesPickPopup: null,
 
     // Линейка (измерение расстояний)
     rulerMode: false,
@@ -496,8 +497,8 @@ const MapManager = {
             }
             if (!this.map.getPane('highlightPane')) {
                 this.map.createPane('highlightPane');
-                // Подсветка выбранных объектов (красная) должна быть поверх всех линий
-                this.map.getPane('highlightPane').style.zIndex = '980';
+                // Подсветка должна быть выше линий, но ниже попапов/модальных окон
+                this.map.getPane('highlightPane').style.zIndex = '550';
                 this.map.getPane('highlightPane').style.pointerEvents = 'none';
             }
         } catch (_) {}
@@ -2013,6 +2014,57 @@ const MapManager = {
                     ${lines || '<span style="color:var(--text-secondary);">Нет данных</span>'}
                 </div>`;
             };
+            const openPickPopupForDirection = (latlng, directionId) => {
+                const did = parseInt(directionId || 0, 10);
+                if (!did) return;
+                const routeIds = this._assumedRouteIdsByDirectionId?.get?.(did) || [];
+                const items = (Array.isArray(routeIds) ? routeIds : [])
+                    .map(x => parseInt(x, 10))
+                    .filter(x => Number.isFinite(x) && x > 0)
+                    .map(id => this._assumedRoutesById?.get?.(id))
+                    .filter(Boolean)
+                    .sort((a, b) => (a._index || 0) - (b._index || 0));
+                if (!items.length) return;
+
+                const box = document.createElement('div');
+                box.style.maxHeight = '260px';
+                box.style.overflow = 'auto';
+                box.style.fontSize = '12px';
+                box.style.lineHeight = '1.4';
+
+                const title = document.createElement('div');
+                title.textContent = 'Предполагаемые кабели (участок)';
+                title.style.fontWeight = '800';
+                title.style.marginBottom = '6px';
+                box.appendChild(title);
+
+                items.forEach((r) => {
+                    const rid = parseInt(r?.route_id || 0, 10);
+                    if (!rid) return;
+                    const owner = (r.owner_name || '').toString().trim() || 'Не определён';
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn btn-sm btn-secondary';
+                    btn.style.display = 'block';
+                    btn.style.width = '100%';
+                    btn.style.textAlign = 'left';
+                    btn.style.marginBottom = '6px';
+                    btn.textContent = `${r._index}. ${owner} — ${fmt(r.length_m)} м`;
+                    btn.addEventListener('click', () => {
+                        try { this.highlightAssumedRoute?.(rid); } catch (_) {}
+                        try { this.setAssumedCablesPanelSelectedRoute?.(rid); } catch (_) {}
+                    });
+                    box.appendChild(btn);
+                });
+
+                if (!this._assumedRoutesPickPopup) {
+                    this._assumedRoutesPickPopup = L.popup({ maxWidth: 460, closeButton: true, autoClose: true, closeOnClick: true });
+                }
+                this._assumedRoutesPickPopup
+                    .setLatLng(latlng)
+                    .setContent(box);
+                this._assumedRoutesPickPopup.openOn(this.map);
+            };
 
             L.geoJSON({ type: 'FeatureCollection', features }, {
                 pane: 'assumedCablesPane',
@@ -2036,6 +2088,13 @@ const MapManager = {
                         // не даём клику "провалиться" в выбор объектов
                         layer.on('click', (e) => {
                             try { L.DomEvent.stopPropagation(e); } catch (_) {}
+                            try {
+                                const rid = parseInt(routeId || 0, 10);
+                                if (!rid) return;
+                                const did = pickHoveredDirectionId(rid, e.latlng);
+                                if (!did) return;
+                                openPickPopupForDirection(e.latlng, did);
+                            } catch (_) {}
                         });
                         // hover: показать список предполагаемых кабелей
                         layer.on('mouseover', (e) => {
@@ -2108,6 +2167,26 @@ const MapManager = {
             const feat = layer.toGeoJSON?.();
             if (feat && feat.type === 'Feature' && feat.geometry) {
                 this.highlightFeatureCollection?.({ type: 'FeatureCollection', features: [feat] });
+            }
+        } catch (_) {}
+    },
+
+    setAssumedCablesPanelSelectedRoute(routeId, opts = {}) {
+        const id = parseInt(routeId || 0, 10);
+        if (!id) return;
+        const key = String(id);
+        this._assumedCablesPanelSelectedKey = key;
+        const el = this.assumedCablesPanelEl;
+        if (!el || el.classList.contains('hidden')) return;
+        try {
+            const prev = el.querySelector('tbody tr.ac-row-selected');
+            if (prev) prev.classList.remove('ac-row-selected');
+            const tr = el.querySelector(`tbody tr[data-route-id="${id}"]`);
+            if (tr) {
+                tr.classList.add('ac-row-selected');
+                if (opts?.scrollIntoView) {
+                    try { tr.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+                }
             }
         } catch (_) {}
     },
@@ -2256,6 +2335,11 @@ const MapManager = {
                     const key = tr.getAttribute('data-key') || '';
                     if (!routeId) return;
                     this._assumedCablesPanelSelectedKey = key;
+                    try {
+                        // обновим выделение без перерендера (чтобы не сбрасывать скролл)
+                        el.querySelectorAll('tbody tr.ac-row-selected').forEach((x) => x.classList.remove('ac-row-selected'));
+                        tr.classList.add('ac-row-selected');
+                    } catch (_) {}
                     try { this.highlightAssumedRoute?.(routeId); } catch (_) {}
                     try {
                         const layer = this._assumedRouteLayerById?.get?.(routeId) || null;
@@ -2264,7 +2348,6 @@ const MapManager = {
                             this.fitToBounds(b, 17);
                         }
                     } catch (_) {}
-                    try { this.renderAssumedCablesPanel(payload); } catch (_) {}
                 });
             });
         } catch (_) {}

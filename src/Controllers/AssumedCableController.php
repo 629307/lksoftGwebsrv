@@ -341,11 +341,6 @@ class AssumedCableController extends BaseController
                 return true;
             };
 
-            $anyRem = function(array $rem): bool {
-                foreach ($rem as $v) if ((int) $v > 0) return true;
-                return false;
-            };
-
             $farthestFrom = function(int $start, array $adj): array {
                 $stack = [[$start, 0]];
                 $dist = [$start => 0.0];
@@ -374,24 +369,43 @@ class AssumedCableController extends BaseController
                 return [$far, $best, $dist, $parentNode, $parentEdge, $nodes];
             };
 
-            while ($anyRem($rem)) {
-                // edges with remaining capacity
+            $buildEdges = function(array $rem, ?array $restrictDirIds = null) use ($dirs, $weightFor, $variantNo): array {
                 $edges = [];
-                $nodesSet = [];
-                foreach ($rem as $dirId => $cap) {
-                    $cap = (int) $cap;
-                    if ($cap <= 0) continue;
-                    $d = $dirs[(int) $dirId] ?? null;
-                    if (!$d) continue;
-                    $a = (int) $d['a']; $b = (int) $d['b'];
-                    $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
-                    $edges[] = ['dir' => (int) $dirId, 'a' => $a, 'b' => $b, 'w' => $w];
-                    $nodesSet[$a] = true; $nodesSet[$b] = true;
+                if ($restrictDirIds !== null) {
+                    foreach ($restrictDirIds as $dirId) {
+                        $dirId = (int) $dirId;
+                        if ($dirId <= 0) continue;
+                        if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
+                        $d = $dirs[$dirId] ?? null;
+                        if (!$d) continue;
+                        $a = (int) $d['a']; $b = (int) $d['b'];
+                        $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
+                        $edges[] = ['dir' => $dirId, 'a' => $a, 'b' => $b, 'w' => (float) $w];
+                    }
+                } else {
+                    foreach ($rem as $dirId => $cap) {
+                        $cap = (int) $cap;
+                        if ($cap <= 0) continue;
+                        $d = $dirs[(int) $dirId] ?? null;
+                        if (!$d) continue;
+                        $a = (int) $d['a']; $b = (int) $d['b'];
+                        $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
+                        $edges[] = ['dir' => (int) $dirId, 'a' => $a, 'b' => $b, 'w' => (float) $w];
+                    }
                 }
-                if (!$edges) break;
-                usort($edges, fn($x, $y) => ($y['w'] <=> $x['w']));
+                if ($edges) usort($edges, fn($x, $y) => ($y['w'] <=> $x['w']));
+                return $edges;
+            };
 
+            $bestPathForEdges = function(array $edges) use ($ufInit, $union, $farthestFrom): ?array {
+                if (!$edges) return null;
+                $nodesSet = [];
+                foreach ($edges as $e) {
+                    $nodesSet[(int) $e['a']] = true;
+                    $nodesSet[(int) $e['b']] = true;
+                }
                 $nodes = array_keys($nodesSet);
+                if (!$nodes) return null;
                 [$p, $rk] = $ufInit($nodes);
                 $adj = [];
                 foreach ($nodes as $n) $adj[(int) $n] = [];
@@ -403,7 +417,7 @@ class AssumedCableController extends BaseController
                     }
                 }
 
-                // find best diameter among components
+                // find best diameter among tree-components
                 $visited = [];
                 $bestPath = null;
                 foreach ($nodes as $n0) {
@@ -425,40 +439,101 @@ class AssumedCableController extends BaseController
                     }
                     $dirsPath = array_reverse($dirsPath);
                     if (!$dirsPath) continue;
-                    if ($bestPath === null || $diam > $bestPath['weight']) {
+                    if ($bestPath === null || $diam > (float) ($bestPath['weight'] ?? 0)) {
                         $bestPath = [
                             'start_well_id' => $aNode,
                             'end_well_id' => $bNode,
                             'direction_ids' => $dirsPath,
-                            'weight' => $diam,
+                            'weight' => (float) $diam,
                         ];
                     }
                 }
+                return $bestPath;
+            };
 
-                if ($bestPath === null) {
-                    // fallback: any single remaining edge
-                    foreach ($edges as $e) {
-                        $dirId = (int) $e['dir'];
-                        if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
+            $buildComponents = function(array $rem) use ($dirs): array {
+                // компоненты считаем по рёбрам с остатком > 0 (неучтённые)
+                $adj = []; // wellId => [ [toWellId, dirId], ...]
+                foreach ($rem as $dirId => $cap) {
+                    $cap = (int) $cap;
+                    if ($cap <= 0) continue;
+                    $d = $dirs[(int) $dirId] ?? null;
+                    if (!$d) continue;
+                    $a = (int) ($d['a'] ?? 0);
+                    $b = (int) ($d['b'] ?? 0);
+                    if ($a <= 0 || $b <= 0) continue;
+                    if (!isset($adj[$a])) $adj[$a] = [];
+                    if (!isset($adj[$b])) $adj[$b] = [];
+                    $adj[$a][] = [$b, (int) $dirId];
+                    $adj[$b][] = [$a, (int) $dirId];
+                }
+                if (!$adj) return [];
+                $visited = [];
+                $components = [];
+                foreach (array_keys($adj) as $start) {
+                    $start = (int) $start;
+                    if (isset($visited[$start])) continue;
+                    $stack = [$start];
+                    $visited[$start] = true;
+                    $dirSet = [];
+                    while ($stack) {
+                        $u = (int) array_pop($stack);
+                        foreach (($adj[$u] ?? []) as $e) {
+                            $v = (int) ($e[0] ?? 0);
+                            $dirId = (int) ($e[1] ?? 0);
+                            if ($dirId > 0) $dirSet[$dirId] = true;
+                            if ($v > 0 && !isset($visited[$v])) {
+                                $visited[$v] = true;
+                                $stack[] = $v;
+                            }
+                        }
+                    }
+                    if ($dirSet) {
+                        $components[] = ['dir_ids' => array_keys($dirSet)];
+                    }
+                }
+                return $components;
+            };
+
+            // ВАЖНО: сначала обрабатываем компоненты сети по убыванию "веса" (длины),
+            // и вырабатываем ресурс (неучтённые отрезки) внутри компоненты до конца, только потом переходим к следующей.
+            $components = $buildComponents($rem);
+            foreach ($components as &$c) {
+                $edges0 = $buildEdges($rem, $c['dir_ids'] ?? []);
+                $bp0 = $bestPathForEdges($edges0);
+                $c['weight'] = (float) ($bp0['weight'] ?? 0);
+            }
+            unset($c);
+            usort($components, fn($x, $y) => ((float) ($y['weight'] ?? 0) <=> (float) ($x['weight'] ?? 0)));
+
+            foreach ($components as $c) {
+                $dirIds = $c['dir_ids'] ?? [];
+                if (!$dirIds) continue;
+                while (true) {
+                    $edges = $buildEdges($rem, $dirIds);
+                    if (!$edges) break;
+                    $bestPath = $bestPathForEdges($edges);
+                    if ($bestPath === null) {
+                        // fallback: single best remaining edge in this component
+                        $e = $edges[0] ?? null;
+                        if (!$e) break;
                         $bestPath = [
-                            'start_well_id' => (int) $e['a'],
-                            'end_well_id' => (int) $e['b'],
-                            'direction_ids' => [$dirId],
-                            'weight' => (float) $e['w'],
+                            'start_well_id' => (int) ($e['a'] ?? 0),
+                            'end_well_id' => (int) ($e['b'] ?? 0),
+                            'direction_ids' => [(int) ($e['dir'] ?? 0)],
+                            'weight' => (float) ($e['w'] ?? 0),
                         ];
-                        break;
                     }
-                }
+                    if (!$bestPath || empty($bestPath['direction_ids'])) break;
 
-                if ($bestPath === null) break;
-
-                // consume 1 along path
-                foreach ($bestPath['direction_ids'] as $dirId) {
-                    $dirId = (int) $dirId;
-                    if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
-                    $rem[$dirId] = (int) $rem[$dirId] - 1;
+                    // consume 1 along path
+                    foreach ($bestPath['direction_ids'] as $dirId) {
+                        $dirId = (int) $dirId;
+                        if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
+                        $rem[$dirId] = (int) $rem[$dirId] - 1;
+                    }
+                    $routes[] = $bestPath;
                 }
-                $routes[] = $bestPath;
             }
 
             return $routes;
@@ -479,7 +554,7 @@ class AssumedCableController extends BaseController
                         'build' => 'assumed_routes_v1',
                         'graph' => 'all_wells_and_directions',
                         'capacity' => 'inventory_summary.unaccounted_cables',
-                        'weight' => ($variantNo === 1 ? 'length_m' : ($variantNo === 2 ? 'length_m+edge_bonus' : 'length_m+strong_edge_bonus')),
+                        'weight' => 'length_m',
                     ], JSON_UNESCAPED_UNICODE),
                     'stats_json' => json_encode([
                         'total_unaccounted' => $totalUnaccounted,
