@@ -1288,6 +1288,17 @@ const App = {
             } catch (_) {}
         }
 
+        // Направления: кнопка "Подсказки длина направления" скрыта/выкл, если слой выключен
+        if (input.id === 'layer-channels') {
+            try {
+                const btn = document.getElementById('btn-toggle-direction-length-labels');
+                if (btn) {
+                    btn.classList.toggle('hidden', !input.checked);
+                    btn.disabled = !input.checked;
+                }
+            } catch (_) {}
+        }
+
         // Инвентаризация: при включении автоматически выключаем все слои,
         // оставляем "Колодцы" и "Инвентаризация". Слой инвентаризации ниже колодцев.
         if (input.id === 'layer-inventory' && input.checked) {
@@ -1321,6 +1332,14 @@ const App = {
                 const btn = document.getElementById('btn-assumed-cables-rebuild');
                 if (sel) sel.disabled = true;
                 if (btn) btn.disabled = true;
+            } catch (_) {}
+            // синхронизируем кнопку длины направлений
+            try {
+                const btn = document.getElementById('btn-toggle-direction-length-labels');
+                if (btn) {
+                    btn.classList.add('hidden');
+                    btn.disabled = true;
+                }
             } catch (_) {}
             this.saveLayerPreferencesDebounced();
             return;
@@ -1435,6 +1454,14 @@ const App = {
                 if (sel) sel.disabled = true;
                 if (btn) btn.disabled = true;
             } catch (_) {}
+            // синхронизируем кнопку длины направлений
+            try {
+                const btn = document.getElementById('btn-toggle-direction-length-labels');
+                if (btn) {
+                    btn.classList.add('hidden');
+                    btn.disabled = true;
+                }
+            } catch (_) {}
         }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров
@@ -1493,6 +1520,14 @@ const App = {
             const b2 = document.getElementById('btn-toggle-object-coordinates');
             if (b1) b1.disabled = false;
             if (b2) b2.disabled = false;
+        } catch (_) {}
+        // синхронизируем кнопку длины направлений
+        try {
+            const btn = document.getElementById('btn-toggle-direction-length-labels');
+            if (btn) {
+                btn.classList.remove('hidden');
+                btn.disabled = false;
+            }
         } catch (_) {}
 
         MapManager.clearFilters();
