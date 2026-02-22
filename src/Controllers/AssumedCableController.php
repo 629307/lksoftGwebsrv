@@ -243,52 +243,97 @@ class AssumedCableController extends BaseController
             return ['geom' => $geom, 'length_m' => round($length, 2)];
         };
 
-        $inferOwnerForRoute = function(int $variantNo, array $route, array &$supply) use ($realDirOwners): array {
+        $inferOwnerForRoute = function(int $variantNo, array $route, array &$supply) use ($realDirOwners, $dirs): array {
             $a = (int) ($route['start_well_id'] ?? 0);
             $b = (int) ($route['end_well_id'] ?? 0);
             $dirIds = array_map('intval', (array) ($route['direction_ids'] ?? []));
 
-            $bestBoth = null;
-            if ($a > 0 && $b > 0) {
-                $sa = $supply[$a] ?? [];
-                $sb = $supply[$b] ?? [];
-                foreach ($sa as $oid => $va) {
-                    $oid = (int) $oid;
-                    $va = (int) $va;
-                    if ($oid <= 0 || $va <= 0) continue;
-                    $vb = (int) ($sb[$oid] ?? 0);
-                    if ($vb <= 0) continue;
-                    $score = min($va, $vb);
-                    if ($bestBoth === null || $score > $bestBoth['score']) {
-                        $bestBoth = ['owner_id' => $oid, 'score' => $score];
+            // Для owner inference используем теги на ВСЕХ колодцах, через которые проходит маршрут.
+            // Теги уже вычтены от существующих известных кабелей (supply0), поэтому здесь можно их "тратить".
+            $routeWellIds = function() use ($a, $dirIds, $dirs) {
+                $wells = [];
+                $cur = (int) $a;
+                if ($cur > 0) $wells[] = $cur;
+                foreach ($dirIds as $dirId) {
+                    $dirId = (int) $dirId;
+                    $d = $dirs[$dirId] ?? null;
+                    if (!$d) continue;
+                    $wa = (int) ($d['a'] ?? 0);
+                    $wb = (int) ($d['b'] ?? 0);
+                    $next = 0;
+                    if ($cur === $wa) $next = $wb;
+                    else if ($cur === $wb) $next = $wa;
+                    else $next = $wb;
+                    if ($next > 0) {
+                        $wells[] = $next;
+                        $cur = $next;
                     }
                 }
-            }
-            if ($bestBoth) {
-                $oid = (int) $bestBoth['owner_id'];
-                $supply[$a][$oid] = max(0, (int) ($supply[$a][$oid] ?? 0) - 1);
-                $supply[$b][$oid] = max(0, (int) ($supply[$b][$oid] ?? 0) - 1);
-                return ['owner_id' => $oid, 'confidence' => 0.90, 'mode' => 'tags_both_ends'];
-            }
+                // unique keep order
+                $seen = [];
+                $out = [];
+                foreach ($wells as $w) {
+                    $w = (int) $w;
+                    if ($w <= 0 || isset($seen[$w])) continue;
+                    $seen[$w] = true;
+                    $out[] = $w;
+                }
+                return $out;
+            };
 
-            if ($variantNo >= 2) {
-                // one-end tags
-                $bestOne = null;
-                foreach ([$a, $b] as $w) {
-                    if ($w <= 0) continue;
-                    foreach (($supply[$w] ?? []) as $oid => $v) {
-                        $oid = (int) $oid; $v = (int) $v;
-                        if ($oid <= 0 || $v <= 0) continue;
-                        if ($bestOne === null || $v > $bestOne['score']) {
-                            $bestOne = ['well' => $w, 'owner_id' => $oid, 'score' => $v];
-                        }
+            $wellsOnRoute = $routeWellIds();
+
+            // aggregate scores by owner across all wells on route
+            $scores = []; // ownerId => ['score'=>sum, 'hits'=>wellsWithTag]
+            foreach ($wellsOnRoute as $w) {
+                foreach (($supply[$w] ?? []) as $oid => $cnt) {
+                    $oid = (int) $oid;
+                    $cnt = (int) $cnt;
+                    if ($oid <= 0 || $cnt <= 0) continue;
+                    if (!isset($scores[$oid])) $scores[$oid] = ['score' => 0, 'hits' => 0];
+                    $scores[$oid]['score'] += $cnt;
+                    $scores[$oid]['hits'] += 1;
+                }
+            }
+            if ($scores) {
+                // pick by max score, then max hits
+                $bestOwner = null;
+                foreach ($scores as $oid => $s) {
+                    $oid = (int) $oid;
+                    $score = (int) ($s['score'] ?? 0);
+                    $hits = (int) ($s['hits'] ?? 0);
+                    if ($oid <= 0 || $score <= 0) continue;
+                    if ($bestOwner === null) {
+                        $bestOwner = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
+                        continue;
+                    }
+                    if ($score > $bestOwner['score'] || ($score === $bestOwner['score'] && $hits > $bestOwner['hits'])) {
+                        $bestOwner = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
                     }
                 }
-                if ($bestOne) {
-                    $w = (int) $bestOne['well'];
-                    $oid = (int) $bestOne['owner_id'];
-                    $supply[$w][$oid] = max(0, (int) ($supply[$w][$oid] ?? 0) - 1);
-                    return ['owner_id' => $oid, 'confidence' => 0.60, 'mode' => 'tags_one_end'];
+                if ($bestOwner) {
+                    $oid = (int) $bestOwner['owner_id'];
+                    // ТЗ: если кабель проходит через колодец с owner tag, он может быть назначен этому owner.
+                    // Поэтому назначаем при наличии хотя бы одного тега на маршруте, а уверенность повышаем,
+                    // если теги встречаются в нескольких колодцах по маршруту.
+                    $need = 1; // тратим один tag на один маршрут
+                    foreach ($wellsOnRoute as $w) {
+                        if ($need <= 0) break;
+                        $curCnt = (int) ($supply[$w][$oid] ?? 0);
+                        if ($curCnt <= 0) continue;
+                        $supply[$w][$oid] = max(0, $curCnt - 1);
+                        $need--;
+                    }
+                    $hits = (int) ($bestOwner['hits'] ?? 0);
+                    $conf = ($hits >= 2) ? 0.85 : 0.60;
+                    if ($variantNo === 2) $conf = ($hits >= 2) ? 0.80 : 0.65;
+                    if ($variantNo >= 3) $conf = ($hits >= 2) ? 0.75 : 0.55;
+                    return [
+                        'owner_id' => $oid,
+                        'confidence' => $conf,
+                        'mode' => ($hits >= 2 ? 'tags_multi_wells' : 'tags_any_well'),
+                        'well_ids' => $wellsOnRoute,
+                    ];
                 }
             }
 
@@ -305,11 +350,11 @@ class AssumedCableController extends BaseController
                 if ($votes) {
                     arsort($votes);
                     $oid = (int) array_key_first($votes);
-                    if ($oid > 0) return ['owner_id' => $oid, 'confidence' => 0.35, 'mode' => 'real_cables_fallback'];
+                    if ($oid > 0) return ['owner_id' => $oid, 'confidence' => 0.35, 'mode' => 'real_cables_fallback', 'well_ids' => $wellsOnRoute];
                 }
             }
 
-            return ['owner_id' => null, 'confidence' => 0.15, 'mode' => 'unknown'];
+            return ['owner_id' => null, 'confidence' => 0.15, 'mode' => 'unknown', 'well_ids' => $wellsOnRoute];
         };
 
         $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($dirs, $weightFor): array {
@@ -594,6 +639,7 @@ class AssumedCableController extends BaseController
                     $ownerId = $owner['owner_id'] ?? null;
                     $confidence = (float) ($owner['confidence'] ?? 0);
                     $mode = (string) ($owner['mode'] ?? 'unknown');
+                    $wellIds = (array) ($owner['well_ids'] ?? []);
                     if ($ownerId) $ownersAssigned++;
 
                     $evidence = [
@@ -601,6 +647,7 @@ class AssumedCableController extends BaseController
                         'direction_ids' => array_values(array_map('intval', (array) ($rt['direction_ids'] ?? []))),
                         'start_well_id' => (int) ($rt['start_well_id'] ?? 0),
                         'end_well_id' => (int) ($rt['end_well_id'] ?? 0),
+                        'well_ids' => array_values(array_map('intval', $wellIds)),
                     ];
 
                     $sql = "INSERT INTO assumed_cable_routes
