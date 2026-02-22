@@ -174,6 +174,24 @@ const App = {
         try {
             document.getElementById('btn-assumed-cables-rebuild')?.classList?.toggle('hidden', !this.canWrite());
         } catch (_) {}
+        // при старте: если слой предполагаемых кабелей выключен — прячем и отключаем контролы строки
+        try {
+            const cb = document.getElementById('layer-assumed-cables');
+            const checked = !!cb?.checked;
+            document.getElementById('assumed-cables-controls')?.classList?.toggle('hidden', !checked);
+            const sel = document.getElementById('assumed-cables-variant');
+            const btn = document.getElementById('btn-assumed-cables-rebuild');
+            if (sel) sel.disabled = !checked;
+            if (btn) btn.disabled = !checked || !this.canWrite();
+        } catch (_) {}
+        // при старте: если слой колодцев включен/выключен — видимость кнопок подсказок
+        try {
+            const cb = document.getElementById('layer-wells');
+            const checked = !!cb?.checked;
+            document.getElementById('wells-inline-controls')?.classList?.toggle('hidden', !checked);
+            document.getElementById('btn-toggle-well-labels') && (document.getElementById('btn-toggle-well-labels').disabled = !checked);
+            document.getElementById('btn-toggle-object-coordinates') && (document.getElementById('btn-toggle-object-coordinates').disabled = !checked);
+        } catch (_) {}
 
         // Применяем начальную видимость слоёв (с учётом персональных настроек пользователя)
         this._suppressLayerPrefSave = true;
@@ -902,16 +920,19 @@ const App = {
             } catch (_) {}
         });
         document.getElementById('btn-toggle-well-labels')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
             MapManager.toggleWellLabels();
             e.currentTarget.classList.toggle('active', MapManager.wellLabelsEnabled);
         });
         document.getElementById('btn-toggle-object-coordinates')?.addEventListener('click', (e) => {
             try {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                 MapManager.toggleObjectCoordinatesLabels?.();
                 e.currentTarget.classList.toggle('active', !!MapManager.objectCoordinatesLabelsEnabled);
             } catch (_) {}
         });
         document.getElementById('btn-toggle-direction-length-labels')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
             MapManager.toggleDirectionLengthLabels();
             e.currentTarget.classList.toggle('active', MapManager.directionLengthLabelsEnabled);
         });
@@ -1220,6 +1241,27 @@ const App = {
                 MapManager.setAssumedCablesPanelVisible?.(!!input.checked);
                 if (input.checked) MapManager.refreshAssumedCablesPanel?.();
             } catch (_) {}
+            // селект + кнопка в строке слоя: показываем/прячем и отключаем
+            try {
+                const wrap = document.getElementById('assumed-cables-controls');
+                if (wrap) wrap.classList.toggle('hidden', !input.checked);
+                const sel = document.getElementById('assumed-cables-variant');
+                const btn = document.getElementById('btn-assumed-cables-rebuild');
+                if (sel) sel.disabled = !input.checked;
+                if (btn) btn.disabled = !input.checked || !this.canWrite();
+            } catch (_) {}
+        }
+
+        // Колодцы: кнопки подсказок (номера/координаты) видимы только если слой колодцев включен
+        if (input.id === 'layer-wells') {
+            try {
+                const wrap = document.getElementById('wells-inline-controls');
+                if (wrap) wrap.classList.toggle('hidden', !input.checked);
+                const b1 = document.getElementById('btn-toggle-well-labels');
+                const b2 = document.getElementById('btn-toggle-object-coordinates');
+                if (b1) b1.disabled = !input.checked;
+                if (b2) b2.disabled = !input.checked;
+            } catch (_) {}
         }
 
         // Инвентаризация: при включении автоматически выключаем все слои,
@@ -1246,6 +1288,16 @@ const App = {
             set('layer-ground-cables', 'groundCables', false);
             set('layer-aerial-cables', 'aerialCables', false);
             set('layer-duct-cables', 'ductCables', false);
+            // синхронизируем UI контролов "предполагаемые кабели"
+            try {
+                MapManager.setAssumedCablesPanelVisible?.(false);
+                const wrap = document.getElementById('assumed-cables-controls');
+                if (wrap) wrap.classList.add('hidden');
+                const sel = document.getElementById('assumed-cables-variant');
+                const btn = document.getElementById('btn-assumed-cables-rebuild');
+                if (sel) sel.disabled = true;
+                if (btn) btn.disabled = true;
+            } catch (_) {}
             this.saveLayerPreferencesDebounced();
             return;
         }
@@ -1349,6 +1401,16 @@ const App = {
             unsetLayer('layer-channels', 'channels');
             unsetLayer('layer-assumed-cables', 'assumedCables');
             unsetLayer('layer-markers', 'markers');
+            // синхронизируем UI контролов "предполагаемые кабели"
+            try {
+                MapManager.setAssumedCablesPanelVisible?.(false);
+                const wrap = document.getElementById('assumed-cables-controls');
+                if (wrap) wrap.classList.add('hidden');
+                const sel = document.getElementById('assumed-cables-variant');
+                const btn = document.getElementById('btn-assumed-cables-rebuild');
+                if (sel) sel.disabled = true;
+                if (btn) btn.disabled = true;
+            } catch (_) {}
         }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров
@@ -1388,6 +1450,26 @@ const App = {
         setLayer('layer-ground-cables', 'groundCables', false);
         setLayer('layer-aerial-cables', 'aerialCables', false);
         setLayer('layer-duct-cables', 'ductCables', false);
+
+        // синхронизируем UI контролов "предполагаемые кабели"
+        try {
+            MapManager.setAssumedCablesPanelVisible?.(false);
+            const wrap = document.getElementById('assumed-cables-controls');
+            if (wrap) wrap.classList.add('hidden');
+            const sel = document.getElementById('assumed-cables-variant');
+            const btn = document.getElementById('btn-assumed-cables-rebuild');
+            if (sel) sel.disabled = true;
+            if (btn) btn.disabled = true;
+        } catch (_) {}
+        // синхронизируем UI контролов "колодцы"
+        try {
+            const wrap = document.getElementById('wells-inline-controls');
+            if (wrap) wrap.classList.toggle('hidden', false);
+            const b1 = document.getElementById('btn-toggle-well-labels');
+            const b2 = document.getElementById('btn-toggle-object-coordinates');
+            if (b1) b1.disabled = false;
+            if (b2) b2.disabled = false;
+        } catch (_) {}
 
         MapManager.clearFilters();
         this.notify('Фильтры сброшены', 'info');

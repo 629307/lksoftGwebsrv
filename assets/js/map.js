@@ -1350,7 +1350,8 @@ const MapManager = {
 
     updateWellLabelsVisibility() {
         if (!this.map || !this.wellLabelsLayer) return;
-        const shouldShow = this.wellLabelsEnabled && this.map.getZoom() >= this.wellLabelsMinZoom;
+        const wellsVisible = !!(this.layers?.wells && this.map.hasLayer(this.layers.wells));
+        const shouldShow = wellsVisible && this.wellLabelsEnabled && this.map.getZoom() >= this.wellLabelsMinZoom;
         const hasLayer = this.map.hasLayer(this.wellLabelsLayer);
         if (shouldShow && !hasLayer) this.map.addLayer(this.wellLabelsLayer);
         if (!shouldShow && hasLayer) this.map.removeLayer(this.wellLabelsLayer);
@@ -1358,7 +1359,8 @@ const MapManager = {
 
     updateObjectCoordinatesLabelsVisibility() {
         if (!this.map || !this.objectCoordinatesLabelsLayer) return;
-        const shouldShow = this.objectCoordinatesLabelsEnabled && this.map.getZoom() >= this.objectCoordinatesLabelsMinZoom;
+        const wellsVisible = !!(this.layers?.wells && this.map.hasLayer(this.layers.wells));
+        const shouldShow = wellsVisible && this.objectCoordinatesLabelsEnabled && this.map.getZoom() >= this.objectCoordinatesLabelsMinZoom;
         const hasLayer = this.map.hasLayer(this.objectCoordinatesLabelsLayer);
         if (shouldShow && !hasLayer) this.map.addLayer(this.objectCoordinatesLabelsLayer);
         if (!shouldShow && hasLayer) this.map.removeLayer(this.objectCoordinatesLabelsLayer);
@@ -1461,10 +1463,11 @@ const MapManager = {
     setDirectionLengthLabelsEnabled(enabled) {
         this.directionLengthLabelsEnabled = !!enabled;
         if (!this.map || !this.directionLengthLabelsLayer) return;
+        const channelsVisible = !!(this.layers?.channels && this.map.hasLayer(this.layers.channels));
         const has = this.map.hasLayer(this.directionLengthLabelsLayer);
-        if (this.directionLengthLabelsEnabled && !has) this.map.addLayer(this.directionLengthLabelsLayer);
-        if (!this.directionLengthLabelsEnabled && has) this.map.removeLayer(this.directionLengthLabelsLayer);
-        if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+        if (this.directionLengthLabelsEnabled && channelsVisible && !has) this.map.addLayer(this.directionLengthLabelsLayer);
+        if ((!this.directionLengthLabelsEnabled || !channelsVisible) && has) this.map.removeLayer(this.directionLengthLabelsLayer);
+        if (this.directionLengthLabelsEnabled && channelsVisible) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
         else this.directionLengthLabelsLayer.clearLayers();
     },
 
@@ -2937,6 +2940,24 @@ const MapManager = {
         if (layer) {
             if (visible) {
                 this.map.addLayer(layer);
+                if (layerName === 'wells') {
+                    // подписи колодцев/координат зависят от видимости слоя колодцев
+                    try {
+                        if (this.wellLabelsEnabled) this.rebuildWellLabelsFromWellsLayer();
+                        if (this.objectCoordinatesLabelsEnabled) this.rebuildObjectCoordinatesLabelsFromPointLayers();
+                        this.updateWellLabelsVisibility();
+                        this.updateObjectCoordinatesLabelsVisibility();
+                    } catch (_) {}
+                }
+                if (layerName === 'channels') {
+                    // подписи длины зависят от видимости слоя направлений
+                    try {
+                        if (this.directionLengthLabelsEnabled) {
+                            this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+                            this.setDirectionLengthLabelsEnabled(true);
+                        }
+                    } catch (_) {}
+                }
                 if (layerName === 'inventory') {
                     try {
                         if (this.inventoryLabelsLayer && this.inventoryUnaccountedLabelsEnabled) {
@@ -2952,6 +2973,16 @@ const MapManager = {
                 }
             } else {
                 this.map.removeLayer(layer);
+                if (layerName === 'wells') {
+                    try { this.wellLabelsLayer?.clearLayers?.(); } catch (_) {}
+                    try { this.objectCoordinatesLabelsLayer?.clearLayers?.(); } catch (_) {}
+                    try { this.updateWellLabelsVisibility(); } catch (_) {}
+                    try { this.updateObjectCoordinatesLabelsVisibility(); } catch (_) {}
+                }
+                if (layerName === 'channels') {
+                    try { this.directionLengthLabelsLayer?.clearLayers?.(); } catch (_) {}
+                    try { this.setDirectionLengthLabelsEnabled(this.directionLengthLabelsEnabled); } catch (_) {}
+                }
                 if (layerName === 'inventory') {
                     try { this.layers.inventory?.clearLayers?.(); } catch (_) {}
                     try { this.inventoryLabelsLayer?.clearLayers?.(); } catch (_) {}
