@@ -328,14 +328,6 @@ class AssumedCableController extends BaseController
                     // ТЗ: если кабель проходит через колодец с owner tag, он может быть назначен этому owner.
                     // Поэтому назначаем при наличии хотя бы одного тега на маршруте, а уверенность повышаем,
                     // если теги встречаются в нескольких колодцах по маршруту.
-                    $need = 1; // тратим один tag на один маршрут
-                    foreach ($wellsOnRoute as $w) {
-                        if ($need <= 0) break;
-                        $curCnt = (int) ($supply[$w][$oid] ?? 0);
-                        if ($curCnt <= 0) continue;
-                        $supply[$w][$oid] = max(0, $curCnt - 1);
-                        $need--;
-                    }
                     $hits = (int) ($bestOwner['hits'] ?? 0);
                     $conf = ($hits >= 2) ? 0.85 : 0.60;
                     if ($variantNo === 2) $conf = ($hits >= 2) ? 0.80 : 0.65;
@@ -631,136 +623,131 @@ class AssumedCableController extends BaseController
             return $components;
         };
 
-        // METHOD 1: Weighted Components (с пересборкой компонент после списания capacity)
-        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute): array {
+        $anyCapacityLeft = function(array $rem): bool {
+            foreach ($rem as $cap) if ((int) $cap > 0) return true;
+            return false;
+        };
+        $routeConsumesAny = function(array $route, array $rem): bool {
+            foreach ((array) ($route['direction_ids'] ?? []) as $dirId) {
+                $dirId = (int) $dirId;
+                if ((int) ($rem[$dirId] ?? 0) > 0) return true;
+            }
+            return false;
+        };
+        $consumeRoute = function(array &$rem, array $route): bool {
+            $did = false;
+            foreach ((array) ($route['direction_ids'] ?? []) as $dirId) {
+                $dirId = (int) $dirId;
+                $cap = (int) ($rem[$dirId] ?? 0);
+                if ($cap > 0) {
+                    $rem[$dirId] = $cap - 1;
+                    $did = true;
+                }
+            }
+            return $did;
+        };
+
+        // METHOD 1: Global Longest Paths with Capacity Consumption (Greedy)
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
-            while (count($routes) < $maxRoutes) {
-                $comps = $buildFullComponents($fullAdj, $rem, $supply0);
-                if (!$comps) break;
-                foreach ($comps as &$c) {
-                    $c['weight'] =
-                        1 * (int) ($c['edges_count'] ?? 0) +
-                        2 * (int) ($c['sum_capacity'] ?? 0) +
-                        3 * (int) ($c['owner_tags_count'] ?? 0);
-                }
-                unset($c);
-                usort($comps, fn($a, $b) => ((int) ($b['weight'] ?? 0) <=> (int) ($a['weight'] ?? 0)));
-
-                $c = $comps[0] ?? null;
-                if (!$c) break;
+            // 1) сгенерируем набор длинных путей по полной сети (без фильтрации по capacity)
+            $comps0 = $buildFullComponents($fullAdj, $rem, $supply0);
+            $cands = [];
+            foreach ($comps0 as $c) {
                 $dirAll = $c['dir_ids_all'] ?? [];
-                if (!$dirAll) break;
+                if (!$dirAll) continue;
+                foreach ([ [false,false], [false,true] ] as $opt) {
+                    $p = $mstDiameterPath($dirAll, $rem, (bool) $opt[0], (bool) $opt[1]);
+                    if ($p) $cands[] = $p;
+                }
+            }
+            // уникализация + длина
+            $uniq = [];
+            foreach ($cands as $cand) {
+                $dirIds = array_values(array_map('intval', (array) ($cand['direction_ids'] ?? [])));
+                if (!$dirIds) continue;
+                $k1 = implode(',', $dirIds);
+                $k2 = implode(',', array_reverse($dirIds));
+                $key = strcmp($k1, $k2) <= 0 ? $k1 : $k2;
+                $s = $scoreRoute($cand, $rem);
+                $cand['_len'] = (float) ($s['len'] ?? 0);
+                $uniq[$key] = $cand;
+            }
+            $cands = array_values($uniq);
+            usort($cands, fn($a, $b) => ((float) ($b['_len'] ?? 0) <=> (float) ($a['_len'] ?? 0)));
 
-                // кандидаты путей (все — по полной топологии, но score учитывает bottleneck capacity)
-                $cands = [];
-                $p1 = $mstDiameterPath($dirAll, $rem, false, false);
-                if ($p1) $cands[] = $p1;
-                $p2 = $mstDiameterPath($dirAll, $rem, false, true);
-                if ($p2) $cands[] = $p2;
-                $p3 = $mstDiameterPath($dirAll, $rem, true, false);
-                if ($p3) $cands[] = $p3;
-
-                $best = null;
-                $bestScore = -1e100;
+            // 2) жадно потребляем capacity по пути, пока есть ресурс
+            while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
+                $progress = false;
                 foreach ($cands as $cand) {
-                    $s = $scoreRoute($cand, $rem);
-                    if (!($s['ok'] ?? false)) continue;
-                    if ((float) ($s['score'] ?? -1e100) > $bestScore) {
-                        $bestScore = (float) $s['score'];
-                        $best = $cand;
+                    if (count($routes) >= $maxRoutes) break;
+                    if (!$routeConsumesAny($cand, $rem)) continue;
+                    if ($consumeRoute($rem, $cand)) {
+                        $progress = true;
+                        $r = $cand;
+                        unset($r['_len']);
+                        $routes[] = $r;
                     }
                 }
-                if (!$best) break;
+                if (!$progress) break;
+            }
 
-                // consume 1 unit of capacity on each edge of the route where rem>0
-                $dirIds = array_values(array_map('intval', (array) ($best['direction_ids'] ?? [])));
-                $ok = false;
-                foreach ($dirIds as $dirId) {
-                    $cap = (int) ($rem[(int) $dirId] ?? 0);
-                    if ($cap > 0) {
-                        $rem[(int) $dirId] = $cap - 1;
-                        $ok = true;
-                    }
+            // fallback: оставшиеся единицы capacity -> одиночные кабели по направлению
+            foreach ($rem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                for ($i = 0; $i < $cap && count($routes) < $maxRoutes; $i++) {
+                    $d = $dirs[$dirId] ?? null;
+                    $a = (int) ($d['a'] ?? 0);
+                    $b = (int) ($d['b'] ?? 0);
+                    $routes[] = [
+                        'start_well_id' => $a > 0 ? $a : null,
+                        'end_well_id' => $b > 0 ? $b : null,
+                        'direction_ids' => [$dirId],
+                        'weight' => 0.0,
+                    ];
                 }
-                if (!$ok) break;
-                $routes[] = $best;
             }
 
             return $routes;
         };
 
-        // METHOD 2: K Longest Paths with Capacity (score-based greedy)
-        $buildRoutesMethod2 = function(array $baseRem, int $k = 250) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute): array {
+        // METHOD 2: Capacity-Aware Iterative Longest Path Extraction
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
-            while (count($routes) < $maxRoutes) {
-                $comps = $buildFullComponents($fullAdj, $rem, []); // supply не нужен для генерации
+            while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
+                $comps = $buildFullComponents($fullAdj, $rem, $supply0);
                 if (!$comps) break;
-                // берём несколько самых "тяжёлых" компонент
-                $comps = array_slice($comps, 0, 20);
 
-                $cands = [];
+                $best = null;
+                $bestScore = -1e100;
                 foreach ($comps as $c) {
                     $dirAll = $c['dir_ids_all'] ?? [];
                     if (!$dirAll) continue;
                     foreach ([ [false,false], [false,true], [true,false] ] as $opt) {
                         $p = $mstDiameterPath($dirAll, $rem, (bool) $opt[0], (bool) $opt[1]);
-                        if ($p) $cands[] = $p;
+                        if (!$p) continue;
+                        $s = $scoreRoute($p, $rem);
+                        if (!($s['ok'] ?? false)) continue;
+                        if ((float) ($s['score'] ?? -1e100) > $bestScore) {
+                            $bestScore = (float) $s['score'];
+                            $best = $p;
+                        }
                     }
                 }
-                if (!$cands) break;
+                if (!$best) break;
 
-                // уникализируем по направлению
-                $uniq = [];
-                foreach ($cands as $cand) {
-                    $dirIds = array_values(array_map('intval', (array) ($cand['direction_ids'] ?? [])));
-                    if (!$dirIds) continue;
-                    $k1 = implode(',', $dirIds);
-                    $k2 = implode(',', array_reverse($dirIds));
-                    $key = strcmp($k1, $k2) <= 0 ? $k1 : $k2;
-                    $uniq[$key] = $cand;
-                }
-                $cands = array_values($uniq);
-
-                $scored = [];
-                foreach ($cands as $cand) {
-                    $s = $scoreRoute($cand, $rem);
-                    if (!($s['ok'] ?? false)) continue;
-                    $cand['_score'] = (float) ($s['score'] ?? 0);
-                    $scored[] = $cand;
-                }
-                if (!$scored) break;
-                usort($scored, fn($a, $b) => ((float) ($b['_score'] ?? 0) <=> (float) ($a['_score'] ?? 0)));
-                $scored = array_slice($scored, 0, max(1, $k));
-
-                $progress = false;
-                foreach ($scored as $cand) {
-                    if (count($routes) >= $maxRoutes) break;
-                    $dirIds = array_values(array_map('intval', (array) ($cand['direction_ids'] ?? [])));
-                    if (!$dirIds) continue;
-                    // check capacity feasibility: must have rem>0 on at least one edge
-                    $hasCap = false;
-                    foreach ($dirIds as $dirId) { if ((int) ($rem[(int) $dirId] ?? 0) > 0) { $hasCap = true; break; } }
-                    if (!$hasCap) continue;
-                    // consume
-                    $didConsume = false;
-                    foreach ($dirIds as $dirId) {
-                        $cap = (int) ($rem[(int) $dirId] ?? 0);
-                        if ($cap > 0) { $rem[(int) $dirId] = $cap - 1; $didConsume = true; }
-                    }
-                    if ($didConsume) {
-                        unset($cand['_score']);
-                        $routes[] = $cand;
-                        $progress = true;
-                    }
-                }
-                if (!$progress) break;
+                if (!$consumeRoute($rem, $best)) break;
+                $routes[] = $best;
             }
+
             return $routes;
         };
 
@@ -847,7 +834,7 @@ class AssumedCableController extends BaseController
 
         $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($buildRoutesMethod1, $buildRoutesMethod2, $buildRoutesMethod3, $supply0): array {
             if ($variantNo === 1) return $buildRoutesMethod1($baseRem, $supply0);
-            if ($variantNo === 2) return $buildRoutesMethod2($baseRem, 250);
+            if ($variantNo === 2) return $buildRoutesMethod2($baseRem, $supply0);
             return $buildRoutesMethod3($baseRem);
         };
 
