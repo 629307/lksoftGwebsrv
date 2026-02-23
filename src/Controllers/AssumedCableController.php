@@ -751,82 +751,160 @@ class AssumedCableController extends BaseController
             return $routes;
         };
 
-        // METHOD 3: "Min Cost Max Flow" (декомпозиция потока capacity в пути)
-        // Реализация без DAG: берём мультирёбра по capacity>0 и раскладываем на максимальные trails.
-        $buildRoutesMethod3 = function(array $baseRem) use ($dirs): array {
-            $rem = $baseRem; // dirId => capacity
+        // METHOD 3: Max-flow style decomposition into long continuous paths (full graph transit)
+        // Ресурс: capacity на рёбрах (rem>0). Топология: ВСЕ направления (в т.ч. rem=0).
+        $buildRoutesMethod3 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $anyCapacityLeft, $consumeRoute, $routeConsumesAny): array {
+            $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
-            // adjacency for remaining (only edges with cap>0)
-            $adj = []; // wellId => [dirId...]
-            $edgeEnds = []; // dirId => [a,b]
-            foreach ($rem as $dirId => $cap) {
-                $dirId = (int) $dirId;
-                $cap = (int) $cap;
-                if ($dirId <= 0 || $cap <= 0) continue;
-                $d = $dirs[$dirId] ?? null;
-                if (!$d) continue;
-                $a = (int) ($d['a'] ?? 0);
-                $b = (int) ($d['b'] ?? 0);
-                if ($a <= 0 || $b <= 0) continue;
-                $edgeEnds[$dirId] = [$a, $b];
-                if (!isset($adj[$a])) $adj[$a] = [];
-                if (!isset($adj[$b])) $adj[$b] = [];
-                $adj[$a][] = $dirId;
-                $adj[$b][] = $dirId;
-            }
+            // Dijkstra (shortest connector) on full graph by length
+            $shortestPathDirs = function(int $from, array $targets) use ($fullAdj): array {
+                $targetsSet = [];
+                foreach ($targets as $t) { $t = (int) $t; if ($t > 0) $targetsSet[$t] = true; }
+                if ($from <= 0 || !$targetsSet) return [null, []];
+                if (isset($targetsSet[$from])) return [$from, []];
 
-            $degree = function(int $w) use (&$adj, &$rem): int {
-                $deg = 0;
-                foreach (($adj[$w] ?? []) as $dirId) $deg += max(0, (int) ($rem[(int)$dirId] ?? 0));
-                return $deg;
+                $dist = [$from => 0.0];
+                $pn = [];
+                $pe = [];
+                $pq = new \SplPriorityQueue();
+                $pq->setExtractFlags(\SplPriorityQueue::EXTR_BOTH);
+                $pq->insert($from, 0.0);
+                $seen = [];
+                while (!$pq->isEmpty()) {
+                    $cur = $pq->extract();
+                    $u = (int) ($cur['data'] ?? 0);
+                    $du = -1.0 * (float) ($cur['priority'] ?? 0);
+                    if ($u <= 0) continue;
+                    if (isset($seen[$u])) continue;
+                    $seen[$u] = true;
+                    if (isset($targetsSet[$u])) {
+                        // reconstruct path dir ids
+                        $pathDirs = [];
+                        $x = $u;
+                        while ($x !== $from && isset($pn[$x])) {
+                            $eid = (int) ($pe[$x] ?? 0);
+                            if ($eid > 0) $pathDirs[] = $eid;
+                            $x = (int) ($pn[$x] ?? 0);
+                            if ($x <= 0) break;
+                        }
+                        $pathDirs = array_reverse($pathDirs);
+                        return [$u, $pathDirs];
+                    }
+                    foreach (($fullAdj[$u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        $eid = (int) ($e['dir'] ?? 0);
+                        $w = (float) ($e['len'] ?? 0);
+                        if ($v <= 0 || $eid <= 0 || $w <= 0) continue;
+                        $nd = $du + $w;
+                        if (!isset($dist[$v]) || $nd < (float) $dist[$v] - 1e-9) {
+                            $dist[$v] = $nd;
+                            $pn[$v] = $u;
+                            $pe[$v] = $eid;
+                            $pq->insert($v, -1.0 * $nd);
+                        }
+                    }
+                }
+                return [null, []];
             };
 
-            while (count($routes) < $maxRoutes) {
-                // pick start: prefer odd degree (in multigraph sense), else any with degree>0
-                $start = 0;
-                foreach (array_keys($adj) as $w) {
+            // build helper: wells that still have incident capacity edges
+            $capacityWells = function(array $rem) use ($dirs): array {
+                $ws = [];
+                foreach ($rem as $dirId => $cap) {
+                    $cap = (int) $cap;
+                    if ($cap <= 0) continue;
+                    $d = $dirs[(int) $dirId] ?? null;
+                    if (!$d) continue;
+                    $a = (int) ($d['a'] ?? 0);
+                    $b = (int) ($d['b'] ?? 0);
+                    if ($a > 0) $ws[$a] = true;
+                    if ($b > 0) $ws[$b] = true;
+                }
+                return array_keys($ws);
+            };
+
+            while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
+                $wellsWithCap = $capacityWells($rem);
+                if (!$wellsWithCap) break;
+
+                // start at any well with capacity; prefer one with largest incident edge length
+                $start = (int) ($wellsWithCap[0] ?? 0);
+                $bestStartScore = -1.0;
+                foreach ($wellsWithCap as $w) {
                     $w = (int) $w;
-                    $deg = $degree($w);
-                    if ($deg <= 0) continue;
-                    if (($deg % 2) === 1) { $start = $w; break; }
-                    if ($start <= 0) $start = $w;
+                    $best = -1.0;
+                    foreach ($rem as $dirId => $cap) {
+                        if ((int) $cap <= 0) continue;
+                        $d = $dirs[(int) $dirId] ?? null;
+                        if (!$d) continue;
+                        $a = (int) ($d['a'] ?? 0);
+                        $b = (int) ($d['b'] ?? 0);
+                        if ($a !== $w && $b !== $w) continue;
+                        $len = (float) ($d['length_m'] ?? 0);
+                        if ($len > $best) $best = $len;
+                    }
+                    if ($best > $bestStartScore) { $bestStartScore = $best; $start = $w; }
                 }
                 if ($start <= 0) break;
 
                 $cur = $start;
                 $pathDirs = [];
-                // greedy walk: always take the longest available incident edge
-                while (true) {
+                $safety = 0;
+                while ($anyCapacityLeft($rem) && $safety++ < 5000) {
+                    // try consume longest incident capacity edge
                     $bestDir = 0;
                     $bestLen = -1.0;
-                    foreach (($adj[$cur] ?? []) as $dirId) {
-                        $dirId = (int) $dirId;
-                        if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
-                        $len = (float) ($dirs[$dirId]['length_m'] ?? 0);
-                        if ($len > $bestLen) { $bestLen = $len; $bestDir = $dirId; }
+                    foreach ($rem as $dirId => $cap) {
+                        if ((int) $cap <= 0) continue;
+                        $d = $dirs[(int) $dirId] ?? null;
+                        if (!$d) continue;
+                        $a = (int) ($d['a'] ?? 0);
+                        $b = (int) ($d['b'] ?? 0);
+                        if ($a !== $cur && $b !== $cur) continue;
+                        $len = (float) ($d['length_m'] ?? 0);
+                        if ($len > $bestLen) { $bestLen = $len; $bestDir = (int) $dirId; }
                     }
-                    if ($bestDir <= 0) break;
-                    // consume 1
-                    $rem[$bestDir] = (int) ($rem[$bestDir] ?? 0) - 1;
-                    $pathDirs[] = $bestDir;
-                    // move to other end
-                    $ends = $edgeEnds[$bestDir] ?? null;
-                    if (!$ends) break;
-                    $a = (int) ($ends[0] ?? 0);
-                    $b = (int) ($ends[1] ?? 0);
-                    $cur = ($cur === $a) ? $b : $a;
+                    if ($bestDir > 0) {
+                        $d = $dirs[$bestDir] ?? null;
+                        $a = (int) ($d['a'] ?? 0);
+                        $b = (int) ($d['b'] ?? 0);
+                        $pathDirs[] = $bestDir;
+                        // consume on this edge
+                        if ((int) ($rem[$bestDir] ?? 0) > 0) $rem[$bestDir] = (int) $rem[$bestDir] - 1;
+                        $cur = ($cur === $a) ? $b : $a;
+                        continue;
+                    }
+
+                    // no incident capacity edge -> connect to another capacity well via full graph
+                    $targets = $capacityWells($rem);
+                    if (!$targets) break;
+                    [$reach, $connDirs] = $shortestPathDirs($cur, $targets);
+                    if (!$reach || !$connDirs) break;
+
+                    // traverse connector; consume on any capacity edges on it
+                    foreach ($connDirs as $dirId) {
+                        $dirId = (int) $dirId;
+                        if ($dirId <= 0) continue;
+                        $pathDirs[] = $dirId;
+                        if ((int) ($rem[$dirId] ?? 0) > 0) $rem[$dirId] = (int) $rem[$dirId] - 1;
+                    }
+                    $cur = (int) $reach;
                 }
 
                 if (!$pathDirs) break;
-                // end well: current
-                $routes[] = [
+                $route = [
                     'start_well_id' => $start,
                     'end_well_id' => $cur,
                     'direction_ids' => $pathDirs,
                     'weight' => 0.0,
                 ];
+                if (!$routeConsumesAny($route, $baseRem)) {
+                    // should not happen, but safety
+                    break;
+                }
+                $routes[] = $route;
             }
 
             return $routes;
@@ -835,7 +913,7 @@ class AssumedCableController extends BaseController
         $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($buildRoutesMethod1, $buildRoutesMethod2, $buildRoutesMethod3, $supply0): array {
             if ($variantNo === 1) return $buildRoutesMethod1($baseRem, $supply0);
             if ($variantNo === 2) return $buildRoutesMethod2($baseRem, $supply0);
-            return $buildRoutesMethod3($baseRem);
+            return $buildRoutesMethod3($baseRem, $supply0);
         };
 
         // 5) Сохранение: 3 варианта (маршруты + собственник)
