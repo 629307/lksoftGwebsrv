@@ -2264,8 +2264,8 @@ const MapManager = {
 
     assumedVariantLabel(v) {
         const vv = [1, 2, 3].includes(Number(v)) ? Number(v) : 1;
-        if (vv === 1) return '1 — Weighted Components';
-        if (vv === 2) return '2 — K Longest Paths';
+        if (vv === 1) return '1 — Взвешенные компоненты';
+        if (vv === 2) return '2 — K длиннейших путей';
         return '3 — Min Cost Max Flow';
     },
 
