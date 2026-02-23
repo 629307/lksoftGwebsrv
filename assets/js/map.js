@@ -601,6 +601,23 @@ const MapManager = {
         // Клик по карте
         this.map.on('click', (e) => this.onMapClick(e));
 
+        // Правая кнопка мыши: линейка -> удалить последнюю точку
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                host.addEventListener('contextmenu', (e) => {
+                    try {
+                        if (!this.rulerMode) return;
+                        const pts = this.rulerPoints || [];
+                        if (!pts.length) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.removeLastRulerPoint?.();
+                    } catch (_) {}
+                });
+            }
+        } catch (_) {}
+
         // Ctrl + drag: прямоугольное выделение (мультивыбор)
         try { this.initBoxSelection(); } catch (_) {}
 
@@ -1824,6 +1841,43 @@ const MapManager = {
         }
     },
 
+    removeLastRulerPoint() {
+        if (!this.rulerMode || !this.map || !this.rulerLayer) return;
+        const pts = this.rulerPoints || [];
+        if (!pts.length) return;
+
+        // remove last point + coords label
+        const last = pts.pop();
+        try { if (last?.point) this.rulerLayer.removeLayer(last.point); } catch (_) {}
+        try { if (last?.label) this.rulerLayer.removeLayer(last.label); } catch (_) {}
+        this.rulerPoints = pts;
+
+        // remove last fixed segment (if any)
+        const segs = this.rulerFixedSegments || [];
+        if (segs.length) {
+            const seg = segs.pop();
+            try { if (seg?.line) this.rulerLayer.removeLayer(seg.line); } catch (_) {}
+            try { if (seg?.label) this.rulerLayer.removeLayer(seg.label); } catch (_) {}
+            const m = Number(seg?.meters || 0) || 0;
+            this.rulerSumMeters = Math.max(0, (Number(this.rulerSumMeters || 0) || 0) - m);
+        }
+        this.rulerFixedSegments = segs;
+
+        // refresh cursor dynamic
+        try {
+            if (this.rulerLastCursorLatLng) this.updateRulerMouseMove(this.rulerLastCursorLatLng);
+            else if (!this.rulerPoints.length) {
+                // no points -> clear temp artifacts
+                try {
+                    if (this.rulerTempLine) this.rulerLayer.removeLayer(this.rulerTempLine);
+                    this.rulerTempLine = null;
+                    if (this.rulerCursorLabel) this.rulerLayer.removeLayer(this.rulerCursorLabel);
+                    this.rulerCursorLabel = null;
+                } catch (_) {}
+            }
+        } catch (_) {}
+    },
+
     addRulerPoint(latlng) {
         if (!this.rulerMode || !this.map) return;
         if (!latlng) return;
@@ -2210,9 +2264,9 @@ const MapManager = {
 
     assumedVariantLabel(v) {
         const vv = [1, 2, 3].includes(Number(v)) ? Number(v) : 1;
-        if (vv === 1) return '1 — Максимальная точность';
-        if (vv === 2) return '2 — Баланс точность/покрытие';
-        return '3 — Максимальное покрытие';
+        if (vv === 1) return '1 — Weighted Components';
+        if (vv === 2) return '2 — K Longest Paths';
+        return '3 — Min Cost Max Flow';
     },
 
     setAssumedCablesPanelVisible(visible) {
