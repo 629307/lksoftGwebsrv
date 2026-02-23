@@ -295,6 +295,18 @@ class AssumedCableController extends BaseController
                     $scores[$oid]['hits'] += 1;
                 }
             }
+            $candidates = [];
+            if ($scores) {
+                foreach ($scores as $oid => $s) {
+                    $oid = (int) $oid;
+                    $score = (int) ($s['score'] ?? 0);
+                    $hits = (int) ($s['hits'] ?? 0);
+                    if ($oid <= 0 || $score <= 0) continue;
+                    $candidates[] = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
+                }
+                usort($candidates, fn($a, $b) => (($b['score'] ?? 0) <=> ($a['score'] ?? 0)) ?: (($b['hits'] ?? 0) <=> ($a['hits'] ?? 0)));
+                $candidates = array_slice($candidates, 0, 10);
+            }
             if ($scores) {
                 // pick by max score, then max hits
                 $bestOwner = null;
@@ -333,6 +345,7 @@ class AssumedCableController extends BaseController
                         'confidence' => $conf,
                         'mode' => ($hits >= 2 ? 'tags_multi_wells' : 'tags_any_well'),
                         'well_ids' => $wellsOnRoute,
+                        'owner_candidates' => $candidates,
                     ];
                 }
             }
@@ -350,302 +363,514 @@ class AssumedCableController extends BaseController
                 if ($votes) {
                     arsort($votes);
                     $oid = (int) array_key_first($votes);
-                    if ($oid > 0) return ['owner_id' => $oid, 'confidence' => 0.35, 'mode' => 'real_cables_fallback', 'well_ids' => $wellsOnRoute];
+                    if ($oid > 0) return ['owner_id' => $oid, 'confidence' => 0.35, 'mode' => 'real_cables_fallback', 'well_ids' => $wellsOnRoute, 'owner_candidates' => $candidates];
                 }
             }
 
-            return ['owner_id' => null, 'confidence' => 0.15, 'mode' => 'unknown', 'well_ids' => $wellsOnRoute];
+            return ['owner_id' => null, 'confidence' => 0.15, 'mode' => 'unknown', 'well_ids' => $wellsOnRoute, 'owner_candidates' => $candidates];
         };
 
-        $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($dirs, $weightFor): array {
+        // --- 3 независимых алгоритма (METHOD 1/2/3) ---
+        // Общие утилиты: подграф capacity>0, компоненты, "longest path" (эвристика: диаметр по длине).
+
+        $dijkstra = function(int $start, array $adj): array {
+            $dist = [$start => 0.0];
+            $parentNode = [$start => 0];
+            $parentEdge = [];
+            $pq = new \SplPriorityQueue();
+            $pq->setExtractFlags(\SplPriorityQueue::EXTR_BOTH);
+            $pq->insert($start, 0.0); // priority = -dist (we store negative dist)
+            while (!$pq->isEmpty()) {
+                $cur = $pq->extract();
+                $u = (int) ($cur['data'] ?? 0);
+                $d = -1.0 * (float) ($cur['priority'] ?? 0);
+                if ($u <= 0) continue;
+                if ($d > (float) ($dist[$u] ?? 1e100) + 1e-9) continue;
+                foreach (($adj[$u] ?? []) as $e) {
+                    $v = (int) ($e['to'] ?? 0);
+                    $w = (float) ($e['w'] ?? 0);
+                    $eid = (int) ($e['dir'] ?? 0);
+                    if ($v <= 0 || $w <= 0 || $eid <= 0) continue;
+                    $nd = $d + $w;
+                    if (!isset($dist[$v]) || $nd < (float) $dist[$v] - 1e-9) {
+                        $dist[$v] = $nd;
+                        $parentNode[$v] = $u;
+                        $parentEdge[$v] = $eid;
+                        $pq->insert($v, -1.0 * $nd);
+                    }
+                }
+            }
+            $far = $start;
+            $best = -1.0;
+            foreach ($dist as $n => $d) {
+                $n = (int) $n;
+                $d = (float) $d;
+                if ($d > $best) { $best = $d; $far = $n; }
+            }
+            return [$far, $best, $dist, $parentNode, $parentEdge];
+        };
+
+        $diameterPath = function(array $dirIds, array $rem) use ($dirs, $dijkstra): ?array {
+            // build adj limited to dirIds and rem>0
+            $adj = [];
+            foreach ($dirIds as $dirId) {
+                $dirId = (int) $dirId;
+                if ($dirId <= 0) continue;
+                if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                if ($a <= 0 || $b <= 0) continue;
+                $w = (float) ($d['length_m'] ?? 0);
+                if (!isset($adj[$a])) $adj[$a] = [];
+                if (!isset($adj[$b])) $adj[$b] = [];
+                $adj[$a][] = ['to' => $b, 'dir' => $dirId, 'w' => $w];
+                $adj[$b][] = ['to' => $a, 'dir' => $dirId, 'w' => $w];
+            }
+            if (!$adj) return null;
+            $start = (int) array_key_first($adj);
+            if ($start <= 0) return null;
+            [$aNode] = $dijkstra($start, $adj);
+            [$bNode, $diam, $_dist2, $pn2, $pe2] = $dijkstra($aNode, $adj);
+            if ($diam <= 0) return null;
+            // reconstruct dir path from bNode to aNode
+            $pathDirs = [];
+            $cur = (int) $bNode;
+            while ($cur !== (int) $aNode && isset($pn2[$cur])) {
+                $eid = (int) ($pe2[$cur] ?? 0);
+                if ($eid > 0) $pathDirs[] = $eid;
+                $cur = (int) ($pn2[$cur] ?? 0);
+                if ($cur <= 0) break;
+            }
+            $pathDirs = array_reverse($pathDirs);
+            if (!$pathDirs) return null;
+            return [
+                'start_well_id' => (int) $aNode,
+                'end_well_id' => (int) $bNode,
+                'direction_ids' => $pathDirs,
+                'weight' => (float) $diam,
+            ];
+        };
+
+        $buildCapacityComponents = function(array $rem, array $supply0) use ($dirs): array {
+            // components on subgraph where rem>0
+            $adj = [];
+            foreach ($rem as $dirId => $cap) {
+                $cap = (int) $cap;
+                if ($cap <= 0) continue;
+                $dirId = (int) $dirId;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                if ($a <= 0 || $b <= 0) continue;
+                if (!isset($adj[$a])) $adj[$a] = [];
+                if (!isset($adj[$b])) $adj[$b] = [];
+                $adj[$a][] = [$b, $dirId];
+                $adj[$b][] = [$a, $dirId];
+            }
+            if (!$adj) return [];
+            $visited = [];
+            $out = [];
+            foreach (array_keys($adj) as $start) {
+                $start = (int) $start;
+                if ($start <= 0 || isset($visited[$start])) continue;
+                $stack = [$start];
+                $visited[$start] = true;
+                $wellSet = [];
+                $dirSet = [];
+                while ($stack) {
+                    $u = (int) array_pop($stack);
+                    $wellSet[$u] = true;
+                    foreach (($adj[$u] ?? []) as $e) {
+                        $v = (int) ($e[0] ?? 0);
+                        $dirId = (int) ($e[1] ?? 0);
+                        if ($dirId > 0) $dirSet[$dirId] = true;
+                        if ($v > 0 && !isset($visited[$v])) {
+                            $visited[$v] = true;
+                            $stack[] = $v;
+                        }
+                    }
+                }
+                $wellIds = array_keys($wellSet);
+                $dirIds = array_keys($dirSet);
+                if (!$dirIds) continue;
+                $sumCap = 0;
+                foreach ($dirIds as $dirId) $sumCap += (int) ($rem[(int) $dirId] ?? 0);
+                $tags = 0;
+                foreach ($wellIds as $w) {
+                    foreach (($supply0[(int) $w] ?? []) as $oid => $cnt) $tags += (int) $cnt;
+                }
+                $out[] = [
+                    'well_ids' => $wellIds,
+                    'dir_ids' => $dirIds,
+                    'edges_count' => count($dirIds),
+                    'sum_capacity' => $sumCap,
+                    'owner_tags_count' => $tags,
+                ];
+            }
+            return $out;
+        };
+
+        // METHOD 1: Weighted Components
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($buildCapacityComponents, $diameterPath, $dirs): array {
             $rem = $baseRem;
             $routes = [];
-
-            // union-find helpers
-            $ufInit = function(array $nodes) {
-                $p = [];
-                $r = [];
-                foreach ($nodes as $n) {
-                    $p[$n] = $n;
-                    $r[$n] = 0;
-                }
-                return [$p, $r];
-            };
-
-            $find = null;
-            $find = function($x, &$p) use (&$find) {
-                if (!isset($p[$x])) $p[$x] = $x;
-                if ($p[$x] !== $x) $p[$x] = $find($p[$x], $p);
-                return $p[$x];
-            };
-            $union = function($a, $b, &$p, &$r) use ($find) {
-                $ra = $find($a, $p);
-                $rb = $find($b, $p);
-                if ($ra === $rb) return false;
-                $rka = $r[$ra] ?? 0;
-                $rkb = $r[$rb] ?? 0;
-                if ($rka < $rkb) { $p[$ra] = $rb; }
-                elseif ($rka > $rkb) { $p[$rb] = $ra; }
-                else { $p[$rb] = $ra; $r[$ra] = $rka + 1; }
-                return true;
-            };
-
-            $farthestFrom = function(int $start, array $adj): array {
-                $stack = [[$start, 0]];
-                $dist = [$start => 0.0];
-                $parentNode = [$start => 0];
-                $parentEdge = [];
-                $nodes = [];
-                while ($stack) {
-                    [$u, $p] = array_pop($stack);
-                    $nodes[] = $u;
-                    foreach (($adj[$u] ?? []) as $e) {
-                        $v = (int) ($e['to'] ?? 0);
-                        if ($v <= 0) continue;
-                        if ($v === (int) $p) continue;
-                        if (isset($dist[$v])) continue;
-                        $parentNode[$v] = $u;
-                        $parentEdge[$v] = (int) ($e['dir'] ?? 0);
-                        $dist[$v] = (float) ($dist[$u] ?? 0) + (float) ($e['w'] ?? 0);
-                        $stack[] = [$v, $u];
-                    }
-                }
-                $far = $start;
-                $best = -1.0;
-                foreach ($dist as $n => $d) {
-                    if ($d > $best) { $best = $d; $far = (int) $n; }
-                }
-                return [$far, $best, $dist, $parentNode, $parentEdge, $nodes];
-            };
-
-            $buildEdges = function(array $rem, ?array $restrictDirIds = null) use ($dirs, $weightFor, $variantNo): array {
-                $edges = [];
-                if ($restrictDirIds !== null) {
-                    foreach ($restrictDirIds as $dirId) {
-                        $dirId = (int) $dirId;
-                        if ($dirId <= 0) continue;
-                        if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
-                        $d = $dirs[$dirId] ?? null;
-                        if (!$d) continue;
-                        $a = (int) $d['a']; $b = (int) $d['b'];
-                        $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
-                        $edges[] = ['dir' => $dirId, 'a' => $a, 'b' => $b, 'w' => (float) $w];
-                    }
-                } else {
-                    foreach ($rem as $dirId => $cap) {
-                        $cap = (int) $cap;
-                        if ($cap <= 0) continue;
-                        $d = $dirs[(int) $dirId] ?? null;
-                        if (!$d) continue;
-                        $a = (int) $d['a']; $b = (int) $d['b'];
-                        $w = $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
-                        $edges[] = ['dir' => (int) $dirId, 'a' => $a, 'b' => $b, 'w' => (float) $w];
-                    }
-                }
-                if ($edges) usort($edges, fn($x, $y) => ($y['w'] <=> $x['w']));
-                return $edges;
-            };
-
-            $bestPathForEdges = function(array $edges) use ($ufInit, $union, $farthestFrom): ?array {
-                if (!$edges) return null;
-                $nodesSet = [];
-                foreach ($edges as $e) {
-                    $nodesSet[(int) $e['a']] = true;
-                    $nodesSet[(int) $e['b']] = true;
-                }
-                $nodes = array_keys($nodesSet);
-                if (!$nodes) return null;
-                [$p, $rk] = $ufInit($nodes);
-                $adj = [];
-                foreach ($nodes as $n) $adj[(int) $n] = [];
-                foreach ($edges as $e) {
-                    $a = (int) $e['a']; $b = (int) $e['b'];
-                    if ($union($a, $b, $p, $rk)) {
-                        $adj[$a][] = ['to' => $b, 'dir' => (int) $e['dir'], 'w' => (float) $e['w']];
-                        $adj[$b][] = ['to' => $a, 'dir' => (int) $e['dir'], 'w' => (float) $e['w']];
-                    }
-                }
-
-                // find best diameter among tree-components
-                $visited = [];
-                $bestPath = null;
-                foreach ($nodes as $n0) {
-                    $n0 = (int) $n0;
-                    if (isset($visited[$n0])) continue;
-                    if (empty($adj[$n0])) { $visited[$n0] = true; continue; }
-                    [$aNode, $_d1, $_dist1, $_pn1, $_pe1, $compNodes] = $farthestFrom($n0, $adj);
-                    foreach ($compNodes as $cn) $visited[(int) $cn] = true;
-                    [$bNode, $diam, $_dist2, $pn2, $pe2] = $farthestFrom($aNode, $adj);
-                    if ($diam < 0) continue;
-                    // reconstruct path dir ids from bNode to aNode
-                    $dirsPath = [];
-                    $cur = $bNode;
-                    while ($cur !== $aNode && isset($pn2[$cur])) {
-                        $eid = (int) ($pe2[$cur] ?? 0);
-                        if ($eid > 0) $dirsPath[] = $eid;
-                        $cur = (int) $pn2[$cur];
-                        if ($cur <= 0) break;
-                    }
-                    $dirsPath = array_reverse($dirsPath);
-                    if (!$dirsPath) continue;
-                    if ($bestPath === null || $diam > (float) ($bestPath['weight'] ?? 0)) {
-                        $bestPath = [
-                            'start_well_id' => $aNode,
-                            'end_well_id' => $bNode,
-                            'direction_ids' => $dirsPath,
-                            'weight' => (float) $diam,
+            $comps = $buildCapacityComponents($rem, $supply0);
+            foreach ($comps as &$c) {
+                $w = (int) ($c['edges_count'] ?? 0)
+                    + 2 * (int) ($c['sum_capacity'] ?? 0)
+                    + 3 * (int) ($c['owner_tags_count'] ?? 0);
+                $c['weight'] = $w;
+            }
+            unset($c);
+            usort($comps, fn($a, $b) => ((int) ($b['weight'] ?? 0) <=> (int) ($a['weight'] ?? 0)));
+            foreach ($comps as $c) {
+                $dirIds = $c['dir_ids'] ?? [];
+                if (!$dirIds) continue;
+                while (true) {
+                    // stop if no remaining in this component
+                    $has = false;
+                    foreach ($dirIds as $dirId) { if ((int) ($rem[(int) $dirId] ?? 0) > 0) { $has = true; break; } }
+                    if (!$has) break;
+                    $best = $diameterPath($dirIds, $rem);
+                    if (!$best) {
+                        // fallback: choose longest remaining edge in component
+                        $pickId = 0;
+                        $pickLen = -1.0;
+                        foreach ($dirIds as $dirId) {
+                            $dirId = (int) $dirId;
+                            if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
+                            $d = $dirs[$dirId] ?? null;
+                            if (!$d) continue;
+                            $len = (float) ($d['length_m'] ?? 0);
+                            if ($len > $pickLen) { $pickLen = $len; $pickId = $dirId; }
+                        }
+                        if ($pickId <= 0) break;
+                        $d = $dirs[$pickId] ?? null;
+                        if (!$d) break;
+                        $best = [
+                            'start_well_id' => (int) ($d['a'] ?? 0),
+                            'end_well_id' => (int) ($d['b'] ?? 0),
+                            'direction_ids' => [$pickId],
+                            'weight' => $pickLen > 0 ? $pickLen : 0.0,
                         ];
                     }
+                    $okConsume = true;
+                    foreach (($best['direction_ids'] ?? []) as $dirId) {
+                        $dirId = (int) $dirId;
+                        if ((int) ($rem[$dirId] ?? 0) <= 0) { $okConsume = false; break; }
+                        $rem[$dirId] = (int) $rem[$dirId] - 1;
+                    }
+                    if (!$okConsume) break;
+                    $routes[] = $best;
                 }
-                return $bestPath;
-            };
+            }
+            return $routes;
+        };
 
-            $buildAllComponents = function(array $dirs, array $rem) use ($weightFor, $variantNo, $bestPathForEdges): array {
-                // Компоненты считаем по ВСЕЙ сети направлений (а не только по rem>0),
-                // чтобы приоритет "магистрального" графа учитывал полную топологию.
-                $adj = []; // wellId => [ [toWellId, dirId], ...]
-                foreach ($dirs as $dirId => $d) {
+        // METHOD 2: K Longest Paths with Capacity (эвристика)
+        $buildRoutesMethod2 = function(array $baseRem, int $k = 250) use ($buildCapacityComponents, $dijkstra, $dirs): array {
+            $rem = $baseRem;
+            $comps = $buildCapacityComponents($baseRem, []);
+            $cands = [];
+            $candSeen = [];
+            foreach ($comps as $c) {
+                $dirIds = $c['dir_ids'] ?? [];
+                $wellIds = $c['well_ids'] ?? [];
+                if (!$dirIds || !$wellIds) continue;
+                // build adj once for this component
+                $adj = [];
+                foreach ($dirIds as $dirId) {
                     $dirId = (int) $dirId;
                     if ($dirId <= 0) continue;
+                    if ((int) ($baseRem[$dirId] ?? 0) <= 0) continue;
+                    $d = $dirs[$dirId] ?? null;
+                    if (!$d) continue;
                     $a = (int) ($d['a'] ?? 0);
                     $b = (int) ($d['b'] ?? 0);
                     if ($a <= 0 || $b <= 0) continue;
+                    $w = (float) ($d['length_m'] ?? 0);
                     if (!isset($adj[$a])) $adj[$a] = [];
                     if (!isset($adj[$b])) $adj[$b] = [];
-                    $adj[$a][] = [$b, $dirId];
-                    $adj[$b][] = [$a, $dirId];
+                    $adj[$a][] = ['to' => $b, 'dir' => $dirId, 'w' => $w];
+                    $adj[$b][] = ['to' => $a, 'dir' => $dirId, 'w' => $w];
                 }
-                if (!$adj) return [];
+                if (!$adj) continue;
+                // seeds: endpoints first
+                $seeds = [];
+                foreach ($adj as $w => $edges) {
+                    if (count($edges) === 1) $seeds[] = (int) $w;
+                }
+                if (!$seeds) $seeds[] = (int) array_key_first($adj);
+                $seeds = array_slice($seeds, 0, 8);
 
-                $visited = [];
-                $components = [];
-                foreach (array_keys($adj) as $start) {
-                    $start = (int) $start;
-                    if (isset($visited[$start])) continue;
-                    $stack = [$start];
-                    $visited[$start] = true;
-                    $dirAll = [];
-                    while ($stack) {
-                        $u = (int) array_pop($stack);
-                        foreach (($adj[$u] ?? []) as $e) {
-                            $v = (int) ($e[0] ?? 0);
-                            $dirId = (int) ($e[1] ?? 0);
-                            if ($dirId > 0) $dirAll[$dirId] = true;
-                            if ($v > 0 && !isset($visited[$v])) {
-                                $visited[$v] = true;
-                                $stack[] = $v;
-                            }
-                        }
+                foreach ($seeds as $seed) {
+                    $seed = (int) $seed;
+                    if ($seed <= 0) continue;
+                    [$aNode] = $dijkstra($seed, $adj);
+                    [$bNode, $diam, $_dist2, $pn2, $pe2] = $dijkstra($aNode, $adj);
+                    if ($diam <= 0) continue;
+                    $pathDirs = [];
+                    $cur = (int) $bNode;
+                    while ($cur !== (int) $aNode && isset($pn2[$cur])) {
+                        $eid = (int) ($pe2[$cur] ?? 0);
+                        if ($eid > 0) $pathDirs[] = $eid;
+                        $cur = (int) ($pn2[$cur] ?? 0);
+                        if ($cur <= 0) break;
                     }
-                    if (!$dirAll) continue;
-
-                    $dirIdsAll = array_keys($dirAll);
-                    $dirIdsRem = [];
-                    foreach ($dirIdsAll as $dirId) {
-                        $dirId = (int) $dirId;
-                        if ((int) ($rem[$dirId] ?? 0) > 0) $dirIdsRem[] = $dirId;
-                    }
-                    if (!$dirIdsRem) continue; // в этой компоненте нечего расходовать
-
-                    $sumAll = 0.0;
-                    foreach ($dirIdsAll as $dirId) {
-                        $d = $dirs[(int) $dirId] ?? null;
-                        if (!$d) continue;
-                        $sumAll += (float) $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
-                    }
-
-                    // "Магистраль" компоненты: путь максимальной длины в топологии компоненты (на всей сети, не по rem).
-                    $edgesAll = [];
-                    foreach ($dirIdsAll as $dirId) {
-                        $dirId = (int) $dirId;
-                        $d = $dirs[$dirId] ?? null;
-                        if (!$d) continue;
-                        $a = (int) ($d['a'] ?? 0);
-                        $b = (int) ($d['b'] ?? 0);
-                        if ($a <= 0 || $b <= 0) continue;
-                        $w = (float) $weightFor($variantNo, (float) ($d['length_m'] ?? 0));
-                        $edgesAll[] = ['dir' => $dirId, 'a' => $a, 'b' => $b, 'w' => $w];
-                    }
-                    $backbone = $bestPathForEdges($edgesAll);
-                    $backboneDirIds = array_values(array_map('intval', (array) ($backbone['direction_ids'] ?? [])));
-
-                    $components[] = [
-                        'dir_ids_all' => $dirIdsAll,
-                        'dir_ids_rem' => $dirIdsRem,
-                        'weight' => $sumAll,
-                        'backbone_dir_ids' => $backboneDirIds,
+                    $pathDirs = array_reverse($pathDirs);
+                    if (!$pathDirs) continue;
+                    $key1 = implode(',', $pathDirs);
+                    $key2 = implode(',', array_reverse($pathDirs));
+                    $key = strcmp($key1, $key2) <= 0 ? $key1 : $key2;
+                    if (isset($candSeen[$key])) continue;
+                    $candSeen[$key] = true;
+                    $cands[] = [
+                        'start_well_id' => (int) $aNode,
+                        'end_well_id' => (int) $bNode,
+                        'direction_ids' => $pathDirs,
+                        'weight' => (float) $diam,
                     ];
                 }
+            }
+            usort($cands, fn($a, $b) => ((float) ($b['weight'] ?? 0) <=> (float) ($a['weight'] ?? 0)));
+            $cands = array_slice($cands, 0, max(1, $k));
 
-                usort($components, fn($x, $y) => ((float) ($y['weight'] ?? 0) <=> (float) ($x['weight'] ?? 0)));
-                return $components;
-            };
+            $routes = [];
+            $maxRoutes = 20000;
+            $progress = true;
+            while ($progress && count($routes) < $maxRoutes) {
+                $progress = false;
+                foreach ($cands as $cand) {
+                    $dirIds = (array) ($cand['direction_ids'] ?? []);
+                    if (!$dirIds) continue;
+                    $ok = true;
+                    foreach ($dirIds as $dirId) {
+                        $dirId = (int) $dirId;
+                        if ((int) ($rem[$dirId] ?? 0) <= 0) { $ok = false; break; }
+                    }
+                    if (!$ok) continue;
+                    foreach ($dirIds as $dirId) {
+                        $dirId = (int) $dirId;
+                        $rem[$dirId] = (int) ($rem[$dirId] ?? 0) - 1;
+                    }
+                    $routes[] = $cand;
+                    $progress = true;
+                    if (count($routes) >= $maxRoutes) break;
+                }
+            }
 
-            // ВАЖНО: приоритет компонент (графов) считаем по всей сети, а расходуем только rem>0.
-            // Внутри каждой компоненты вырабатываем rem полностью и только потом переходим к следующей.
-            $components = $buildAllComponents($dirs, $rem);
+            // добиваем остатки одиночными рёбрами (чтобы не оставлять rem)
+            foreach ($rem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                for ($i = 0; $i < $cap && count($routes) < $maxRoutes; $i++) {
+                    $routes[] = [
+                        'start_well_id' => (int) ($d['a'] ?? 0),
+                        'end_well_id' => (int) ($d['b'] ?? 0),
+                        'direction_ids' => [$dirId],
+                        'weight' => (float) ($d['length_m'] ?? 0),
+                    ];
+                }
+            }
+            return $routes;
+        };
 
-            foreach ($components as $c) {
-                // 1) Сначала ищем самый длинный кабель внутри "самого длинного графа" по его магистрали (backbone),
-                // чтобы не "склеивать" отводы через магистраль в один маршрут.
-                $backboneDirIds = array_values(array_map('intval', (array) ($c['backbone_dir_ids'] ?? [])));
-                if ($backboneDirIds) {
-                    while (true) {
-                        $edges = $buildEdges($rem, $backboneDirIds);
-                        if (!$edges) break;
-                        $bestPath = $bestPathForEdges($edges);
-                        if ($bestPath === null) {
-                            // fallback: single best remaining edge on backbone
-                            $e = $edges[0] ?? null;
-                            if (!$e) break;
-                            $bestPath = [
-                                'start_well_id' => (int) ($e['a'] ?? 0),
-                                'end_well_id' => (int) ($e['b'] ?? 0),
-                                'direction_ids' => [(int) ($e['dir'] ?? 0)],
-                                'weight' => (float) ($e['w'] ?? 0),
-                            ];
+        // METHOD 3: Min Cost Max Flow (DAG-ориентация + последовательные кратчайшие пути по cost=-length)
+        // Для устойчивости избегаем отрицательных циклов: ориентируем направления по (lng,lat,id).
+        $wellRank = [];
+        try {
+            $wells = $this->db->fetchAll(
+                "SELECT id,
+                        ST_X(COALESCE(geom_wgs84, ST_Transform(geom_msk86, 4326))) AS lng,
+                        ST_Y(COALESCE(geom_wgs84, ST_Transform(geom_msk86, 4326))) AS lat
+                 FROM wells
+                 WHERE geom_wgs84 IS NOT NULL OR geom_msk86 IS NOT NULL"
+            );
+            usort($wells, function($a, $b) {
+                $ax = (float) ($a['lng'] ?? 0); $bx = (float) ($b['lng'] ?? 0);
+                if ($ax !== $bx) return ($ax <=> $bx);
+                $ay = (float) ($a['lat'] ?? 0); $by = (float) ($b['lat'] ?? 0);
+                if ($ay !== $by) return ($ay <=> $by);
+                return ((int) ($a['id'] ?? 0) <=> (int) ($b['id'] ?? 0));
+            });
+            $r = 1;
+            foreach ($wells as $w) {
+                $id = (int) ($w['id'] ?? 0);
+                if ($id > 0) $wellRank[$id] = $r++;
+            }
+        } catch (\Throwable $e) {}
+
+        $buildRoutesMethod3 = function(array $baseRem) use ($dirs, $wellRank): array {
+            $rem = $baseRem;
+            $routes = [];
+            $S = 0;
+            $T = -1;
+
+            // topo order: S, wells sorted by rank/id, T
+            $wellIds = [];
+            foreach ($rem as $dirId => $cap) {
+                if ((int) $cap <= 0) continue;
+                $d = $dirs[(int) $dirId] ?? null;
+                if (!$d) continue;
+                $wellIds[(int) ($d['a'] ?? 0)] = true;
+                $wellIds[(int) ($d['b'] ?? 0)] = true;
+            }
+            $wellIds = array_keys(array_filter($wellIds, fn($x) => (int)$x > 0));
+            usort($wellIds, function($a, $b) use ($wellRank) {
+                $ra = (int) ($wellRank[(int)$a] ?? 0);
+                $rb = (int) ($wellRank[(int)$b] ?? 0);
+                if ($ra && $rb && $ra !== $rb) return $ra <=> $rb;
+                if ($ra && !$rb) return -1;
+                if (!$ra && $rb) return 1;
+                return ((int)$a <=> (int)$b);
+            });
+            $topo = array_merge([$S], $wellIds, [$T]);
+
+            $INF = 1000000000;
+
+            // build outEdges each iteration uses rem, but topology constant
+            $baseOut = [];
+            foreach ($wellIds as $w) {
+                $baseOut[$w] = [];
+            }
+            $baseOut[$S] = [];
+            $baseOut[$T] = [];
+
+            // S -> wells, wells -> T
+            foreach ($wellIds as $w) {
+                $baseOut[$S][] = ['to' => $w, 'type' => 'aux', 'cost' => 0.0, 'cap' => $INF];
+                $baseOut[$w][] = ['to' => $T, 'type' => 'aux', 'cost' => 0.0, 'cap' => $INF];
+            }
+
+            // direction edges, oriented by rank/id
+            foreach ($rem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                if ($a <= 0 || $b <= 0) continue;
+                $ra = (int) ($wellRank[$a] ?? 0);
+                $rb = (int) ($wellRank[$b] ?? 0);
+                $u = $a; $v = $b;
+                if (($ra && $rb && $ra > $rb) || (!$ra && !$rb && $a > $b) || ($ra && !$rb)) {
+                    $u = $b; $v = $a;
+                }
+                if (!isset($baseOut[$u])) $baseOut[$u] = [];
+                $cost = -1.0 * (float) ($d['length_m'] ?? 0);
+                $baseOut[$u][] = ['to' => $v, 'type' => 'dir', 'dir' => $dirId, 'cost' => $cost];
+            }
+
+            $maxRoutes = 20000;
+            while (count($routes) < $maxRoutes) {
+                // shortest path in DAG (topo DP)
+                $dist = [];
+                $parN = [];
+                $parE = [];
+                foreach ($topo as $n) $dist[$n] = 1e100;
+                $dist[$S] = 0.0;
+
+                foreach ($topo as $u) {
+                    $du = (float) ($dist[$u] ?? 1e100);
+                    if ($du >= 1e90) continue;
+                    foreach (($baseOut[$u] ?? []) as $e) {
+                        $to = $e['to'];
+                        $type = $e['type'] ?? 'aux';
+                        if ($type === 'dir') {
+                            $dirId = (int) ($e['dir'] ?? 0);
+                            if ($dirId <= 0) continue;
+                            if ((int) ($rem[$dirId] ?? 0) <= 0) continue;
                         }
-                        if (!$bestPath || empty($bestPath['direction_ids'])) break;
-                        foreach ($bestPath['direction_ids'] as $dirId) {
-                            $dirId = (int) $dirId;
-                            if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
-                            $rem[$dirId] = (int) $rem[$dirId] - 1;
+                        $nd = $du + (float) ($e['cost'] ?? 0);
+                        if ($nd < (float) ($dist[$to] ?? 1e100) - 1e-9) {
+                            $dist[$to] = $nd;
+                            $parN[$to] = $u;
+                            $parE[$to] = $e;
                         }
-                        $routes[] = $bestPath;
                     }
                 }
 
-                // 2) Затем добираем оставшийся ресурс по rem>0 внутри этой же компоненты (отводы).
-                $dirIdsRem = $c['dir_ids_rem'] ?? [];
-                if (!$dirIdsRem) continue;
-                while (true) {
-                    $edges = $buildEdges($rem, $dirIdsRem);
-                    if (!$edges) break;
-                    $bestPath = $bestPathForEdges($edges);
-                    if ($bestPath === null) {
-                        // fallback: single best remaining edge in this component
-                        $e = $edges[0] ?? null;
-                        if (!$e) break;
-                        $bestPath = [
-                            'start_well_id' => (int) ($e['a'] ?? 0),
-                            'end_well_id' => (int) ($e['b'] ?? 0),
-                            'direction_ids' => [(int) ($e['dir'] ?? 0)],
-                            'weight' => (float) ($e['w'] ?? 0),
-                        ];
-                    }
-                    if (!$bestPath || empty($bestPath['direction_ids'])) break;
+                $bestCost = (float) ($dist[$T] ?? 1e100);
+                if ($bestCost >= -1e-9 || $bestCost >= 1e90) break; // no negative-cost route left
 
-                    // consume 1 along path
-                    foreach ($bestPath['direction_ids'] as $dirId) {
-                        $dirId = (int) $dirId;
-                        if (!isset($rem[$dirId]) || (int) $rem[$dirId] <= 0) continue;
-                        $rem[$dirId] = (int) $rem[$dirId] - 1;
+                // reconstruct path
+                $nodes = [];
+                $dirIds = [];
+                $cur = $T;
+                while ($cur !== $S && isset($parN[$cur])) {
+                    $e = $parE[$cur] ?? null;
+                    $p = $parN[$cur];
+                    $nodes[] = $cur;
+                    if (($e['type'] ?? '') === 'dir') {
+                        $dirIds[] = (int) ($e['dir'] ?? 0);
                     }
-                    $routes[] = $bestPath;
+                    $cur = $p;
+                }
+                $nodes[] = $S;
+                $nodes = array_reverse($nodes);
+                $dirIds = array_reverse($dirIds);
+                if (!$dirIds) break;
+
+                // start/end wells
+                $startWell = 0;
+                $endWell = 0;
+                foreach ($nodes as $n) {
+                    $n = (int) $n;
+                    if ($n > 0) { $startWell = $n; break; }
+                }
+                for ($i = count($nodes) - 1; $i >= 0; $i--) {
+                    $n = (int) $nodes[$i];
+                    if ($n > 0) { $endWell = $n; break; }
+                }
+
+                // consume 1 on each edge
+                foreach ($dirIds as $dirId) {
+                    $dirId = (int) $dirId;
+                    if ((int) ($rem[$dirId] ?? 0) <= 0) { $dirIds = []; break; }
+                    $rem[$dirId] = (int) $rem[$dirId] - 1;
+                }
+                if (!$dirIds) break;
+
+                $routes[] = [
+                    'start_well_id' => $startWell,
+                    'end_well_id' => $endWell,
+                    'direction_ids' => $dirIds,
+                    'weight' => -1.0 * $bestCost,
+                ];
+            }
+
+            // остатки одиночными рёбрами
+            foreach ($rem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                for ($i = 0; $i < $cap && count($routes) < $maxRoutes; $i++) {
+                    $routes[] = [
+                        'start_well_id' => (int) ($d['a'] ?? 0),
+                        'end_well_id' => (int) ($d['b'] ?? 0),
+                        'direction_ids' => [$dirId],
+                        'weight' => (float) ($d['length_m'] ?? 0),
+                    ];
                 }
             }
 
             return $routes;
+        };
+
+        $buildRoutesForVariant = function(int $variantNo, array $baseRem) use ($buildRoutesMethod1, $buildRoutesMethod2, $buildRoutesMethod3, $supply0): array {
+            if ($variantNo === 1) return $buildRoutesMethod1($baseRem, $supply0);
+            if ($variantNo === 2) return $buildRoutesMethod2($baseRem, 250);
+            return $buildRoutesMethod3($baseRem);
         };
 
         // 5) Сохранение: 3 варианта (маршруты + собственник)
@@ -675,17 +900,22 @@ class AssumedCableController extends BaseController
 
                 $routesTotal = 0;
                 $ownersAssigned = 0;
+                $totalLengthM = 0.0;
+                $totalEdgeUnits = 0;
                 foreach ($routes as $rt) {
                     $rt['variant_no'] = $variantNo;
                     $geo = $buildRouteGeometry($rt);
                     $geomJson = $geo['geom'];
                     $lenM = (float) ($geo['length_m'] ?? 0);
                     $rt['length_m'] = $lenM;
+                    $totalLengthM += $lenM;
+                    $totalEdgeUnits += count((array) ($rt['direction_ids'] ?? []));
                     $owner = $inferOwnerForRoute($variantNo, $rt, $supply);
                     $ownerId = $owner['owner_id'] ?? null;
                     $confidence = (float) ($owner['confidence'] ?? 0);
                     $mode = (string) ($owner['mode'] ?? 'unknown');
                     $wellIds = (array) ($owner['well_ids'] ?? []);
+                    $ownerCandidates = (array) ($owner['owner_candidates'] ?? []);
                     if ($ownerId) $ownersAssigned++;
 
                     $evidence = [
@@ -694,6 +924,7 @@ class AssumedCableController extends BaseController
                         'start_well_id' => (int) ($rt['start_well_id'] ?? 0),
                         'end_well_id' => (int) ($rt['end_well_id'] ?? 0),
                         'well_ids' => array_values(array_map('intval', $wellIds)),
+                        'owner_candidates' => $ownerCandidates,
                     ];
 
                     $sql = "INSERT INTO assumed_cable_routes
@@ -736,6 +967,8 @@ class AssumedCableController extends BaseController
                     'routes_total' => $routesTotal,
                     'owners_assigned' => $ownersAssigned,
                     'owners_unknown' => max(0, $routesTotal - $ownersAssigned),
+                    'total_length_m' => round($totalLengthM, 2),
+                    'total_edge_units' => (int) $totalEdgeUnits,
                 ];
                 $this->db->query("UPDATE assumed_cable_scenarios SET stats_json = :s::jsonb WHERE id = :id", [
                     's' => json_encode($stats, JSON_UNESCAPED_UNICODE),
