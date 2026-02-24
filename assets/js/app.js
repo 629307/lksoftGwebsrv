@@ -233,6 +233,20 @@ const App = {
                 btn.classList.toggle('active', checked && !!MapManager.inventoryUnaccountedLabelsEnabled);
             }
         } catch (_) {}
+        // при старте: кабели — кнопки "Список" disabled если слой off
+        try {
+            const sync = (cbId, btnId) => {
+                const cb = document.getElementById(cbId);
+                const btn = document.getElementById(btnId);
+                if (!btn) return;
+                const on = !!cb?.checked;
+                btn.disabled = !on;
+                btn.classList.toggle('active', false);
+            };
+            sync('layer-ground-cables', 'btn-list-ground-cables');
+            sync('layer-aerial-cables', 'btn-list-aerial-cables');
+            sync('layer-duct-cables', 'btn-list-duct-cables');
+        } catch (_) {}
         // при старте: направления (кнопка всегда видна, но disabled если слой off)
         try {
             const cb = document.getElementById('layer-channels');
@@ -529,6 +543,22 @@ const App = {
                 e.currentTarget?.classList?.toggle('active', !!MapManager.inventoryUnaccountedLabelsEnabled);
             } catch (_) {}
         });
+
+        // Кабели: кнопки "Список" (в панели слоёв)
+        const bindCablesListBtn = (btnId, type) => {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            btn.addEventListener('click', (e) => {
+                try {
+                    e.preventDefault();
+                    e.stopPropagation();
+                } catch (_) {}
+                try { MapManager?.showCablesListPanel?.(type); } catch (_) {}
+            });
+        };
+        bindCablesListBtn('btn-list-ground-cables', 'ground');
+        bindCablesListBtn('btn-list-aerial-cables', 'aerial');
+        bindCablesListBtn('btn-list-duct-cables', 'duct');
 
         // Переключатель "Предполагаемые кабели" (режим внутри слоя "Инвентаризация")
         document.getElementById('btn-toggle-assumed-cables')?.addEventListener('click', (e) => {
@@ -1411,6 +1441,38 @@ const App = {
                 this.assumedCablesModeEnabled = false;
                 this.applyInventoryAssumedModeLayers_();
                 this.syncInventoryAssumedControls_();
+            } catch (_) {}
+        }
+
+        // Кабели: кнопка "Список" активна только если слой включен
+        if (input.id === 'layer-ground-cables') {
+            try {
+                const btn = document.getElementById('btn-list-ground-cables');
+                if (btn) {
+                    btn.disabled = !input.checked;
+                    if (!input.checked) btn.classList.toggle('active', false);
+                }
+                if (!input.checked) MapManager?.setCablesListPanelVisible?.(false, { onlyIfType: 'ground' });
+            } catch (_) {}
+        }
+        if (input.id === 'layer-aerial-cables') {
+            try {
+                const btn = document.getElementById('btn-list-aerial-cables');
+                if (btn) {
+                    btn.disabled = !input.checked;
+                    if (!input.checked) btn.classList.toggle('active', false);
+                }
+                if (!input.checked) MapManager?.setCablesListPanelVisible?.(false, { onlyIfType: 'aerial' });
+            } catch (_) {}
+        }
+        if (input.id === 'layer-duct-cables') {
+            try {
+                const btn = document.getElementById('btn-list-duct-cables');
+                if (btn) {
+                    btn.disabled = !input.checked;
+                    if (!input.checked) btn.classList.toggle('active', false);
+                }
+                if (!input.checked) MapManager?.setCablesListPanelVisible?.(false, { onlyIfType: 'duct' });
             } catch (_) {}
         }
 

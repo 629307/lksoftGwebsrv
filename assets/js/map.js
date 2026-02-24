@@ -106,10 +106,13 @@ const MapManager = {
     assumedCablesVariantNo: 1,
     assumedCablesPanelEl: null,
     inventoryRecommendationsPanelEl: null,
+    cablesListPanelEl: null,
     _inventoryRecommendationsOwnerId: null,
     _inventoryRecommendationsSelectedKey: null,
     assumedSegmentPickerEl: null,
     _assumedCablesPanelSelectedKey: null,
+    _cablesListType: null, // 'ground'|'aerial'|'duct'
+    _cablesListSelectedKey: null,
     _assumedRouteLayerById: new Map(),
     _assumedRoutesById: new Map(), // route_id -> { ...row, _index, _direction_ids[] }
     _assumedRouteIdsByDirectionId: new Map(), // direction_id -> [route_id...]
@@ -739,6 +742,24 @@ const MapManager = {
                 el.className = 'inventory-reco-panel hidden';
                 host.appendChild(el);
                 this.inventoryRecommendationsPanelEl = el;
+                try {
+                    if (typeof L !== 'undefined' && L?.DomEvent) {
+                        L.DomEvent.disableScrollPropagation(el);
+                        L.DomEvent.disableClickPropagation(el);
+                    }
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        // Панель "Списки кабелей" (DOM overlay поверх карты, справа)
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                const el = document.createElement('div');
+                el.id = 'cables-list-panel';
+                el.className = 'assumed-cables-panel hidden';
+                host.appendChild(el);
+                this.cablesListPanelEl = el;
                 try {
                     if (typeof L !== 'undefined' && L?.DomEvent) {
                         L.DomEvent.disableScrollPropagation(el);
@@ -2501,6 +2522,38 @@ const MapManager = {
         } catch (_) {}
     },
 
+    setCablesListPanelVisible(visible, opts = null) {
+        const onlyIfType = (opts && opts.onlyIfType) ? String(opts.onlyIfType) : '';
+        if (onlyIfType && this._cablesListType && String(this._cablesListType) !== onlyIfType) return;
+        try {
+            const el = this.cablesListPanelEl;
+            if (!el) return;
+            el.classList.toggle('hidden', !visible);
+            try {
+                document.body?.classList?.toggle?.('assumed-cables-panel-open', !!visible);
+                if (visible) {
+                    const w = Math.round(el.getBoundingClientRect?.().width || 520);
+                    document.body?.style?.setProperty?.('--assumed-cables-panel-w', `${Math.max(280, w)}px`);
+                } else {
+                    document.body?.style?.removeProperty?.('--assumed-cables-panel-w');
+                }
+            } catch (_) {}
+            if (!visible) {
+                this._cablesListSelectedKey = null;
+                this._cablesListType = null;
+            }
+        } catch (_) {}
+        // синхронизируем кнопки в панели слоёв
+        try {
+            const g = document.getElementById('btn-list-ground-cables');
+            const a = document.getElementById('btn-list-aerial-cables');
+            const d = document.getElementById('btn-list-duct-cables');
+            if (g) g.classList.toggle('active', !!visible && this._cablesListType === 'ground');
+            if (a) a.classList.toggle('active', !!visible && this._cablesListType === 'aerial');
+            if (d) d.classList.toggle('active', !!visible && this._cablesListType === 'duct');
+        } catch (_) {}
+    },
+
     async showInventoryRecommendationsPanel(ownerId) {
         const oid = parseInt(ownerId || 0, 10);
         if (!oid) return;
@@ -2508,9 +2561,174 @@ const MapManager = {
         try { App.switchPanel('map'); } catch (_) {}
         // не держим две правые панели одновременно
         try { this.setAssumedCablesPanelVisible(false); } catch (_) {}
+        try { this.setCablesListPanelVisible(false); } catch (_) {}
         this._inventoryRecommendationsOwnerId = oid;
         this.setInventoryRecommendationsPanelVisible(true);
         await this.refreshInventoryRecommendationsPanel();
+    },
+
+    async showCablesListPanel(type) {
+        const t = String(type || '').toLowerCase();
+        if (!['ground', 'aerial', 'duct'].includes(t)) return;
+        if (!this.map) return;
+        try { App.switchPanel('map'); } catch (_) {}
+        // не держим несколько правых панелей одновременно
+        try { this.setAssumedCablesPanelVisible(false); } catch (_) {}
+        try { this.setInventoryRecommendationsPanelVisible(false); } catch (_) {}
+
+        // панель доступна всем ролям (backend уже фильтрует по правам)
+        const layerName = (t === 'ground') ? 'groundCables' : (t === 'aerial') ? 'aerialCables' : 'ductCables';
+        const layer = this.layers?.[layerName] || null;
+        const on = !!(layer && this.map.hasLayer(layer));
+        if (!on) {
+            try { App.notify('Слой выключен', 'warning'); } catch (_) {}
+            return;
+        }
+
+        this._cablesListType = t;
+        this.setCablesListPanelVisible(true);
+        await this.refreshCablesListPanel();
+    },
+
+    async refreshCablesListPanel() {
+        const el = this.cablesListPanelEl;
+        if (!el || el.classList.contains('hidden')) return;
+        const t = String(this._cablesListType || '').toLowerCase();
+        if (!['ground', 'aerial', 'duct'].includes(t)) return;
+
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const toNum = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : 0;
+        };
+        const fmtLen = (v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '0.00';
+            return n.toFixed(2);
+        };
+
+        const titles = {
+            ground: 'Кабели в грунте',
+            aerial: 'Кабель воздухом (перетяжка)',
+            duct: 'Кабели в канализации',
+        };
+        const codeMap = { ground: 'cable_ground', aerial: 'cable_aerial', duct: 'cable_duct' };
+        const wantedCode = codeMap[t];
+
+        el.innerHTML = `
+            <div class="ac-header">
+                <div class="ac-title">Список - ${esc(titles[t] || t)}</div>
+                <button class="ac-close" type="button" title="Закрыть">×</button>
+            </div>
+            <div class="ac-sub">
+                <div class="text-muted" style="font-size:12px;">Загрузка...</div>
+            </div>
+            <div class="ac-body">
+                <div style="padding: 10px 14px; color: var(--text-secondary);">Загрузка...</div>
+            </div>
+        `;
+        try {
+            el.querySelector('.ac-close')?.addEventListener('click', () => this.setCablesListPanelVisible(false));
+        } catch (_) {}
+
+        try {
+            const params = { ...(this.filters || {}) };
+            params.page = 1;
+            params.limit = 5000;
+            const resp = await API.unifiedCables.list(params);
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const rows = resp?.data || resp || [];
+            const list0 = Array.isArray(rows) ? rows : [];
+
+            const match = (r) => {
+                const code = (r?.object_type_code || '').toString().trim().toLowerCase();
+                if (code) return code === wantedCode;
+                const name = (r?.object_type_name || r?.object_type || '').toString().toLowerCase();
+                if (t === 'ground') return name.includes('грунт');
+                if (t === 'aerial') return name.includes('воздуш');
+                if (t === 'duct') return name.includes('канал');
+                return false;
+            };
+            const list = list0.filter(match);
+
+            // сортировка по длине (убыв.)
+            list.sort((a, b) => {
+                const la = toNum(a?.length_calculated ?? a?.length_m ?? 0);
+                const lb = toNum(b?.length_calculated ?? b?.length_m ?? 0);
+                return lb - la;
+            });
+
+            const totalCount = list.length;
+            const totalLen = list.reduce((sum, r) => sum + toNum(r?.length_calculated ?? r?.length_m ?? 0), 0);
+
+            const selectedKey = (this._cablesListSelectedKey || '').toString();
+            const table = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 48px;">№</th>
+                            <th>Номер кабеля</th>
+                            <th>Тип кабеля</th>
+                            <th>Кабель (из каталога)</th>
+                            <th>Собственник</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${list.map((r, idx) => {
+                            const id = parseInt(r?.id || 0, 10) || 0;
+                            const key = String(id);
+                            const selected = (key && key === selectedKey) ? 'ac-row-selected' : '';
+                            return `
+                                <tr class="${selected}" data-id="${esc(key)}">
+                                    <td>${idx + 1}</td>
+                                    <td>${esc(r?.number || '')}</td>
+                                    <td>${esc(r?.cable_type_name || '')}</td>
+                                    <td>${esc(r?.marking || r?.cable_marking || '')}</td>
+                                    <td>${esc(r?.owner_name || '')}</td>
+                                </tr>
+                            `;
+                        }).join('') || `<tr><td colspan="5" style="padding:12px 14px; color: var(--text-secondary);">Нет данных</td></tr>`}
+                    </tbody>
+                </table>
+            `;
+
+            const sub = el.querySelector('.ac-sub');
+            if (sub) {
+                sub.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <div><strong>Всего кабелей</strong> — ${esc(totalCount)}</div>
+                        <div><strong>Общая протяженность кабелей</strong> — ${esc(fmtLen(totalLen))} м</div>
+                        <div class="text-muted" style="font-size:12px;">Сортировка: по длине (убывание). Выборка: по текущим фильтрам карты.</div>
+                    </div>
+                `;
+            }
+
+            const body = el.querySelector('.ac-body');
+            if (body) body.innerHTML = table;
+
+            // click row -> focus map + highlight cable
+            try {
+                el.querySelectorAll('tbody tr[data-id]').forEach((tr) => {
+                    tr.addEventListener('click', async () => {
+                        const id = parseInt(tr.getAttribute('data-id') || '0', 10);
+                        if (!id) return;
+                        this._cablesListSelectedKey = String(id);
+                        try {
+                            el.querySelectorAll('tbody tr.ac-row-selected').forEach((x) => x.classList.remove('ac-row-selected'));
+                            tr.classList.add('ac-row-selected');
+                        } catch (_) {}
+                        try {
+                            await this.showObjectOnMap('unified_cables', id);
+                        } catch (_) {}
+                    });
+                });
+            } catch (_) {}
+        } catch (e) {
+            const sub = el.querySelector('.ac-sub');
+            if (sub) sub.innerHTML = `<div style="padding: 10px 14px; color: var(--danger-color);">${esc(e?.message || 'Ошибка загрузки')}</div>`;
+            const body = el.querySelector('.ac-body');
+            if (body) body.innerHTML = '';
+        }
     },
 
     async refreshInventoryRecommendationsPanel() {
@@ -4007,6 +4225,15 @@ const MapManager = {
                 if (layerName === 'channels') {
                     try { this.directionLengthLabelsLayer?.clearLayers?.(); } catch (_) {}
                     try { this.setDirectionLengthLabelsEnabled(this.directionLengthLabelsEnabled); } catch (_) {}
+                }
+                if (layerName === 'groundCables' || layerName === 'aerialCables' || layerName === 'ductCables') {
+                    try {
+                        const t =
+                            (layerName === 'groundCables') ? 'ground' :
+                            (layerName === 'aerialCables') ? 'aerial' :
+                            'duct';
+                        this.setCablesListPanelVisible(false, { onlyIfType: t });
+                    } catch (_) {}
                 }
                 if (layerName === 'inventory') {
                     try { this.layers.inventory?.clearLayers?.(); } catch (_) {}

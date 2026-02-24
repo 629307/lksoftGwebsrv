@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.3.9" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.4.0" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -192,20 +192,35 @@
                             <span class="layer-icon" style="background: #e67e22;"></span>
                             <span>Столбики</span>
                         </label>
-                        <label class="layer-item">
+                        <label class="layer-item layer-item-with-controls">
                             <input type="checkbox" id="layer-ground-cables">
                             <span class="layer-icon" style="background: #551b1b;"></span>
-                            <span>Кабели в грунте</span>
+                            <span class="layer-title">Кабели в грунте</span>
+                            <span class="layer-inline-controls">
+                                <button type="button" class="layer-inline-btn" id="btn-list-ground-cables" title="Список - Кабели в грунте" disabled>
+                                    <i class="fas fa-table-list"></i>
+                                </button>
+                            </span>
                         </label>
-                        <label class="layer-item">
+                        <label class="layer-item layer-item-with-controls">
                             <input type="checkbox" id="layer-aerial-cables">
                             <span class="layer-icon" style="background: #009dff;"></span>
-                            <span>Воздушные кабели</span>
+                            <span class="layer-title">Воздушные кабели</span>
+                            <span class="layer-inline-controls">
+                                <button type="button" class="layer-inline-btn" id="btn-list-aerial-cables" title="Список - Воздушные кабели" disabled>
+                                    <i class="fas fa-table-list"></i>
+                                </button>
+                            </span>
                         </label>
-                        <label class="layer-item">
+                        <label class="layer-item layer-item-with-controls">
                             <input type="checkbox" id="layer-duct-cables">
                             <span class="layer-icon" style="background: #00bd26;"></span>
-                            <span>Кабели в канализации</span>
+                            <span class="layer-title">Кабели в канализации</span>
+                            <span class="layer-inline-controls">
+                                <button type="button" class="layer-inline-btn" id="btn-list-duct-cables" title="Список - Кабели в канализации" disabled>
+                                    <i class="fas fa-table-list"></i>
+                                </button>
+                            </span>
                         </label>
                     </div>
 
@@ -869,8 +884,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.3.9"></script>
-    <script src="assets/js/map.js?v=2.3.9"></script>
-    <script src="assets/js/app.js?v=2.3.9"></script>
+    <script src="assets/js/api.js?v=2.4.0"></script>
+    <script src="assets/js/map.js?v=2.4.0"></script>
+    <script src="assets/js/app.js?v=2.4.0"></script>
 </body>
 </html>
