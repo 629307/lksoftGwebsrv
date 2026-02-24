@@ -92,6 +92,20 @@ a:hover {
     background: #ffffff !important;
 }
 
+/* Freeze Leaflet animations/transforms during export */
+.igs-pdf-export .leaflet-zoom-animated,
+.igs-pdf-export .leaflet-fade-anim .leaflet-tile,
+.igs-pdf-export .leaflet-tile,
+.igs-pdf-export .leaflet-marker-icon,
+.igs-pdf-export .leaflet-marker-shadow {
+    transition: none !important;
+    animation: none !important;
+}
+
+.igs-pdf-export .leaflet-pane {
+    will-change: auto !important;
+}
+
 .text-muted {
     color: var(--text-muted);
     font-size: 13px;

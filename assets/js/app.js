@@ -6749,11 +6749,71 @@ const App = {
         };
 
         const wait = (ms) => new Promise(r => setTimeout(r, ms));
+        const raf = () => new Promise(r => requestAnimationFrame(() => r()));
+
+        const waitForLeafletIdle = async (timeoutMs = 2200) => {
+            const map = MapManager?.map || null;
+            if (!map || typeof map.once !== 'function') {
+                await wait(250);
+                return;
+            }
+
+            // stop any running animations (pan/zoom inertia)
+            try { map.stop?.(); } catch (_) {}
+
+            const baseLayer = MapManager?.wmtsSatelliteEnabled ? MapManager?.wmtsSatelliteLayer : MapManager?.osmBaseLayer;
+            const shouldWaitTiles = !!(baseLayer && map.hasLayer?.(baseLayer));
+
+            const waitMoveZoom = new Promise((resolve) => {
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true;
+                    try { map.off?.('moveend', finish); } catch (_) {}
+                    try { map.off?.('zoomend', finish); } catch (_) {}
+                    resolve();
+                };
+                try { map.once('moveend', finish); } catch (_) { /* ignore */ }
+                try { map.once('zoomend', finish); } catch (_) { /* ignore */ }
+                // if nothing happens, we still resolve by timeout below
+            });
+
+            const waitTiles = new Promise((resolve) => {
+                if (!shouldWaitTiles) return resolve();
+                // Leaflet GridLayer sets _loading while tiles pending
+                const isLoading = !!baseLayer?._loading;
+                if (!isLoading) return resolve();
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true;
+                    try { baseLayer.off?.('load', finish); } catch (_) {}
+                    try { baseLayer.off?.('tileerror', finish); } catch (_) {}
+                    resolve();
+                };
+                try { baseLayer.once('load', finish); } catch (_) { resolve(); }
+                try { baseLayer.once('tileerror', finish); } catch (_) {}
+            });
+
+            const timeout = wait(timeoutMs);
+
+            // kick a redraw
+            try { map.invalidateSize?.({ pan: false, animate: false }); } catch (_) {}
+
+            // allow layout to settle
+            await raf();
+            await raf();
+            await Promise.race([Promise.all([waitMoveZoom, waitTiles]), timeout]);
+            await raf();
+        };
 
         const captureMapPng = async () => {
-            // даём Leaflet шанс дорисовать тайлы/векторы после скрытия UI
-            try { MapManager?.map?.invalidateSize?.({ pan: false, animate: false }); } catch (_) {}
-            await wait(250);
+            // даём Leaflet шанс дорисовать тайлы/векторы и остановить анимации
+            await waitForLeafletIdle(2400);
+
+            const rect = mapEl.getBoundingClientRect();
+            const w = Math.max(1, Math.round(rect.width));
+            const h = Math.max(1, Math.round(rect.height));
 
             const canvas = await h2c(mapEl, {
                 useCORS: true,
@@ -6761,6 +6821,8 @@ const App = {
                 backgroundColor: '#ffffff',
                 scale: Math.min(2, window.devicePixelRatio || 1),
                 logging: false,
+                width: w,
+                height: h,
             });
             // toDataURL может бросить SecurityError если подложка не даёт CORS
             const dataUrl = canvas.toDataURL('image/png');
@@ -6778,6 +6840,9 @@ const App = {
             try { document.getElementById('object-info-panel')?.classList?.add('hidden'); } catch (_) {}
 
             try {
+                // ensure map is not mid-zoom/pan and sizes are correct
+                try { MapManager?.map?.stop?.(); } catch (_) {}
+                try { MapManager?.map?.invalidateSize?.({ pan: false, animate: false }); } catch (_) {}
                 return await fn();
             } finally {
                 document.body.classList.remove('igs-pdf-export');
