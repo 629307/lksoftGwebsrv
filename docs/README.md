@@ -101,11 +101,11 @@ psql -h 10.16.10.150 -U lksoftgwebsrv -d lksoftgwebsrv -f database/schema.sql
 
 ```php
 return [
-    'host' => '10.16.10.150',
+    'host' => '<ip>',
     'port' => '5432',
     'dbname' => 'lksoftgwebsrv',
     'user' => 'lksoftgwebsrv',
-    'password' => 'lksoftGwebsrv',
+    'password' => '<pswd>',
 ];
 ```
 
@@ -132,7 +132,7 @@ chmod -R 777 /var/www/html/lksoftGwebsrv/uploads
 
 Данные для входа:
 - **Логин**: `root`
-- **Пароль**: `Kolobaha00!`
+- **Пароль**: `<pswd>`
 
 ---
 
@@ -215,7 +215,7 @@ Authorization: Bearer <token>
 ```json
 {
     "login": "root",
-    "password": "Kolobaha00!"
+    "password": "<pswd>"
 }
 ```
 
@@ -437,7 +437,7 @@ GeoJSON всех кабелей.
 Рекомендуется регулярно создавать резервные копии базы данных:
 
 ```bash
-pg_dump -h 10.16.10.150 -U lksoftgwebsrv -d lksoftgwebsrv > backup_$(date +%Y%m%d).sql
+pg_dump -h <ip> -U lksoftgwebsrv -d lksoftgwebsrv > backup_$(date +%Y%m%d).sql
 ```
 
 ---
