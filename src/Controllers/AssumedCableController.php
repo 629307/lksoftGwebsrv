@@ -857,10 +857,69 @@ class AssumedCableController extends BaseController
             // мы даём приоритет магистрали "от точки присоединения вглубь" (root->leaf),
             // даже если есть более длинные leaf->leaf маршруты внутри ветки.
             $nodeToComp = [];
-            $compHasSingleAttach = []; // compId => bool
-            $compRoot = []; // compId => wellId (0 если нет/неоднозначно)
+            $compRoot = []; // compId => wellId (0 если нет точек присоединения)
             $visited = [];
             $compId = 0;
+
+            // Полные компоненты связности по полной топологии (fullAdj): нужны, чтобы
+            // для каждой точки присоединения оценить "максимальный путь в полной топологии".
+            $fullCompIdByWell = [];
+            $fullCompWells = []; // fullCompId => [wellId=>true]
+            $fullVisited = [];
+            $fullCompId = 0;
+            foreach (array_keys($fullAdj) as $w0) {
+                $w0 = (int) $w0;
+                if ($w0 <= 0 || isset($fullVisited[$w0])) continue;
+                $fullCompId++;
+                $stack0 = [$w0];
+                $fullVisited[$w0] = true;
+                $set = [];
+                while ($stack0) {
+                    $u = (int) array_pop($stack0);
+                    $set[$u] = true;
+                    foreach (($fullAdj[$u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        if ($v <= 0 || isset($fullVisited[$v])) continue;
+                        $fullVisited[$v] = true;
+                        $stack0[] = $v;
+                    }
+                }
+                $fullCompWells[$fullCompId] = $set;
+                foreach ($set as $u => $_) $fullCompIdByWell[(int) $u] = $fullCompId;
+            }
+
+            // Dijkstra по полной топологии (fullAdj) внутри одной полной компоненты
+            // (shortest paths). Возвращаем dist[] и maxDist.
+            $dijkstraMaxDist = function(int $src, array $allowedSet) use ($fullAdj): array {
+                if ($src <= 0 || !isset($allowedSet[$src])) return [[], 0.0];
+                $dist = [$src => 0.0];
+                $pq = new \SplPriorityQueue();
+                $pq->setExtractFlags(\SplPriorityQueue::EXTR_BOTH);
+                $pq->insert($src, 0.0); // priority = -dist
+                $max = 0.0;
+                while (!$pq->isEmpty()) {
+                    $cur = $pq->extract();
+                    $u = (int) ($cur['data'] ?? 0);
+                    $d = -1.0 * (float) ($cur['priority'] ?? 0);
+                    if ($u <= 0) continue;
+                    if (!isset($dist[$u]) || $d > (float) $dist[$u] + 1e-9) continue;
+                    if ($d > $max) $max = $d;
+                    foreach (($fullAdj[$u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        if ($v <= 0 || !isset($allowedSet[$v])) continue;
+                        $w = (float) ($e['len'] ?? 0);
+                        if ($w < 0) continue;
+                        $nd = $d + $w;
+                        if (!isset($dist[$v]) || $nd < (float) $dist[$v] - 1e-9) {
+                            $dist[$v] = $nd;
+                            $pq->insert($v, -1.0 * $nd);
+                        }
+                    }
+                }
+                return [$dist, $max];
+            };
+
+            $eccCache = []; // [fullCompId][wellId] => float (maxDist in full topology)
             foreach (array_keys($capAdj) as $start) {
                 $start = (int) $start;
                 if ($start <= 0 || isset($visited[$start])) continue;
@@ -893,13 +952,38 @@ class AssumedCableController extends BaseController
                         }
                     }
                 }
-                if (count($attach) === 1) {
-                    $rootWell = (int) array_key_first($attach);
-                    $compHasSingleAttach[$compId] = true;
-                    $compRoot[$compId] = $rootWell;
-                } else {
-                    $compHasSingleAttach[$compId] = false;
+
+                // Выбор root:
+                // - если точек присоединения нет — root=0
+                // - если точек присоединения >=1 — выбираем ту, у которой "максимальный путь
+                //   в полной топологии" максимален (farthest shortest-path distance внутри full component).
+                $attachNodes = array_keys($attach);
+                if (!$attachNodes) {
                     $compRoot[$compId] = 0;
+                } else {
+                    $fid = (int) ($fullCompIdByWell[$start] ?? 0);
+                    $allowedSet = $fid > 0 ? ($fullCompWells[$fid] ?? []) : [];
+                    $best = 0;
+                    $bestEcc = -1.0;
+                    sort($attachNodes, SORT_NUMERIC);
+                    foreach ($attachNodes as $u) {
+                        $u = (int) $u;
+                        if ($u <= 0) continue;
+                        if ($fid <= 0 || !$allowedSet) {
+                            $ecc = 0.0;
+                        } else if (isset($eccCache[$fid]) && array_key_exists($u, $eccCache[$fid])) {
+                            $ecc = (float) $eccCache[$fid][$u];
+                        } else {
+                            [, $ecc] = $dijkstraMaxDist($u, $allowedSet);
+                            if (!isset($eccCache[$fid])) $eccCache[$fid] = [];
+                            $eccCache[$fid][$u] = (float) $ecc;
+                        }
+                        if ($ecc > $bestEcc + 1e-9) {
+                            $bestEcc = $ecc;
+                            $best = $u;
+                        }
+                    }
+                    $compRoot[$compId] = $best > 0 ? $best : (int) $attachNodes[0];
                 }
             }
 
@@ -910,14 +994,13 @@ class AssumedCableController extends BaseController
                 $cid = (int) ($nodeToComp[$sw] ?? 0);
                 $p['_cid'] = $cid;
                 $root = (int) ($compRoot[$cid] ?? 0);
-                $isSingle = (bool) ($compHasSingleAttach[$cid] ?? false);
                 $p['_root'] = $root;
-                $p['_root_end'] = ($isSingle && $root > 0 && ($sw === $root || $ew === $root)) ? 1 : 0;
+                $p['_root_end'] = ($root > 0 && ($sw === $root || $ew === $root)) ? 1 : 0;
             }
             unset($p);
 
             // сортировка:
-            // - ВНУТРИ компоненты с единой точкой присоединения: сначала root->* или *->root,
+            // - ВНУТРИ компоненты с выбранной точкой присоединения: сначала root->* или *->root,
             //   затем по числу рёбер и длине.
             // - Между разными компонентами: по числу рёбер и длине (как раньше).
             usort($paths, function($x, $y) {
