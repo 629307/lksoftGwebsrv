@@ -184,6 +184,14 @@ const MapManager = {
         return this.getSettingColor('selected_object_highlight_color', '#ffff00');
     },
 
+    isReadonlyUser() {
+        try {
+            return (typeof App !== 'undefined') && ((App?.user?.role?.code || '') === 'readonly');
+        } catch (_) {
+            return false;
+        }
+    },
+
     getDirectionLineWeight() {
         return Math.max(0.5, this.getSettingNumber('line_weight_direction', 3));
     },
@@ -803,6 +811,7 @@ const MapManager = {
     },
 
     async loadInventoryLayer() {
+        if (this.isReadonlyUser()) return;
         try {
             const resp = await API.inventory.geojson(this.filters || {});
             if (resp?.success === false) return;
@@ -914,6 +923,7 @@ const MapManager = {
     },
 
     setInventoryUnaccountedLabelsEnabled(enabled) {
+        if (this.isReadonlyUser()) return;
         this.inventoryUnaccountedLabelsEnabled = !!enabled;
         try {
             if (!this.map || !this.inventoryLabelsLayer) return;
@@ -940,6 +950,10 @@ const MapManager = {
     },
 
     toggleInventoryMode() {
+        if (this.isReadonlyUser()) {
+            try { App.notify('Инвентаризация недоступна для роли "Только чтение"', 'warning'); } catch (_) {}
+            return;
+        }
         this.inventoryMode = !this.inventoryMode;
         if (this.inventoryMode) {
             // выключаем конфликтующие режимы
@@ -2123,6 +2137,7 @@ const MapManager = {
     },
 
     async loadAssumedCablesLayer(variantNo = null) {
+        if (this.isReadonlyUser()) return;
         try {
             const v0 = (variantNo === null || variantNo === undefined)
                 ? (this.assumedCablesVariantNo || 1)
@@ -2489,6 +2504,7 @@ const MapManager = {
     async showInventoryRecommendationsPanel(ownerId) {
         const oid = parseInt(ownerId || 0, 10);
         if (!oid) return;
+        if (this.isReadonlyUser()) return;
         try { App.switchPanel('map'); } catch (_) {}
         // не держим две правые панели одновременно
         try { this.setAssumedCablesPanelVisible(false); } catch (_) {}
@@ -3932,6 +3948,21 @@ const MapManager = {
     toggleLayer(layerName, visible) {
         const layer = this.layers[layerName];
         if (layer) {
+            if (visible && this.isReadonlyUser() && (layerName === 'inventory' || layerName === 'assumedCables')) {
+                // слой/функционал инвентаризации недоступен readonly
+                try { this.map.removeLayer(layer); } catch (_) {}
+                if (layerName === 'inventory') {
+                    try { this.layers.inventory?.clearLayers?.(); } catch (_) {}
+                    try { this.inventoryLabelsLayer?.clearLayers?.(); } catch (_) {}
+                    try { if (this.inventoryLabelsLayer) this.map.removeLayer(this.inventoryLabelsLayer); } catch (_) {}
+                }
+                if (layerName === 'assumedCables') {
+                    try { this.layers.assumedCables?.clearLayers?.(); } catch (_) {}
+                    try { this.setAssumedCablesPanelVisible?.(false); } catch (_) {}
+                }
+                try { App.notify('Слой "Инвентаризация" недоступен для роли "Только чтение"', 'warning'); } catch (_) {}
+                return;
+            }
             if (visible) {
                 this.map.addLayer(layer);
                 if (layerName === 'wells') {
@@ -4068,12 +4099,13 @@ const MapManager = {
         // Доп. действия для карты
         if (objectType === 'well') {
             const canWrite = (typeof App !== 'undefined' && typeof App.canWrite === 'function' && App.canWrite());
+            const isReadonly = this.isReadonlyUser();
             const invId = parseInt(properties?.last_inventory_card_id || 0, 10);
             html += `<div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-sm btn-secondary" onclick="App.showCablesInWell(${properties.id})">
                     Показать кабели в колодце
                 </button>
-                ${invId > 0 ? `
+                ${(invId > 0 && !isReadonly) ? `
                     <button type="button" class="btn btn-sm btn-secondary" onclick="App.openInventoryCard(${invId})">
                         Показать инвентарную карточку
                     </button>

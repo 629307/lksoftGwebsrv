@@ -116,6 +116,35 @@ const App = {
                 const p = el?.dataset?.panel;
                 if (p && p !== 'map') el.classList.add('hidden');
             });
+            // Слой/функционал "Инвентаризация" недоступен для роли readonly
+            try {
+                const invCb = document.getElementById('layer-inventory');
+                if (invCb) {
+                    invCb.checked = false;
+                    invCb.disabled = true;
+                    invCb.closest?.('.layer-item')?.classList?.add('hidden');
+                }
+                // связанные элементы управления слоя
+                [
+                    'inventory-inline-controls',
+                    'btn-toggle-assumed-cables',
+                    'assumed-cables-variant',
+                    'btn-assumed-cables-rebuild',
+                    'btn-inventory-unacc-labels',
+                    'btn-inventory-mode',
+                    'btn-recalc-inventory-unaccounted',
+                ].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    el.classList.add('hidden');
+                    try { el.disabled = true; } catch (_) {}
+                });
+                // на всякий случай снимаем слои на карте
+                try { MapManager?.toggleLayer?.('inventory', false); } catch (_) {}
+                try { MapManager?.toggleLayer?.('assumedCables', false); } catch (_) {}
+                try { MapManager?.setAssumedCablesPanelVisible?.(false); } catch (_) {}
+                try { MapManager?.setInventoryUnaccountedLabelsEnabled?.(false); } catch (_) {}
+            } catch (_) {}
             // Инструменты карты: отключаем всё кроме разрешённых
             try {
                 const allowed = new Set([
@@ -1291,6 +1320,12 @@ const App = {
      * Переключение слоя
      */
     handleLayerToggle(input) {
+        // Роль "Только чтение": слой "Инвентаризация" недоступен
+        if ((this.user?.role?.code || '') === 'readonly' && input?.id === 'layer-inventory') {
+            try { input.checked = false; } catch (_) {}
+            try { this.notify('Слой "Инвентаризация" недоступен для роли "Только чтение"', 'warning'); } catch (_) {}
+            return;
+        }
         const layerMap = {
             'layer-wells': 'wells',
             'layer-channels': 'channels',
@@ -1487,6 +1522,13 @@ const App = {
     },
 
     setAssumedCablesModeEnabled(enabled, opts = {}) {
+        if ((this.user?.role?.code || '') === 'readonly') {
+            // режим предполагаемых кабелей является частью функционала инвентаризации
+            this.assumedCablesModeEnabled = false;
+            try { this.syncInventoryAssumedControls_(); } catch (_) {}
+            try { this.notify('Функционал "Инвентаризация" недоступен для роли "Только чтение"', 'warning'); } catch (_) {}
+            return;
+        }
         const ensureInventoryOn = (opts?.ensureInventoryOn !== false);
         this.assumedCablesModeEnabled = !!enabled;
 
@@ -2082,6 +2124,10 @@ const App = {
     },
 
     async openInventoryCard(cardId) {
+        if ((this.user?.role?.code || '') === 'readonly') {
+            this.notify('Инвентаризация недоступна для роли "Только чтение"', 'error');
+            return;
+        }
         const id = parseInt(cardId || 0, 10);
         if (!id) return;
         try {
@@ -4929,6 +4975,10 @@ const App = {
     },
 
     openInventoryRecommendationsFromInventoryReportUi() {
+        if ((this.user?.role?.code || '') === 'readonly') {
+            this.notify('Инвентаризация недоступна для роли "Только чтение"', 'error');
+            return;
+        }
         const ownerIdRaw = document.getElementById('report-inventory-owner')?.value || '';
         const ownerId = parseInt(ownerIdRaw || '0', 10);
         if (!ownerId) {
@@ -5005,6 +5055,10 @@ const App = {
     },
 
     async showInventoryDirectionOnMap(directionId) {
+        if ((this.user?.role?.code || '') === 'readonly') {
+            this.notify('Инвентаризация недоступна для роли "Только чтение"', 'error');
+            return;
+        }
         const did = parseInt(directionId || 0, 10);
         if (!did) return;
         try {
