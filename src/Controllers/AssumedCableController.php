@@ -762,7 +762,8 @@ class AssumedCableController extends BaseController
             return $min > 0 ? $min : 0;
         };
 
-        // METHOD 1: Global Longest Paths with Capacity Consumption (Greedy)
+        // METHOD 1: Full Graph Segmented Longest Paths
+        // Основной метод: выбираем самый длинный capacity-сегмент (по всей топологии) и вырабатываем его minCap.
         $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
@@ -802,26 +803,37 @@ class AssumedCableController extends BaseController
                 return $lb <=> $la;
             });
 
-            // 2) жадно потребляем capacity по пути, пока есть ресурс
+            // 2) пока есть ресурс — выбираем САМЫЙ ДЛИННЫЙ доступный capacity-сегмент глобально
             while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
-                $progress = false;
+                $bestSeg = null;
+                $bestEdges = -1;
+                $bestLen = -1.0;
+
                 foreach ($cands as $cand) {
-                    if (count($routes) >= $maxRoutes) break;
                     if (!$routeConsumesAny($cand, $rem)) continue;
-                    // разбиваем на сегменты подряд идущих capacity>0
                     $segments = $segmentCapacityRunsInPath($cand, $rem);
                     foreach ($segments as $seg) {
-                        if (count($routes) >= $maxRoutes) break;
-                        $minCap = $segmentMinCap($seg, $rem);
-                        if ($minCap <= 0) continue;
-                        for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
-                            if (!$consumeCapacitySegment($rem, $seg)) break;
-                            $progress = true;
-                            $routes[] = $seg;
+                        $dirIds = array_values(array_map('intval', (array) ($seg['direction_ids'] ?? [])));
+                        if (!$dirIds) continue;
+                        $edgesCnt = count($dirIds);
+                        $s = $scoreRoute($seg, $rem);
+                        $len = (float) ($s['len'] ?? 0);
+                        if ($edgesCnt > $bestEdges || ($edgesCnt === $bestEdges && $len > $bestLen)) {
+                            $bestEdges = $edgesCnt;
+                            $bestLen = $len;
+                            $bestSeg = $seg;
                         }
                     }
                 }
-                if (!$progress) break;
+
+                if (!$bestSeg) break;
+                $minCap = $segmentMinCap($bestSeg, $rem);
+                if ($minCap <= 0) break;
+
+                for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
+                    if (!$consumeCapacitySegment($rem, $bestSeg)) break;
+                    $routes[] = $bestSeg;
+                }
             }
 
             // fallback: оставшиеся единицы capacity -> одиночные кабели по направлению
@@ -845,43 +857,88 @@ class AssumedCableController extends BaseController
             return $routes;
         };
 
-        // METHOD 2: Capacity-Aware Iterative Longest Path Extraction
-        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
+        // METHOD 2: Inventory Subgraph Segmented Paths
+        // "Чистый" метод только по инвентаризированным рёбрам: E' = { e | capacity(e) > 0 }.
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($dirs, $anyCapacityLeft, $mstDiameterPath, $scoreRoute, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
             while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
-                $comps = $buildFullComponents($fullAdj, $rem, $supply0);
-                if (!$comps) break;
+                // компоненты связности по подграфу capacity>0
+                $adj = []; // wellId => [wellId...], edge ids collected separately
+                $dirSetByWell = [];
+                foreach ($rem as $dirId => $cap) {
+                    $dirId = (int) $dirId;
+                    $cap = (int) $cap;
+                    if ($dirId <= 0 || $cap <= 0) continue;
+                    $d = $dirs[$dirId] ?? null;
+                    if (!$d) continue;
+                    $a = (int) ($d['a'] ?? 0);
+                    $b = (int) ($d['b'] ?? 0);
+                    if ($a <= 0 || $b <= 0) continue;
+                    if (!isset($adj[$a])) $adj[$a] = [];
+                    if (!isset($adj[$b])) $adj[$b] = [];
+                    $adj[$a][] = $b;
+                    $adj[$b][] = $a;
+                    if (!isset($dirSetByWell[$a])) $dirSetByWell[$a] = [];
+                    if (!isset($dirSetByWell[$b])) $dirSetByWell[$b] = [];
+                    $dirSetByWell[$a][$dirId] = true;
+                    $dirSetByWell[$b][$dirId] = true;
+                }
+                if (!$adj) break;
 
-                $bestSeg = null;
-                $bestScore = -1e100;
-                foreach ($comps as $c) {
-                    $dirAll = $c['dir_ids_all'] ?? [];
-                    if (!$dirAll) continue;
-                    foreach ([ [false,false], [false,true], [true,false] ] as $opt) {
-                        $p = $mstDiameterPath($dirAll, $rem, (bool) $opt[0], (bool) $opt[1]);
-                        if (!$p) continue;
-                        // берём лучший СЕГМЕНТ (подряд capacity>0) внутри пути
-                        $segs = $segmentCapacityRunsInPath($p, $rem);
-                        foreach ($segs as $seg) {
-                            $s = $scoreRoute($seg, $rem);
-                            if (!($s['ok'] ?? false)) continue;
-                            if ((float) ($s['score'] ?? -1e100) > $bestScore) {
-                                $bestScore = (float) $s['score'];
-                                $bestSeg = $seg;
-                            }
+                $visited = [];
+                $components = [];
+                foreach (array_keys($adj) as $start) {
+                    $start = (int) $start;
+                    if ($start <= 0 || isset($visited[$start])) continue;
+                    $stack = [$start];
+                    $visited[$start] = true;
+                    $wells = [];
+                    $dirSet = [];
+                    while ($stack) {
+                        $u = (int) array_pop($stack);
+                        $wells[] = $u;
+                        foreach (($dirSetByWell[$u] ?? []) as $dirId => $_) $dirSet[(int) $dirId] = true;
+                        foreach (($adj[$u] ?? []) as $v) {
+                            $v = (int) $v;
+                            if ($v <= 0 || isset($visited[$v])) continue;
+                            $visited[$v] = true;
+                            $stack[] = $v;
                         }
                     }
+                    $dirIds = array_keys($dirSet);
+                    if (!$dirIds) continue;
+                    $components[] = ['dir_ids' => $dirIds];
                 }
-                if (!$bestSeg) break;
+                if (!$components) break;
 
-                $minCap = $segmentMinCap($bestSeg, $rem);
+                // ищем самый длинный путь (он уже является сегментом capacity>0)
+                $bestPath = null;
+                $bestEdges = -1;
+                $bestLen = -1.0;
+                foreach ($components as $c) {
+                    $dirIds = $c['dir_ids'] ?? [];
+                    if (!$dirIds) continue;
+                    $p = $mstDiameterPath($dirIds, $rem, true, true);
+                    if (!$p) continue;
+                    $edgesCnt = count((array) ($p['direction_ids'] ?? []));
+                    $s = $scoreRoute($p, $rem);
+                    $len = (float) ($s['len'] ?? 0);
+                    if ($edgesCnt > $bestEdges || ($edgesCnt === $bestEdges && $len > $bestLen)) {
+                        $bestEdges = $edgesCnt;
+                        $bestLen = $len;
+                        $bestPath = $p;
+                    }
+                }
+                if (!$bestPath) break;
+
+                $minCap = $segmentMinCap($bestPath, $rem);
                 if ($minCap <= 0) break;
                 for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
-                    if (!$consumeCapacitySegment($rem, $bestSeg)) break;
-                    $routes[] = $bestSeg;
+                    if (!$consumeCapacitySegment($rem, $bestPath)) break;
+                    $routes[] = $bestPath;
                 }
             }
 
@@ -1395,7 +1452,7 @@ class AssumedCableController extends BaseController
              LEFT JOIN wells sw ON r.start_well_id = sw.id
              LEFT JOIN wells ew ON r.end_well_id = ew.id
              WHERE r.scenario_id = :sid
-             ORDER BY r.id",
+             ORDER BY r.length_m DESC, r.id",
             ['sid' => $scenarioId]
         );
 
