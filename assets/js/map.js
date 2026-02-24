@@ -2670,6 +2670,7 @@ const MapManager = {
                             <th>Номер кабеля</th>
                             <th>Тип кабеля</th>
                             <th>Кабель (из каталога)</th>
+                            <th style="width: 110px;">Длина (м)</th>
                             <th>Собственник</th>
                         </tr>
                     </thead>
@@ -2678,16 +2679,18 @@ const MapManager = {
                             const id = parseInt(r?.id || 0, 10) || 0;
                             const key = String(id);
                             const selected = (key && key === selectedKey) ? 'ac-row-selected' : '';
+                            const lenM = toNum(r?.length_calculated ?? r?.length_m ?? 0);
                             return `
                                 <tr class="${selected}" data-id="${esc(key)}">
                                     <td>${idx + 1}</td>
                                     <td>${esc(r?.number || '')}</td>
                                     <td>${esc(r?.cable_type_name || '')}</td>
                                     <td>${esc(r?.marking || r?.cable_marking || '')}</td>
+                                    <td>${esc(fmtLen(lenM))}</td>
                                     <td>${esc(r?.owner_name || '')}</td>
                                 </tr>
                             `;
-                        }).join('') || `<tr><td colspan="5" style="padding:12px 14px; color: var(--text-secondary);">Нет данных</td></tr>`}
+                        }).join('') || `<tr><td colspan="6" style="padding:12px 14px; color: var(--text-secondary);">Нет данных</td></tr>`}
                     </tbody>
                 </table>
             `;
