@@ -56,6 +56,10 @@ html, body {
     color: var(--text-primary);
 }
 
+.fa-solid {
+    font-size: 12px;
+}
+
 a {
     color: var(--accent-color);
     text-decoration: none;

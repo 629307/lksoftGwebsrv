@@ -177,6 +177,10 @@ const App = {
         try {
             const btnMode = document.getElementById('btn-toggle-assumed-cables');
             if (btnMode) btnMode.classList.toggle('active', false);
+            try {
+                const invCb = document.getElementById('layer-inventory');
+                if (btnMode) btnMode.disabled = !(invCb?.checked);
+            } catch (_) {}
             const sel = document.getElementById('assumed-cables-variant');
             const btn = document.getElementById('btn-assumed-cables-rebuild');
             if (sel) sel.disabled = true;
@@ -1407,7 +1411,10 @@ const App = {
 
         try {
             const btnMode = document.getElementById('btn-toggle-assumed-cables');
-            if (btnMode) btnMode.classList.toggle('active', assumedOn);
+            if (btnMode) {
+                btnMode.disabled = !invOn;
+                btnMode.classList.toggle('active', assumedOn);
+            }
         } catch (_) {}
 
         // селект + пересчёт: активны только в режиме предполагаемых кабелей
