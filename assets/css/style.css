@@ -527,6 +527,7 @@ body.sidebar-resizing {
     background: var(--bg-secondary);
     color: var(--text-primary);
     cursor: pointer;
+    font-size: 12px;
 }
 
 .layer-inline-btn:hover {
