@@ -762,77 +762,124 @@ class AssumedCableController extends BaseController
             return $min > 0 ? $min : 0;
         };
 
+        // Перебор ВСЕХ путей (simple paths) в подграфе capacity>0.
+        // Требование: рёбра в пути уникальны (и вершины тоже, чтобы не было циклов).
+        $enumerateAllSimplePaths = function(array $capAdj): array {
+            $nodes = array_keys($capAdj);
+            sort($nodes, SORT_NUMERIC);
+            $seen = [];
+            $paths = [];
+
+            $canonKey = function(array $dirIds): string {
+                $a = implode(',', $dirIds);
+                $b = implode(',', array_reverse($dirIds));
+                return strcmp($a, $b) <= 0 ? $a : $b;
+            };
+
+            $dfs = null;
+            $dfs = function(int $start, int $u, array &$visNodes, array &$visEdges, array &$pathEdges, float &$pathLen) use (&$dfs, &$paths, &$seen, $capAdj, $canonKey) {
+                foreach (($capAdj[$u] ?? []) as $e) {
+                    $v = (int) ($e['to'] ?? 0);
+                    $dirId = (int) ($e['dir'] ?? 0);
+                    $len = (float) ($e['len'] ?? 0);
+                    if ($v <= 0 || $dirId <= 0 || $len < 0) continue;
+                    if (isset($visEdges[$dirId])) continue;
+                    if (isset($visNodes[$v])) continue; // simple vertex-path
+
+                    $visEdges[$dirId] = true;
+                    $visNodes[$v] = true;
+                    $pathEdges[] = $dirId;
+                    $pathLen += $len;
+
+                    $key = $canonKey($pathEdges);
+                    if (!isset($seen[$key])) {
+                        $seen[$key] = true;
+                        $paths[] = [
+                            'start_well_id' => $start,
+                            'end_well_id' => $v,
+                            'direction_ids' => $pathEdges,
+                            'edges_count' => count($pathEdges),
+                            'len_m' => round($pathLen, 2),
+                        ];
+                    }
+
+                    $dfs($start, $v, $visNodes, $visEdges, $pathEdges, $pathLen);
+
+                    // backtrack
+                    $pathLen -= $len;
+                    array_pop($pathEdges);
+                    unset($visNodes[$v]);
+                    unset($visEdges[$dirId]);
+                }
+            };
+
+            foreach ($nodes as $start) {
+                $start = (int) $start;
+                if ($start <= 0) continue;
+                $visNodes = [$start => true];
+                $visEdges = [];
+                $pathEdges = [];
+                $pathLen = 0.0;
+                $dfs($start, $start, $visNodes, $visEdges, $pathEdges, $pathLen);
+            }
+
+            return $paths;
+        };
+
         // METHOD 1: Full Graph Segmented Longest Paths
         // Основной метод: выбираем самый длинный capacity-сегмент (по всей топологии) и вырабатываем его minCap.
-        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
-            // 1) сгенерируем набор длинных путей по полной сети (без фильтрации по capacity)
-            $comps0 = $buildFullComponents($fullAdj, $rem, $supply0);
-            $cands = [];
-            foreach ($comps0 as $c) {
-                $dirAll = $c['dir_ids_all'] ?? [];
-                if (!$dirAll) continue;
-                foreach ([ [false,false], [false,true] ] as $opt) {
-                    $p = $mstDiameterPath($dirAll, $rem, (bool) $opt[0], (bool) $opt[1]);
-                    if ($p) $cands[] = $p;
-                }
+            // 1) подграф capacity>0 (на основе исходного ресурса): перечисляем ВСЕ пути без исключения
+            $capAdj = [];
+            foreach ($baseRem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                $len = (float) ($d['length_m'] ?? 0);
+                if ($a <= 0 || $b <= 0 || $len < 0) continue;
+                if (!isset($capAdj[$a])) $capAdj[$a] = [];
+                if (!isset($capAdj[$b])) $capAdj[$b] = [];
+                $capAdj[$a][] = ['to' => $b, 'dir' => $dirId, 'len' => $len];
+                $capAdj[$b][] = ['to' => $a, 'dir' => $dirId, 'len' => $len];
             }
-            // уникализация + длина
-            $uniq = [];
-            foreach ($cands as $cand) {
-                $dirIds = array_values(array_map('intval', (array) ($cand['direction_ids'] ?? [])));
-                if (!$dirIds) continue;
-                $k1 = implode(',', $dirIds);
-                $k2 = implode(',', array_reverse($dirIds));
-                $key = strcmp($k1, $k2) <= 0 ? $k1 : $k2;
-                $s = $scoreRoute($cand, $rem);
-                $cand['_edges'] = count($dirIds);
-                $cand['_len'] = (float) ($s['len'] ?? 0);
-                $uniq[$key] = $cand;
-            }
-            $cands = array_values($uniq);
-            usort($cands, function($a, $b) {
-                $ea = (int) ($a['_edges'] ?? 0);
-                $eb = (int) ($b['_edges'] ?? 0);
-                if ($ea !== $eb) return $eb <=> $ea;
-                $la = (float) ($a['_len'] ?? 0);
-                $lb = (float) ($b['_len'] ?? 0);
-                return $lb <=> $la;
+            if (!$capAdj) return [];
+
+            $paths = $enumerateAllSimplePaths($capAdj);
+            // сортировка по убыванию длины: сначала по числу рёбер, затем по метрам
+            usort($paths, function($x, $y) {
+                $ex = (int) ($x['edges_count'] ?? 0);
+                $ey = (int) ($y['edges_count'] ?? 0);
+                if ($ex !== $ey) return $ey <=> $ex;
+                $lx = (float) ($x['len_m'] ?? 0);
+                $ly = (float) ($y['len_m'] ?? 0);
+                if ($lx !== $ly) return $ly <=> $lx;
+                return ((int) ($x['start_well_id'] ?? 0) <=> (int) ($y['start_well_id'] ?? 0));
             });
 
-            // 2) пока есть ресурс — выбираем САМЫЙ ДЛИННЫЙ доступный capacity-сегмент глобально
-            while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
-                $bestSeg = null;
-                $bestEdges = -1;
-                $bestLen = -1.0;
-
-                foreach ($cands as $cand) {
-                    if (!$routeConsumesAny($cand, $rem)) continue;
-                    $segments = $segmentCapacityRunsInPath($cand, $rem);
-                    foreach ($segments as $seg) {
-                        $dirIds = array_values(array_map('intval', (array) ($seg['direction_ids'] ?? [])));
-                        if (!$dirIds) continue;
-                        $edgesCnt = count($dirIds);
-                        $s = $scoreRoute($seg, $rem);
-                        $len = (float) ($s['len'] ?? 0);
-                        if ($edgesCnt > $bestEdges || ($edgesCnt === $bestEdges && $len > $bestLen)) {
-                            $bestEdges = $edgesCnt;
-                            $bestLen = $len;
-                            $bestSeg = $seg;
-                        }
-                    }
-                }
-
-                if (!$bestSeg) break;
-                $minCap = $segmentMinCap($bestSeg, $rem);
-                if ($minCap <= 0) break;
-
+            // 2) обработка путей (от длинных к коротким)
+            foreach ($paths as $p) {
+                if (count($routes) >= $maxRoutes) break;
+                $dirIds = array_values(array_map('intval', (array) ($p['direction_ids'] ?? [])));
+                if (!$dirIds) continue;
+                $seg = [
+                    'start_well_id' => (int) ($p['start_well_id'] ?? 0),
+                    'end_well_id' => (int) ($p['end_well_id'] ?? 0),
+                    'direction_ids' => $dirIds,
+                    'weight' => 0.0,
+                ];
+                $minCap = $segmentMinCap($seg, $rem);
+                if ($minCap <= 0) continue;
                 for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
-                    if (!$consumeCapacitySegment($rem, $bestSeg)) break;
-                    $routes[] = $bestSeg;
+                    if (!$consumeCapacitySegment($rem, $seg)) break;
+                    $routes[] = $seg;
                 }
             }
 
@@ -859,86 +906,53 @@ class AssumedCableController extends BaseController
 
         // METHOD 2: Inventory Subgraph Segmented Paths
         // "Чистый" метод только по инвентаризированным рёбрам: E' = { e | capacity(e) > 0 }.
-        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($dirs, $anyCapacityLeft, $mstDiameterPath, $scoreRoute, $consumeCapacitySegment, $segmentMinCap): array {
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
 
-            while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
-                // компоненты связности по подграфу capacity>0
-                $adj = []; // wellId => [wellId...], edge ids collected separately
-                $dirSetByWell = [];
-                foreach ($rem as $dirId => $cap) {
-                    $dirId = (int) $dirId;
-                    $cap = (int) $cap;
-                    if ($dirId <= 0 || $cap <= 0) continue;
-                    $d = $dirs[$dirId] ?? null;
-                    if (!$d) continue;
-                    $a = (int) ($d['a'] ?? 0);
-                    $b = (int) ($d['b'] ?? 0);
-                    if ($a <= 0 || $b <= 0) continue;
-                    if (!isset($adj[$a])) $adj[$a] = [];
-                    if (!isset($adj[$b])) $adj[$b] = [];
-                    $adj[$a][] = $b;
-                    $adj[$b][] = $a;
-                    if (!isset($dirSetByWell[$a])) $dirSetByWell[$a] = [];
-                    if (!isset($dirSetByWell[$b])) $dirSetByWell[$b] = [];
-                    $dirSetByWell[$a][$dirId] = true;
-                    $dirSetByWell[$b][$dirId] = true;
-                }
-                if (!$adj) break;
+            // Подграф E' = { e | capacity(e)>0 } на основе исходного baseRem.
+            $capAdj = [];
+            foreach ($baseRem as $dirId => $cap) {
+                $dirId = (int) $dirId;
+                $cap = (int) $cap;
+                if ($dirId <= 0 || $cap <= 0) continue;
+                $d = $dirs[$dirId] ?? null;
+                if (!$d) continue;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                $len = (float) ($d['length_m'] ?? 0);
+                if ($a <= 0 || $b <= 0 || $len < 0) continue;
+                if (!isset($capAdj[$a])) $capAdj[$a] = [];
+                if (!isset($capAdj[$b])) $capAdj[$b] = [];
+                $capAdj[$a][] = ['to' => $b, 'dir' => $dirId, 'len' => $len];
+                $capAdj[$b][] = ['to' => $a, 'dir' => $dirId, 'len' => $len];
+            }
+            if (!$capAdj) return [];
 
-                $visited = [];
-                $components = [];
-                foreach (array_keys($adj) as $start) {
-                    $start = (int) $start;
-                    if ($start <= 0 || isset($visited[$start])) continue;
-                    $stack = [$start];
-                    $visited[$start] = true;
-                    $wells = [];
-                    $dirSet = [];
-                    while ($stack) {
-                        $u = (int) array_pop($stack);
-                        $wells[] = $u;
-                        foreach (($dirSetByWell[$u] ?? []) as $dirId => $_) $dirSet[(int) $dirId] = true;
-                        foreach (($adj[$u] ?? []) as $v) {
-                            $v = (int) $v;
-                            if ($v <= 0 || isset($visited[$v])) continue;
-                            $visited[$v] = true;
-                            $stack[] = $v;
-                        }
-                    }
-                    $dirIds = array_keys($dirSet);
-                    if (!$dirIds) continue;
-                    $components[] = ['dir_ids' => $dirIds];
-                }
-                if (!$components) break;
+            $paths = $enumerateAllSimplePaths($capAdj);
+            usort($paths, function($x, $y) {
+                $ex = (int) ($x['edges_count'] ?? 0);
+                $ey = (int) ($y['edges_count'] ?? 0);
+                if ($ex !== $ey) return $ey <=> $ex;
+                $lx = (float) ($x['len_m'] ?? 0);
+                $ly = (float) ($y['len_m'] ?? 0);
+                return $ly <=> $lx;
+            });
 
-                // ищем самый длинный путь (он уже является сегментом capacity>0)
-                $bestPath = null;
-                $bestEdges = -1;
-                $bestLen = -1.0;
-                foreach ($components as $c) {
-                    $dirIds = $c['dir_ids'] ?? [];
-                    if (!$dirIds) continue;
-                    $p = $mstDiameterPath($dirIds, $rem, true, true);
-                    if (!$p) continue;
-                    $edgesCnt = count((array) ($p['direction_ids'] ?? []));
-                    $s = $scoreRoute($p, $rem);
-                    $len = (float) ($s['len'] ?? 0);
-                    if ($edgesCnt > $bestEdges || ($edgesCnt === $bestEdges && $len > $bestLen)) {
-                        $bestEdges = $edgesCnt;
-                        $bestLen = $len;
-                        $bestPath = $p;
-                    }
-                }
-                if (!$bestPath) break;
-
-                $minCap = $segmentMinCap($bestPath, $rem);
-                if ($minCap <= 0) break;
+            foreach ($paths as $p) {
+                if (count($routes) >= $maxRoutes) break;
+                $seg = [
+                    'start_well_id' => (int) ($p['start_well_id'] ?? 0),
+                    'end_well_id' => (int) ($p['end_well_id'] ?? 0),
+                    'direction_ids' => array_values(array_map('intval', (array) ($p['direction_ids'] ?? []))),
+                    'weight' => 0.0,
+                ];
+                $minCap = $segmentMinCap($seg, $rem);
+                if ($minCap <= 0) continue;
                 for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
-                    if (!$consumeCapacitySegment($rem, $bestPath)) break;
-                    $routes[] = $bestPath;
+                    if (!$consumeCapacitySegment($rem, $seg)) break;
+                    $routes[] = $seg;
                 }
             }
 
