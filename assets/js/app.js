@@ -5682,6 +5682,7 @@ const App = {
         const wmtsTr = document.getElementById('settings-wmts-tilerow');
         const wmtsTc = document.getElementById('settings-wmts-tilecol');
         const entryKind = document.getElementById('settings-well-entry-kind-code');
+        const poleKind = document.getElementById('settings-well-pole-kind-code');
         const hkDir = document.getElementById('settings-hotkey-add-direction');
         const hkWell = document.getElementById('settings-hotkey-add-well');
         const hkMarker = document.getElementById('settings-hotkey-add-marker');
@@ -5728,7 +5729,7 @@ const App = {
         if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
 
         // Заполняем список "Код — точка ввода" (object_kinds.code) только для вида объекта "Колодец"
-        if (entryKind) {
+        if (entryKind || poleKind) {
             try {
                 const [typesResp, kindsResp] = await Promise.all([
                     API.references.all('object_types'),
@@ -5743,9 +5744,16 @@ const App = {
                     : [];
                 filtered.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
 
-                entryKind.innerHTML = '<option value="">Не задано</option>' +
+                const options = '<option value="">Не задано</option>' +
                     filtered.map(k => `<option value="${this.escapeHtml(k.code || '')}">${this.escapeHtml(k.code || '')} — ${this.escapeHtml(k.name || '')}</option>`).join('');
-                entryKind.value = (this.settings.well_entry_point_kind_code ?? '');
+                if (entryKind) {
+                    entryKind.innerHTML = options;
+                    entryKind.value = (this.settings.well_entry_point_kind_code ?? '');
+                }
+                if (poleKind) {
+                    poleKind.innerHTML = options;
+                    poleKind.value = (this.settings.well_pole_kind_code ?? 'pole');
+                }
             } catch (_) {
                 // ignore
             }
@@ -5765,7 +5773,7 @@ const App = {
                 z, lat, lng,
                 wDir, wCable, iconSize, fsWell, fsDirLen,
                 wmtsUrlTmpl, wmtsStyle, wmtsTms, wmtsTm, wmtsTr, wmtsTc,
-                entryKind,
+                entryKind, poleKind,
             ];
             if (!canEditLinks) {
                 toDisable.push(geo, cad);
@@ -6009,6 +6017,7 @@ const App = {
         const wmtsTr = document.getElementById('settings-wmts-tilerow')?.value;
         const wmtsTc = document.getElementById('settings-wmts-tilecol')?.value;
         const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
+        const poleKind = document.getElementById('settings-well-pole-kind-code')?.value;
         const hkDir = document.getElementById('settings-hotkey-add-direction')?.value;
         const hkWell = document.getElementById('settings-hotkey-add-well')?.value;
         const hkMarker = document.getElementById('settings-hotkey-add-marker')?.value;
@@ -6054,6 +6063,7 @@ const App = {
             wmts_tilerow: wmtsTr,
             wmts_tilecol: wmtsTc,
             well_entry_point_kind_code: (entryKind ?? '').toString(),
+            well_pole_kind_code: (poleKind ?? '').toString(),
         };
         try {
             payload.hotkey_add_direction = validateHotkey('Добавить направление', hkDir);

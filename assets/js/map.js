@@ -397,7 +397,10 @@ const MapManager = {
 
     isWellPole(props) {
         const kindCode = (props?.kind_code || '').toString().trim().toLowerCase();
-        return kindCode === 'pole';
+        const pole = (typeof App !== 'undefined' ? (App?.settings?.well_pole_kind_code || 'pole') : 'pole').toString().trim().toLowerCase();
+        // если настройка не задана — фоллбек на 'pole'
+        const target = pole || 'pole';
+        return !!kindCode && kindCode === target;
     },
 
     createWellMarker(latlng, props) {

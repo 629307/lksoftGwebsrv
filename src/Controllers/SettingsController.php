@@ -56,6 +56,7 @@ class SettingsController extends BaseController
             'default_cable_type_id' => '',
             'default_cable_catalog_id' => '',
             'well_entry_point_kind_code' => 'input',
+            'well_pole_kind_code' => 'pole',
             // hotkeys
             'hotkey_add_direction' => 'a',
             'hotkey_add_well' => 's',
@@ -173,6 +174,8 @@ class SettingsController extends BaseController
             'hotkey_add_aerial_cable',
             // Колодцы: тип (object_kinds.code) для "точки ввода"
             'well_entry_point_kind_code',
+            // Колодцы: тип (object_kinds.code) для "опора-мачта"
+            'well_pole_kind_code',
             // Стили карты
             'line_weight_direction',
             'line_weight_cable',
@@ -203,6 +206,7 @@ class SettingsController extends BaseController
             'hotkey_add_ground_cable',
             'hotkey_add_aerial_cable',
             'well_entry_point_kind_code',
+            'well_pole_kind_code',
             'selected_object_highlight_color',
             'magnet_pixels',
         ];
