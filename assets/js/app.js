@@ -275,6 +275,14 @@ const App = {
         // Применяем начальную видимость слоёв (с учётом персональных настроек пользователя)
         this._suppressLayerPrefSave = true;
         this.applyLayerPreferencesFromSettings();
+        // Инвентаризация по умолчанию всегда выключена (не зависит от персональных настроек слоёв)
+        try {
+            const inv = document.getElementById('layer-inventory');
+            if (inv) inv.checked = false;
+            try { MapManager?.toggleLayer?.('inventory', false); } catch (_) {}
+            try { MapManager?.toggleLayer?.('assumedCables', false); } catch (_) {}
+            try { this.assumedCablesModeEnabled = false; } catch (_) {}
+        } catch (_) {}
         document.querySelectorAll('.layer-item input').forEach(input => this.handleLayerToggle(input));
         this._suppressLayerPrefSave = false;
 
@@ -410,7 +418,6 @@ const App = {
         const layerToCheckboxId = {
             wells: 'layer-wells',
             channels: 'layer-channels',
-            inventory: 'layer-inventory',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -431,7 +438,6 @@ const App = {
         const layerToCheckboxId = {
             wells: 'layer-wells',
             channels: 'layer-channels',
-            inventory: 'layer-inventory',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
