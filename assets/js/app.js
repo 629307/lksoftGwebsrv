@@ -1805,6 +1805,34 @@ const App = {
                     btn.classList.toggle('active', false);
                 }
             } catch (_) {}
+
+            // синхронизируем inline-кнопки для включенных слоёв (кабели + колодцы)
+            try {
+                const inv = (id) => document.getElementById(id);
+                // колодцы: подсказки/координаты доступны если слой колодцев включен
+                const wellsOn = !!inv('layer-wells')?.checked;
+                const b1 = inv('btn-toggle-well-labels');
+                const b2 = inv('btn-toggle-object-coordinates');
+                if (b1) {
+                    b1.disabled = !wellsOn;
+                    b1.classList.toggle('active', wellsOn && !!MapManager.wellLabelsEnabled);
+                }
+                if (b2) {
+                    b2.disabled = !wellsOn;
+                    b2.classList.toggle('active', wellsOn && !!MapManager.objectCoordinatesLabelsEnabled);
+                }
+                // кабели: кнопки "Список" доступны если соответствующий слой включен
+                const syncList = (cbId, btnId) => {
+                    const on = !!inv(cbId)?.checked;
+                    const btn = inv(btnId);
+                    if (!btn) return;
+                    btn.disabled = !on;
+                    if (!on) btn.classList.remove('active');
+                };
+                syncList('layer-ground-cables', 'btn-list-ground-cables');
+                syncList('layer-aerial-cables', 'btn-list-aerial-cables');
+                syncList('layer-duct-cables', 'btn-list-duct-cables');
+            } catch (_) {}
         }
         
         // Если выбрана группа - загружаем объекты группы с учётом фильтров
@@ -5644,6 +5672,7 @@ const App = {
         const fsWell = document.getElementById('settings-font-size-well-number');
         const fsDirLen = document.getElementById('settings-font-size-direction-length');
         const selColor = document.getElementById('settings-selected-object-highlight-color');
+        const magnetPx = document.getElementById('settings-magnet-pixels');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
         const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template');
@@ -5682,6 +5711,7 @@ const App = {
         if (fsWell) fsWell.value = (this.settings.font_size_well_number_label ?? 12);
         if (fsDirLen) fsDirLen.value = (this.settings.font_size_direction_length_label ?? 12);
         if (selColor) selColor.value = (this.settings.selected_object_highlight_color ?? '#ffff00');
+        if (magnetPx) magnetPx.value = (this.settings.magnet_pixels ?? 0);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
         if (wmtsUrlTmpl) wmtsUrlTmpl.value = (this.settings.wmts_url_template ?? '');
@@ -5969,6 +5999,7 @@ const App = {
         const fsWell = document.getElementById('settings-font-size-well-number')?.value;
         const fsDirLen = document.getElementById('settings-font-size-direction-length')?.value;
         const selColor = document.getElementById('settings-selected-object-highlight-color')?.value;
+        const magnetPx = document.getElementById('settings-magnet-pixels')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
         const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template')?.value;
@@ -6013,6 +6044,7 @@ const App = {
             font_size_well_number_label: fsWell,
             font_size_direction_length_label: fsDirLen,
             selected_object_highlight_color: (selColor ?? '').toString().trim(),
+            magnet_pixels: magnetPx,
             url_geoproj: geo,
             url_cadastre: cad,
             wmts_url_template: wmtsUrlTmpl,

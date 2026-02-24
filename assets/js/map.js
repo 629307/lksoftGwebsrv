@@ -195,6 +195,16 @@ const MapManager = {
         }
     },
 
+    getMagnetPixels() {
+        try {
+            const raw = this.getSettingNumber('magnet_pixels', 0);
+            const n = Math.max(0, Math.trunc(Number(raw) || 0));
+            return n;
+        } catch (_) {
+            return 0;
+        }
+    },
+
     getDirectionLineWeight() {
         return Math.max(0.5, this.getSettingNumber('line_weight_direction', 3));
     },
@@ -4078,6 +4088,9 @@ const MapManager = {
         if (!this.map) return [];
         const clickPt = this.map.latLngToLayerPoint(latlng);
         const hits = [];
+        const magnet = this.getMagnetPixels();
+        const pointThr = magnet > 0 ? magnet : 18;
+        const lineThr = magnet > 0 ? magnet : 12;
 
         const distToSeg = (p, a, b) => {
             const vx = b.x - a.x, vy = b.y - a.y;
@@ -4100,7 +4113,7 @@ const MapManager = {
             if (typeof layer.getLatLng === 'function') {
                 const pt = this.map.latLngToLayerPoint(layer.getLatLng());
                 const d = Math.hypot(clickPt.x - pt.x, clickPt.y - pt.y);
-                const thr = 18;
+                const thr = pointThr;
                 if (d <= thr) {
                     hits.push({
                         objectType: meta.objectType,
@@ -4120,7 +4133,7 @@ const MapManager = {
                 for (let i = 0; i < pts.length - 1; i++) {
                     minD = Math.min(minD, distToSeg(clickPt, pts[i], pts[i + 1]));
                 }
-                if (minD <= 12) {
+                if (minD <= lineThr) {
                     hits.push({
                         objectType: meta.objectType,
                         properties: props,
