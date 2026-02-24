@@ -524,6 +524,14 @@ const App = {
 
         // Система координат: только WGS84
         document.getElementById('btn-wgs84').addEventListener('click', () => this.setCoordinateSystem('wgs84'));
+        // Экспорт карты в PDF (без интерфейса)
+        document.getElementById('btn-save-pdf')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            this.saveMapPdf().catch((err) => {
+                console.error('PDF export error:', err);
+                this.notify(err?.message || 'Не удалось сформировать PDF', 'error');
+            });
+        });
         // Внешний WMTS слой (кнопка в шапке)
         document.getElementById('btn-toggle-wmts')?.addEventListener('click', async (e) => {
             try {
@@ -6686,6 +6694,190 @@ const App = {
         setTimeout(() => {
             notification.remove();
         }, 5000);
+    },
+
+    // ========================
+    // Карта: экспорт в PDF
+    // ========================
+
+    async saveMapPdf() {
+        const mapEl = document.getElementById('map');
+        if (!mapEl) {
+            this.notify('Карта не найдена', 'error');
+            return;
+        }
+        const h2c = (typeof window !== 'undefined') ? window.html2canvas : null;
+        const jsPdfCtor = (typeof window !== 'undefined') ? (window.jspdf?.jsPDF || window.jspdf?.default?.jsPDF) : null;
+        if (typeof h2c !== 'function' || typeof jsPdfCtor !== 'function') {
+            this.notify('Модуль экспорта PDF не загружен', 'error');
+            return;
+        }
+
+        const userName = (this.user?.full_name || this.user?.login || '').toString().trim() || 'Пользователь';
+        const logoUrl = 'assets/favicon.svg';
+
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const now = new Date();
+        const ts = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}_${pad2(now.getHours())}-${pad2(now.getMinutes())}`;
+        const safeUser = (this.user?.login || userName).toString().trim().replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 30) || 'user';
+        const filename = `map_${ts}_${safeUser}.pdf`;
+
+        const svgToPngDataUrl = async (url, size = 56) => {
+            try {
+                const resp = await fetch(url, { cache: 'force-cache' });
+                if (!resp.ok) throw new Error('logo_fetch_failed');
+                const svgText = await resp.text();
+                const svgDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
+                const img = new Image();
+                img.decoding = 'async';
+                img.loading = 'eager';
+                img.src = svgDataUrl;
+                await new Promise((resolve, reject) => {
+                    img.onload = () => resolve();
+                    img.onerror = () => reject(new Error('logo_load_failed'));
+                });
+                const c = document.createElement('canvas');
+                c.width = size;
+                c.height = size;
+                const ctx = c.getContext('2d');
+                ctx.clearRect(0, 0, size, size);
+                ctx.drawImage(img, 0, 0, size, size);
+                return c.toDataURL('image/png');
+            } catch (_) {
+                return null;
+            }
+        };
+
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+        const captureMapPng = async () => {
+            // даём Leaflet шанс дорисовать тайлы/векторы после скрытия UI
+            try { MapManager?.map?.invalidateSize?.({ pan: false, animate: false }); } catch (_) {}
+            await wait(250);
+
+            const canvas = await h2c(mapEl, {
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: '#ffffff',
+                scale: Math.min(2, window.devicePixelRatio || 1),
+                logging: false,
+            });
+            // toDataURL может бросить SecurityError если подложка не даёт CORS
+            const dataUrl = canvas.toDataURL('image/png');
+            return { dataUrl, w: canvas.width, h: canvas.height };
+        };
+
+        const withExportUiHidden = async (fn) => {
+            document.body.classList.add('igs-pdf-export');
+            // если открыта модалка — убираем, чтобы она не перекрывала карту
+            try { this.hideModal(); } catch (_) {}
+            try { MapManager?.hideObjectInfo?.(); } catch (_) {}
+            try { MapManager?.setAssumedCablesPanelVisible?.(false); } catch (_) {}
+            try { MapManager?.setCablesListPanelVisible?.(false); } catch (_) {}
+            try { MapManager?.setHighlightBarVisible?.(false); } catch (_) {}
+            try { document.getElementById('object-info-panel')?.classList?.add('hidden'); } catch (_) {}
+
+            try {
+                return await fn();
+            } finally {
+                document.body.classList.remove('igs-pdf-export');
+                try { MapManager?.setHighlightBarVisible?.(!!MapManager?.highlightLayer); } catch (_) {}
+            }
+        };
+
+        const captureWithBasemapFallback = async () => {
+            try {
+                return await captureMapPng();
+            } catch (e) {
+                // Fallback: отключаем подложку (OSM/WMTS) и пробуем снова
+                const wasWmts = !!MapManager?.wmtsSatelliteEnabled;
+                try {
+                    if (MapManager?.map && MapManager?.osmBaseLayer) MapManager.map.removeLayer(MapManager.osmBaseLayer);
+                } catch (_) {}
+                try {
+                    if (MapManager?.map && MapManager?.wmtsSatelliteLayer) MapManager.map.removeLayer(MapManager.wmtsSatelliteLayer);
+                } catch (_) {}
+                try { mapEl.style.background = '#ffffff'; } catch (_) {}
+                await wait(180);
+                try {
+                    const out = await captureMapPng();
+                    this.notify('Подложка карты не может быть встроена в PDF (CORS). Экспорт выполнен без подложки.', 'warning');
+                    return out;
+                } finally {
+                    // restore base map
+                    try {
+                        if (MapManager?.map) {
+                            if (wasWmts) {
+                                try { MapManager.setWmtsSatelliteEnabled?.(true); } catch (_) {}
+                            } else {
+                                try { MapManager.setWmtsSatelliteEnabled?.(false); } catch (_) {}
+                            }
+                        }
+                    } catch (_) {}
+                }
+            }
+        };
+
+        this.notify('Формирование PDF…', 'info');
+
+        const { dataUrl: mapPng, w: imgW, h: imgH } = await withExportUiHidden(captureWithBasemapFallback);
+        const logoPng = await svgToPngDataUrl(logoUrl, 56);
+
+        const orientation = (imgW >= imgH) ? 'landscape' : 'portrait';
+        const pdf = new jsPdfCtor({ orientation, unit: 'pt', format: 'a4', compress: true });
+
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 28;
+        const headerH = 64;
+
+        // Header background
+        try {
+            pdf.setFillColor(245, 245, 245);
+            pdf.rect(0, 0, pageW, headerH, 'F');
+        } catch (_) {}
+
+        // Logo
+        const logoSize = 32;
+        if (logoPng) {
+            try {
+                pdf.addImage(logoPng, 'PNG', margin, (headerH - logoSize) / 2, logoSize, logoSize);
+            } catch (_) {}
+        }
+
+        // Title + user
+        const titleX = margin + (logoPng ? (logoSize + 12) : 0);
+        try {
+            pdf.setTextColor(20, 20, 20);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(14);
+            pdf.text('ИГС — экспорт карты', titleX, 26);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(11);
+            pdf.text(`Пользователь: ${userName}`, titleX, 46);
+        } catch (_) {}
+
+        // Date/time (right)
+        try {
+            const dt = now.toLocaleString('ru-RU');
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(10);
+            const txtW = pdf.getTextWidth(dt);
+            pdf.text(dt, pageW - margin - txtW, 26);
+        } catch (_) {}
+
+        // Map image placement
+        const availableW = pageW - margin * 2;
+        const availableH = pageH - headerH - margin;
+        const ratio = Math.min(availableW / imgW, availableH / imgH);
+        const drawW = imgW * ratio;
+        const drawH = imgH * ratio;
+        const x = margin + (availableW - drawW) / 2;
+        const y = headerH + (availableH - drawH) / 2;
+        pdf.addImage(mapPng, 'PNG', x, y, drawW, drawH, undefined, 'FAST');
+
+        pdf.save(filename);
+        this.notify('PDF сохранён', 'success');
     },
 
     // ========================

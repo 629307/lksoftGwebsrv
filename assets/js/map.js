@@ -657,6 +657,7 @@ const MapManager = {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 19,
             pane: 'baseMapPane',
+            crossOrigin: true,
         }).addTo(this.map);
 
         // Спутник: WMTS (настраивается в "Настройки -> Настройка слоя WMTS")
@@ -665,6 +666,7 @@ const MapManager = {
             maxZoom: 22,
             attribution: '&copy; ЯНАО',
             pane: 'baseMapPane',
+            crossOrigin: true,
         });
         this.wmtsSatelliteEnabled = false;
 

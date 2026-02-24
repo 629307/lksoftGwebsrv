@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.4.7" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.4.8" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -65,6 +65,9 @@
             </div>
             <div class="top-bar-actions">
                 <div class="coordinate-system-toggle">
+                    <button id="btn-save-pdf" class="btn btn-sm" title="Сохранить PDF">
+                        <i class="fas fa-file-pdf"></i>
+                    </button>
                     <button id="btn-wgs84" class="btn btn-sm active" title="WGS84 (EPSG:4326)">WGS84</button>
                     <button id="btn-ruler" class="btn btn-sm" title="Линейка">
                         <i class="fas fa-ruler"></i>
@@ -922,10 +925,14 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Export to PDF helpers -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.4.7"></script>
-    <script src="assets/js/map.js?v=2.4.7"></script>
-    <script src="assets/js/app.js?v=2.4.7"></script>
+    <script src="assets/js/api.js?v=2.4.8"></script>
+    <script src="assets/js/map.js?v=2.4.8"></script>
+    <script src="assets/js/app.js?v=2.4.8"></script>
 </body>
 </html>

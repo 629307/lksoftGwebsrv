@@ -76,6 +76,22 @@ a:hover {
     display: none !important;
 }
 
+.igs-pdf-export #map-toolbar,
+.igs-pdf-export #cursor-coordinates,
+.igs-pdf-export #object-info-panel,
+.igs-pdf-export .assumed-cables-panel,
+.igs-pdf-export .inventory-reco-panel,
+.igs-pdf-export .cables-list-panel,
+.igs-pdf-export #highlight-bar,
+.igs-pdf-export .leaflet-control-container {
+    display: none !important;
+}
+
+.igs-pdf-export #map {
+    /* гарантируем однородный фон для PDF */
+    background: #ffffff !important;
+}
+
 .text-muted {
     color: var(--text-muted);
     font-size: 13px;
