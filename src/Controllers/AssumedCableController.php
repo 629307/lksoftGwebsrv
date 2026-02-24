@@ -1646,17 +1646,34 @@ class AssumedCableController extends BaseController
         );
 
         $summary = $this->db->fetch(
-            "WITH r AS (
-                SELECT owner_id
+            "WITH assumed AS (
+                SELECT
+                    COUNT(*)::int AS assumed_total_count,
+                    COALESCE(SUM(length_m), 0)::numeric AS assumed_total_length_m
                 FROM assumed_cable_routes
                 WHERE scenario_id = :sid
+            ),
+            inv AS (
+                SELECT
+                    COALESCE(SUM(isum.unaccounted_cables), 0)::int AS unaccounted_total_count,
+                    COALESCE(SUM(
+                        isum.unaccounted_cables::numeric
+                        * COALESCE(
+                            cd.length_m,
+                            ROUND(ST_Length(COALESCE(cd.geom_wgs84, ST_Transform(cd.geom_msk86, 4326))::geography)::numeric, 2),
+                            0
+                        )
+                    ), 0)::numeric AS unaccounted_total_length_m
+                FROM inventory_summary isum
+                JOIN channel_directions cd ON cd.id = isum.direction_id
+                WHERE isum.unaccounted_cables > 0
             )
             SELECT
-                COALESCE(SUM(CASE WHEN r.owner_id IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS used_unaccounted,
-                COUNT(*)::int AS assumed_total,
-                (SELECT COALESCE(SUM(unaccounted_cables), 0)::int FROM inventory_summary WHERE unaccounted_cables > 0) AS total_unaccounted,
-                COUNT(*)::int AS rows
-            FROM r",
+                inv.unaccounted_total_count,
+                inv.unaccounted_total_length_m,
+                assumed.assumed_total_count,
+                assumed.assumed_total_length_m
+            FROM inv, assumed",
             ['sid' => $scenarioId]
         ) ?? [];
 
@@ -1665,10 +1682,11 @@ class AssumedCableController extends BaseController
             'scenario_id' => $scenarioId,
             'built_at' => (string) ($sc['built_at'] ?? ''),
             'summary' => [
-                'used_unaccounted' => (int) ($summary['used_unaccounted'] ?? 0),
-                'total_unaccounted' => (int) ($summary['total_unaccounted'] ?? 0),
-                'assumed_total' => (int) ($summary['assumed_total'] ?? 0),
-                'rows' => (int) ($summary['rows'] ?? 0),
+                'unaccounted_total_count' => (int) ($summary['unaccounted_total_count'] ?? 0),
+                'unaccounted_total_length_m' => (float) ($summary['unaccounted_total_length_m'] ?? 0),
+                'assumed_total_count' => (int) ($summary['assumed_total_count'] ?? 0),
+                'assumed_total_length_m' => (float) ($summary['assumed_total_length_m'] ?? 0),
+                'rows' => count($rows),
             ],
             'rows' => $rows,
         ]);

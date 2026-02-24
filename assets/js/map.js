@@ -2264,9 +2264,9 @@ const MapManager = {
 
     assumedVariantLabel(v) {
         const vv = [1, 2, 3].includes(Number(v)) ? Number(v) : 1;
-        if (vv === 1) return '1 — Global longest (greedy)';
-        if (vv === 2) return '2 — Capacity-aware итеративно';
-        return '3 — Min Cost Max Flow';
+        if (vv === 1) return 'Предполагаемые кабели - 1 - По магистральным графам';
+        if (vv === 2) return 'Предполагаемые кабели - 2 - По локальным графам';
+        return 'Предполагаемые кабели - 3 - По суммированным графам собственника';
     },
 
     setAssumedCablesPanelVisible(visible) {
@@ -2307,7 +2307,7 @@ const MapManager = {
                 variant_no: v,
                 scenario_id: null,
                 built_at: null,
-                summary: { used_unaccounted: 0, total_unaccounted: 0, assumed_total: 0, rows: 0 },
+                summary: { unaccounted_total_count: 0, unaccounted_total_length_m: 0, assumed_total_count: 0, assumed_total_length_m: 0, rows: 0 },
                 rows: [],
                 _error: e?.message || 'Ошибка загрузки',
             });
@@ -2319,9 +2319,10 @@ const MapManager = {
         if (!el) return;
         const v = [1, 2, 3].includes(Number(payload?.variant_no)) ? Number(payload.variant_no) : ([1, 2, 3].includes(Number(this.assumedCablesVariantNo)) ? Number(this.assumedCablesVariantNo) : 1);
         const summary = payload?.summary || {};
-        const used = Number(summary.used_unaccounted || 0) || 0;
-        const total = Number(summary.total_unaccounted || 0) || 0;
-        const assumedTotal = Number(summary.assumed_total || 0) || 0;
+        const unaccCnt = Number(summary.unaccounted_total_count || 0) || 0;
+        const unaccLen = Number(summary.unaccounted_total_length_m || 0) || 0;
+        const assumedCnt = Number(summary.assumed_total_count || 0) || 0;
+        const assumedLen = Number(summary.assumed_total_length_m || 0) || 0;
         const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 
         const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -2331,7 +2332,7 @@ const MapManager = {
             return String(Math.round(x * 100) / 100);
         };
 
-        const title = `Предполагаемые кабели - ${this.assumedVariantLabel(v)}`;
+        const title = this.assumedVariantLabel(v);
         const err = payload?._error ? `<span style="color: var(--danger-color);">${esc(payload._error)}</span>` : '';
 
         el.innerHTML = `
@@ -2341,8 +2342,10 @@ const MapManager = {
             </div>
             <div class="ac-sub">
                 <div>
-                    <div><b>${used}|${total}</b> использовано|всего неучтенных</div>
-                    <div>предположено кабелей <b>${assumedTotal}</b>${err ? ` — ${err}` : ''}</div>
+                    <div>Количество неучтенных отрезков: <b>${esc(unaccCnt)}</b></div>
+                    <div>Протяженность неучтенный кабелей: <b>${esc(fmtNum(unaccLen))}</b> м</div>
+                    <div>Количество предполагаемых кабелей: <b>${esc(assumedCnt)}</b></div>
+                    <div>Протяженность предполагаемых кабелей: <b>${esc(fmtNum(assumedLen))}</b> м${err ? ` — ${err}` : ''}</div>
                 </div>
                 <div class="ac-actions">
                     <button type="button" class="btn btn-sm btn-secondary" id="btn-ac-export">
