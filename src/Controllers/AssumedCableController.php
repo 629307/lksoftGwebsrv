@@ -283,63 +283,71 @@ class AssumedCableController extends BaseController
 
             $wellsOnRoute = $routeWellIds();
 
-            // aggregate scores by owner across all wells on route
-            $scores = []; // ownerId => ['score'=>sum, 'hits'=>wellsWithTag]
-            foreach ($wellsOnRoute as $w) {
+            // По ТЗ для сегмента: owner берём по БИРКАМ на КОНЦАХ сегмента и уменьшаем supply.
+            $sa = ($a > 0) ? ($supply[$a] ?? []) : [];
+            $sb = ($b > 0) ? ($supply[$b] ?? []) : [];
+
+            // кандидаты: объединим владельцев с концов
+            $candSet = [];
+            foreach ($sa as $oid => $cnt) if ((int) $cnt > 0) $candSet[(int) $oid] = true;
+            foreach ($sb as $oid => $cnt) if ((int) $cnt > 0) $candSet[(int) $oid] = true;
+            $candidates = [];
+            foreach (array_keys($candSet) as $oid) {
+                $oid = (int) $oid;
+                if ($oid <= 0) continue;
+                $ca = (int) ($sa[$oid] ?? 0);
+                $cb = (int) ($sb[$oid] ?? 0);
+                $candidates[] = ['owner_id' => $oid, 'a' => $ca, 'b' => $cb, 'score' => ($ca + $cb)];
+            }
+            usort($candidates, fn($x, $y) => ((int) ($y['score'] ?? 0) <=> (int) ($x['score'] ?? 0)));
+            $candidates = array_slice($candidates, 0, 10);
+
+            // 1) предпочитаем owner, который есть на обоих концах (supply>0) и максимизирует min(a,b)
+            $bestBoth = null;
+            foreach ($candidates as $cnd) {
+                $oid = (int) ($cnd['owner_id'] ?? 0);
+                $ca = (int) ($cnd['a'] ?? 0);
+                $cb = (int) ($cnd['b'] ?? 0);
+                if ($oid <= 0 || $ca <= 0 || $cb <= 0) continue;
+                $m = min($ca, $cb);
+                if ($bestBoth === null || $m > $bestBoth['m']) $bestBoth = ['owner_id' => $oid, 'm' => $m];
+            }
+            if ($bestBoth && $a > 0 && $b > 0) {
+                $oid = (int) $bestBoth['owner_id'];
+                $supply[$a][$oid] = max(0, (int) ($supply[$a][$oid] ?? 0) - 1);
+                $supply[$b][$oid] = max(0, (int) ($supply[$b][$oid] ?? 0) - 1);
+                return [
+                    'owner_id' => $oid,
+                    'confidence' => 0.90,
+                    'mode' => 'tags_ends_both',
+                    'well_ids' => $wellsOnRoute,
+                    'owner_candidates' => $candidates,
+                ];
+            }
+
+            // 2) иначе — owner на одном из концов с максимальным supply
+            $bestOne = null;
+            foreach ([$a, $b] as $w) {
+                $w = (int) $w;
+                if ($w <= 0) continue;
                 foreach (($supply[$w] ?? []) as $oid => $cnt) {
                     $oid = (int) $oid;
                     $cnt = (int) $cnt;
                     if ($oid <= 0 || $cnt <= 0) continue;
-                    if (!isset($scores[$oid])) $scores[$oid] = ['score' => 0, 'hits' => 0];
-                    $scores[$oid]['score'] += $cnt;
-                    $scores[$oid]['hits'] += 1;
+                    if ($bestOne === null || $cnt > $bestOne['cnt']) $bestOne = ['well' => $w, 'owner_id' => $oid, 'cnt' => $cnt];
                 }
             }
-            $candidates = [];
-            if ($scores) {
-                foreach ($scores as $oid => $s) {
-                    $oid = (int) $oid;
-                    $score = (int) ($s['score'] ?? 0);
-                    $hits = (int) ($s['hits'] ?? 0);
-                    if ($oid <= 0 || $score <= 0) continue;
-                    $candidates[] = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
-                }
-                usort($candidates, fn($a, $b) => (($b['score'] ?? 0) <=> ($a['score'] ?? 0)) ?: (($b['hits'] ?? 0) <=> ($a['hits'] ?? 0)));
-                $candidates = array_slice($candidates, 0, 10);
-            }
-            if ($scores) {
-                // pick by max score, then max hits
-                $bestOwner = null;
-                foreach ($scores as $oid => $s) {
-                    $oid = (int) $oid;
-                    $score = (int) ($s['score'] ?? 0);
-                    $hits = (int) ($s['hits'] ?? 0);
-                    if ($oid <= 0 || $score <= 0) continue;
-                    if ($bestOwner === null) {
-                        $bestOwner = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
-                        continue;
-                    }
-                    if ($score > $bestOwner['score'] || ($score === $bestOwner['score'] && $hits > $bestOwner['hits'])) {
-                        $bestOwner = ['owner_id' => $oid, 'score' => $score, 'hits' => $hits];
-                    }
-                }
-                if ($bestOwner) {
-                    $oid = (int) $bestOwner['owner_id'];
-                    // ТЗ: если кабель проходит через колодец с owner tag, он может быть назначен этому owner.
-                    // Поэтому назначаем при наличии хотя бы одного тега на маршруте, а уверенность повышаем,
-                    // если теги встречаются в нескольких колодцах по маршруту.
-                    $hits = (int) ($bestOwner['hits'] ?? 0);
-                    $conf = ($hits >= 2) ? 0.85 : 0.60;
-                    if ($variantNo === 2) $conf = ($hits >= 2) ? 0.80 : 0.65;
-                    if ($variantNo >= 3) $conf = ($hits >= 2) ? 0.75 : 0.55;
-                    return [
-                        'owner_id' => $oid,
-                        'confidence' => $conf,
-                        'mode' => ($hits >= 2 ? 'tags_multi_wells' : 'tags_any_well'),
-                        'well_ids' => $wellsOnRoute,
-                        'owner_candidates' => $candidates,
-                    ];
-                }
+            if ($bestOne) {
+                $w = (int) $bestOne['well'];
+                $oid = (int) $bestOne['owner_id'];
+                $supply[$w][$oid] = max(0, (int) ($supply[$w][$oid] ?? 0) - 1);
+                return [
+                    'owner_id' => $oid,
+                    'confidence' => 0.60,
+                    'mode' => 'tags_ends_one',
+                    'well_ids' => $wellsOnRoute,
+                    'owner_candidates' => $candidates,
+                ];
             }
 
             if ($variantNo >= 3) {
@@ -662,6 +670,7 @@ class AssumedCableController extends BaseController
             $open = false;
             $segStart = 0;
             $segDirs = [];
+            $segSeen = [];
 
             foreach ($dirIds as $dirId) {
                 $dirId = (int) $dirId;
@@ -675,12 +684,30 @@ class AssumedCableController extends BaseController
 
                 $cap = (int) ($rem[$dirId] ?? 0);
                 if ($cap > 0) {
+                    // уникальность ребра внутри одного кабеля
+                    if ($open && isset($segSeen[$dirId])) {
+                        // закрываем сегмент перед повтором
+                        if ($segDirs) {
+                            $segments[] = [
+                                'start_well_id' => $segStart,
+                                'end_well_id' => $cur,
+                                'direction_ids' => $segDirs,
+                                'weight' => 0.0,
+                            ];
+                        }
+                        $open = false;
+                        $segStart = 0;
+                        $segDirs = [];
+                        $segSeen = [];
+                    }
                     if (!$open) {
                         $open = true;
                         $segStart = $cur;
                         $segDirs = [];
+                        $segSeen = [];
                     }
                     $segDirs[] = $dirId;
+                    $segSeen[$dirId] = true;
                 } else {
                     if ($open && $segDirs) {
                         $segments[] = [
@@ -693,6 +720,7 @@ class AssumedCableController extends BaseController
                     $open = false;
                     $segStart = 0;
                     $segDirs = [];
+                    $segSeen = [];
                 }
 
                 if ($next > 0) $cur = $next;
@@ -723,8 +751,19 @@ class AssumedCableController extends BaseController
             return true;
         };
 
+        $segmentMinCap = function(array $segment, array $rem): int {
+            $dirIds = array_values(array_map('intval', (array) ($segment['direction_ids'] ?? [])));
+            $min = null;
+            foreach ($dirIds as $dirId) {
+                $cap = (int) ($rem[(int) $dirId] ?? 0);
+                if ($min === null || $cap < $min) $min = $cap;
+            }
+            $min = (int) ($min ?? 0);
+            return $min > 0 ? $min : 0;
+        };
+
         // METHOD 1: Global Longest Paths with Capacity Consumption (Greedy)
-        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment): array {
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
@@ -773,9 +812,13 @@ class AssumedCableController extends BaseController
                     $segments = $segmentCapacityRunsInPath($cand, $rem);
                     foreach ($segments as $seg) {
                         if (count($routes) >= $maxRoutes) break;
-                        if (!$consumeCapacitySegment($rem, $seg)) continue;
-                        $progress = true;
-                        $routes[] = $seg;
+                        $minCap = $segmentMinCap($seg, $rem);
+                        if ($minCap <= 0) continue;
+                        for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
+                            if (!$consumeCapacitySegment($rem, $seg)) break;
+                            $progress = true;
+                            $routes[] = $seg;
+                        }
                     }
                 }
                 if (!$progress) break;
@@ -803,7 +846,7 @@ class AssumedCableController extends BaseController
         };
 
         // METHOD 2: Capacity-Aware Iterative Longest Path Extraction
-        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment): array {
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
@@ -834,8 +877,12 @@ class AssumedCableController extends BaseController
                 }
                 if (!$bestSeg) break;
 
-                if (!$consumeCapacitySegment($rem, $bestSeg)) break;
-                $routes[] = $bestSeg;
+                $minCap = $segmentMinCap($bestSeg, $rem);
+                if ($minCap <= 0) break;
+                for ($i = 0; $i < $minCap && count($routes) < $maxRoutes; $i++) {
+                    if (!$consumeCapacitySegment($rem, $bestSeg)) break;
+                    $routes[] = $bestSeg;
+                }
             }
 
             return $routes;
