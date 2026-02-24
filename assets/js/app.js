@@ -461,6 +461,12 @@ const App = {
             }
         });
 
+        // Порядок отображения слоёв (персональный)
+        document.getElementById('btn-layer-order')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            try { this.showLayerOrderModal(); } catch (_) {}
+        });
+
         // Линейка (измерение расстояний)
         document.getElementById('btn-ruler')?.addEventListener('click', (e) => {
             try { e.preventDefault(); } catch (_) {}
@@ -1367,6 +1373,109 @@ const App = {
 
         MapManager.toggleLayer(layerName, input.checked);
         this.saveLayerPreferencesDebounced();
+    },
+
+    showLayerOrderModal() {
+        const mm = (typeof MapManager !== 'undefined') ? MapManager : null;
+        const items = mm?.layerOrderItems || [];
+        const byKey = new Map(items.map(x => [x.key, x]));
+        const order = (typeof mm?.getCurrentLayerOrderKeys === 'function')
+            ? mm.getCurrentLayerOrderKeys()
+            : items.map(x => x.key);
+
+        const renderListHtml = (keys) => {
+            const ks = Array.isArray(keys) ? keys : [];
+            return ks.map((k) => {
+                const it = byKey.get(k);
+                if (!it) return '';
+                const fixed = !!it.fixedBottom;
+                const title = this.escapeHtml(it.title || it.key);
+                const keyEsc = this.escapeHtml(it.key);
+                return `
+                    <div class="layer-order-item ${fixed ? 'fixed' : ''}" data-key="${keyEsc}" draggable="${fixed ? 'false' : 'true'}">
+                        <span class="layer-order-handle"><i class="fas fa-grip-vertical"></i></span>
+                        <span class="layer-order-title">${title}</span>
+                        ${fixed ? `<span class="text-muted" style="margin-left:auto; font-size:12px;">фикс.</span>` : ''}
+                    </div>
+                `;
+            }).join('');
+        };
+
+        const content = `
+            <div class="layer-order-list" id="layer-order-list">
+                ${renderListHtml(order)}
+            </div>
+            <div class="text-muted" style="margin-top:10px;">Перетащите элементы. Позиция 1 — самый верхний слой (поверх всех).</div>
+        `;
+        const footer = `
+            <button class="btn btn-secondary" id="btn-layer-order-reset">По умолчанию</button>
+            <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+            <button class="btn btn-primary" id="btn-layer-order-save"><i class="fas fa-save"></i> Сохранить</button>
+        `;
+        this.showModal('Порядок отображения слоёв', content, footer);
+
+        setTimeout(() => {
+            const list = document.getElementById('layer-order-list');
+            if (!list) return;
+
+            let dragging = null;
+            const getAfter = (container, y) => {
+                const els = [...container.querySelectorAll('.layer-order-item:not(.dragging):not(.fixed)')];
+                let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
+                for (const el of els) {
+                    const box = el.getBoundingClientRect();
+                    const offset = y - (box.top + box.height / 2);
+                    if (offset < 0 && offset > closest.offset) closest = { offset, element: el };
+                }
+                return closest.element;
+            };
+
+            const bindDragHandlers = () => {
+                dragging = null;
+                list.querySelectorAll('.layer-order-item').forEach((el) => {
+                    if (el.classList.contains('fixed')) return;
+                    el.addEventListener('dragstart', (e) => {
+                        dragging = el;
+                        el.classList.add('dragging');
+                        try { e.dataTransfer.effectAllowed = 'move'; } catch (_) {}
+                    });
+                    el.addEventListener('dragend', () => {
+                        el.classList.remove('dragging');
+                        dragging = null;
+                    });
+                });
+            };
+            bindDragHandlers();
+
+            list.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!dragging) return;
+                const after = getAfter(list, e.clientY);
+                if (!after) list.appendChild(dragging);
+                else list.insertBefore(dragging, after);
+            });
+
+            document.getElementById('btn-layer-order-reset')?.addEventListener('click', (e) => {
+                try { e.preventDefault(); } catch (_) {}
+                const defKeys = (typeof mm?.getLayerOrderDefaultKeys === 'function')
+                    ? mm.getLayerOrderDefaultKeys()
+                    : items.map(x => x.key);
+                list.innerHTML = renderListHtml(defKeys);
+                bindDragHandlers();
+            });
+
+            document.getElementById('btn-layer-order-save')?.addEventListener('click', (e) => {
+                try { e.preventDefault(); } catch (_) {}
+                const keys = [...list.querySelectorAll('.layer-order-item')].map(x => x.getAttribute('data-key'));
+                try {
+                    mm?.setLayerOrderKeys?.(keys, { save: true });
+                    this.hideModal();
+                    this.notify('Порядок слоёв сохранён', 'success');
+                } catch (err) {
+                    this.notify(err?.message || 'Не удалось сохранить порядок слоёв', 'error');
+                }
+            });
+        }, 0);
     },
 
     setAssumedCablesModeEnabled(enabled, opts = {}) {
