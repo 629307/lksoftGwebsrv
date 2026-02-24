@@ -27,6 +27,7 @@ const MapManager = {
     // Подсветка маршрута (направления) выбранного кабеля
     highlightLayer: null,
     selectedLayer: null,
+    selectedHaloLayer: null,
     lastClickHits: [],
     hoverHits: [],
     incidentSelectMode: false,
@@ -307,11 +308,22 @@ const MapManager = {
         });
 
         // panes фиксированных режимов/оверлеев (не зависят от порядка слоёв)
-        this.ensurePane('inventoryInputPane', 900);
-        this.ensurePane('rulerLinePane', 920, { pointerEvents: 'none' });
-        this.ensurePane('rulerLabelPane', 930, { pointerEvents: 'none' });
-        // Выше всех пользовательских слоёв, но ниже tooltip/popup panes Leaflet
-        this.ensurePane('highlightPane', 645, { pointerEvents: 'none' });
+        // Подписи/инпуты/подсветка должны быть над всеми векторными слоями
+        this.ensurePane('rulerLinePane', 980, { pointerEvents: 'none' });
+        this.ensurePane('rulerLabelPane', 985, { pointerEvents: 'none' });
+        this.ensurePane('inventoryInputPane', 990);
+
+        // Выбранный объект — яркий "ореол"
+        this.ensurePane('selectedObjectPane', 992, { pointerEvents: 'none' });
+
+        // Подсветка кабеля/маршрута — самый верхний слой среди объектов карты
+        this.ensurePane('highlightPane', 995, { pointerEvents: 'none' });
+
+        // Popups/tooltip всегда выше подсветки
+        try {
+            this.ensurePane('popupPane', 1100);
+            this.ensurePane('tooltipPane', 1110);
+        } catch (_) {}
     },
 
     getDirectionLengthLabelFontSizePx() {
@@ -812,8 +824,9 @@ const MapManager = {
                     const u = p.inv_unaccounted;
                     const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
                     const color = hasInv ? colorForUnaccounted(u) : '#777777';
-                    // Важно: направления без значения "неучтенные" не должны быть тоньше прочих.
-                    const weight = this.getDirectionLineWeight() * 2;
+                    // Требование: направления без значения inv_unaccounted — в 2 раза тоньше настройки "Толщина линий — Направление"
+                    const base = this.getDirectionLineWeight();
+                    const weight = hasInv ? (base * 2) : Math.max(0.5, base / 2);
                     return { color, weight, opacity: 0.85 };
                 },
                 onEachFeature: (feature, layer) => {
@@ -4121,6 +4134,70 @@ const MapManager = {
         }
     },
 
+    clearSelectedHalo() {
+        try {
+            if (this.selectedHaloLayer && this.map) {
+                this.map.removeLayer(this.selectedHaloLayer);
+            }
+        } catch (_) {}
+        this.selectedHaloLayer = null;
+    },
+
+    buildSelectedHaloLayer(layer) {
+        try {
+            if (!this.map || !layer) return null;
+            const meta = layer?._igsMeta || {};
+            const ot = (meta.objectType || '').toString();
+
+            // Point-like
+            if (typeof layer.getLatLng === 'function') {
+                const ll = layer.getLatLng();
+                if (!ll) return null;
+                const size = this.getWellMarkerSizePx();
+                const r = Math.max(12, (Number(size) || 24) / 2 + 10);
+                return L.circleMarker(ll, {
+                    pane: 'selectedObjectPane',
+                    radius: r,
+                    color: '#ffff00',
+                    weight: 5,
+                    opacity: 1,
+                    fillOpacity: 0,
+                    interactive: false,
+                });
+            }
+
+            // Line-like
+            if (typeof layer.getLatLngs === 'function') {
+                const latlngs = layer.getLatLngs?.();
+                if (!latlngs) return null;
+                const baseW = (ot === 'unified_cable' || ot.endsWith('_cable'))
+                    ? this.getCableLineWeight()
+                    : this.getDirectionLineWeight();
+                const w = Math.max(10, baseW * 4);
+                return L.polyline(latlngs, {
+                    pane: 'selectedObjectPane',
+                    color: '#ffff00',
+                    weight: w,
+                    opacity: 0.55,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    interactive: false,
+                });
+            }
+        } catch (_) {}
+        return null;
+    },
+
+    setSelectedHaloLayer(layer) {
+        this.clearSelectedHalo();
+        try {
+            const halo = this.buildSelectedHaloLayer(layer);
+            if (halo && this.map) {
+                this.selectedHaloLayer = halo.addTo(this.map);
+            }
+        } catch (_) {}
+    },
+
     setSelectedLayer(layer) {
         if (this.selectedLayer) {
             this.applySelectedShadow(this.selectedLayer, false);
@@ -4128,6 +4205,9 @@ const MapManager = {
         this.selectedLayer = layer || null;
         if (this.selectedLayer) {
             this.applySelectedShadow(this.selectedLayer, true);
+            this.setSelectedHaloLayer(this.selectedLayer);
+        } else {
+            this.clearSelectedHalo();
         }
     },
 
