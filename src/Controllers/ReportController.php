@@ -358,6 +358,141 @@ class ReportController extends BaseController
     }
 
     /**
+     * GET /api/reports/inventory-recommendations?owner_id=123
+     * Рекомендации по инвентаризации для выбранного собственника (по колодцам).
+     */
+    public function inventoryRecommendations(): void
+    {
+        // Разрешаем всем авторизованным (в т.ч. readonly)
+        if (!Auth::user()) {
+            Response::error('Требуется авторизация', 401);
+        }
+
+        $ownerId = (int) $this->request->query('owner_id', 0);
+        if ($ownerId <= 0) {
+            Response::error('Не указан собственник (owner_id)', 422);
+        }
+        try { $this->log('report', 'reports', null, null, ['type' => 'inventory_recommendations', 'owner_id' => $ownerId]); } catch (\Throwable $e) {}
+
+        $owner = $this->db->fetch("SELECT id, name FROM owners WHERE id = :id", ['id' => $ownerId]);
+        if (!$owner) Response::error('Собственник не найден', 404);
+
+        // Последняя карточка на колодец
+        $latestCte = "WITH latest_cards AS (
+            SELECT DISTINCT ON (well_id)
+                   well_id,
+                   id,
+                   number AS card_number,
+                   filled_date AS card_date
+            FROM inventory_cards
+            ORDER BY well_id, filled_date DESC, id DESC
+        )";
+
+        // 1) не инвентаризированные колодцы (нет карточек)
+        $part1 = $this->db->fetchAll(
+            "{$latestCte}
+             SELECT w.id AS well_id,
+                    w.number AS well_number,
+                    NULL::text AS card_number,
+                    NULL::date AS card_date
+             FROM wells w
+             LEFT JOIN latest_cards lc ON lc.well_id = w.id
+             WHERE w.owner_id = :oid
+               AND lc.id IS NULL
+             ORDER BY w.number",
+            ['oid' => $ownerId]
+        );
+
+        // 2) инвентаризация более 2 лет назад
+        $part2 = $this->db->fetchAll(
+            "{$latestCte}
+             SELECT w.id AS well_id,
+                    w.number AS well_number,
+                    lc.card_number,
+                    lc.card_date
+             FROM wells w
+             JOIN latest_cards lc ON lc.well_id = w.id
+             WHERE w.owner_id = :oid
+               AND lc.card_date < (CURRENT_DATE - INTERVAL '2 years')
+             ORDER BY w.number",
+            ['oid' => $ownerId]
+        );
+
+        // 3) количество неучтенных кабелей выше среднего и не менее 4
+        $part3 = $this->db->fetchAll(
+            "{$latestCte},
+             avg_unacc AS (
+                 SELECT COALESCE(AVG(unaccounted_cables)::numeric, 0) AS avg_val
+                 FROM inventory_summary
+                 WHERE unaccounted_cables > 0
+             ),
+             dir_wells AS (
+                 SELECT start_well_id AS well_id, id AS direction_id FROM channel_directions
+                 UNION ALL
+                 SELECT end_well_id AS well_id, id AS direction_id FROM channel_directions
+             )
+             SELECT DISTINCT
+                    w.id AS well_id,
+                    w.number AS well_number,
+                    lc.card_number,
+                    lc.card_date
+             FROM wells w
+             JOIN dir_wells dw ON dw.well_id = w.id
+             JOIN inventory_summary isum ON isum.direction_id = dw.direction_id
+             CROSS JOIN avg_unacc a
+             LEFT JOIN latest_cards lc ON lc.well_id = w.id
+             WHERE w.owner_id = :oid
+               AND isum.unaccounted_cables >= 4
+               AND isum.unaccounted_cables > a.avg_val
+             ORDER BY w.number",
+            ['oid' => $ownerId]
+        );
+
+        $normalize = function(array $rows): array {
+            $out = [];
+            foreach ($rows as $r) {
+                $out[] = [
+                    'well_id' => (int) ($r['well_id'] ?? 0),
+                    'well_number' => (string) ($r['well_number'] ?? ''),
+                    'card_number' => (string) ($r['card_number'] ?? ''),
+                    'card_date' => $r['card_date'] ? (string) $r['card_date'] : '',
+                ];
+            }
+            return $out;
+        };
+
+        Response::success([
+            'owner_id' => $ownerId,
+            'owner_name' => (string) ($owner['name'] ?? ''),
+            'summary' => [
+                'part1_count' => count($part1),
+                'part2_count' => count($part2),
+                'part3_count' => count($part3),
+            ],
+            'parts' => [
+                [
+                    'code' => 'no_cards',
+                    'title' => 'Не инвентаризированные колодцы',
+                    'count' => count($part1),
+                    'rows' => $normalize($part1),
+                ],
+                [
+                    'code' => 'older_2y',
+                    'title' => 'Инвентаризация более 2 лет назад',
+                    'count' => count($part2),
+                    'rows' => $normalize($part2),
+                ],
+                [
+                    'code' => 'unacc_above_avg',
+                    'title' => 'Количество неучтенных кабелей выше среднего',
+                    'count' => count($part3),
+                    'rows' => $normalize($part3),
+                ],
+            ],
+        ]);
+    }
+
+    /**
      * GET /api/reports/owners
      * Отчёт по собственникам
      */
@@ -827,6 +962,85 @@ class ReportController extends BaseController
                         (string) ($r['unaccounted_cables'] ?? 0),
                     ];
                 }
+                break;
+
+            case 'inventory_recommendations':
+                $ownerId = (int) $this->request->query('owner_id', 0);
+                if ($ownerId <= 0) Response::error('Не указан собственник (owner_id)', 422);
+                $owner = $this->db->fetch("SELECT name FROM owners WHERE id = :id", ['id' => $ownerId]);
+                $ownerName = (string) ($owner['name'] ?? '');
+                $filename = 'inventory_recommendations_' . $ownerId . '_' . date('Y-m-d') . '.csv';
+                $headers = ['Раздел', '№', '№ колодца', '№ последней карточки', 'Дата последней карточки'];
+
+                $latestCte = "WITH latest_cards AS (
+                    SELECT DISTINCT ON (well_id)
+                           well_id,
+                           id,
+                           number AS card_number,
+                           filled_date AS card_date
+                    FROM inventory_cards
+                    ORDER BY well_id, filled_date DESC, id DESC
+                )";
+                $q1 = $this->db->fetchAll(
+                    "{$latestCte}
+                     SELECT w.number AS well_number, NULL::text AS card_number, NULL::date AS card_date
+                     FROM wells w
+                     LEFT JOIN latest_cards lc ON lc.well_id = w.id
+                     WHERE w.owner_id = :oid AND lc.id IS NULL
+                     ORDER BY w.number",
+                    ['oid' => $ownerId]
+                );
+                $q2 = $this->db->fetchAll(
+                    "{$latestCte}
+                     SELECT w.number AS well_number, lc.card_number, lc.card_date
+                     FROM wells w
+                     JOIN latest_cards lc ON lc.well_id = w.id
+                     WHERE w.owner_id = :oid AND lc.card_date < (CURRENT_DATE - INTERVAL '2 years')
+                     ORDER BY w.number",
+                    ['oid' => $ownerId]
+                );
+                $q3 = $this->db->fetchAll(
+                    "{$latestCte},
+                     avg_unacc AS (
+                         SELECT COALESCE(AVG(unaccounted_cables)::numeric, 0) AS avg_val
+                         FROM inventory_summary
+                         WHERE unaccounted_cables > 0
+                     ),
+                     dir_wells AS (
+                         SELECT start_well_id AS well_id, id AS direction_id FROM channel_directions
+                         UNION ALL
+                         SELECT end_well_id AS well_id, id AS direction_id FROM channel_directions
+                     )
+                     SELECT DISTINCT w.number AS well_number, lc.card_number, lc.card_date
+                     FROM wells w
+                     JOIN dir_wells dw ON dw.well_id = w.id
+                     JOIN inventory_summary isum ON isum.direction_id = dw.direction_id
+                     CROSS JOIN avg_unacc a
+                     LEFT JOIN latest_cards lc ON lc.well_id = w.id
+                     WHERE w.owner_id = :oid
+                       AND isum.unaccounted_cables >= 4
+                       AND isum.unaccounted_cables > a.avg_val
+                     ORDER BY w.number",
+                    ['oid' => $ownerId]
+                );
+
+                $pushSection = function(string $section, array $rows) use (&$data) {
+                    $i = 0;
+                    foreach ($rows as $r) {
+                        $i++;
+                        $data[] = [
+                            $section,
+                            $i,
+                            (string) ($r['well_number'] ?? ''),
+                            (string) ($r['card_number'] ?? ''),
+                            $r['card_date'] ? (string) $r['card_date'] : '',
+                        ];
+                    }
+                };
+                $data[] = ['__SECTION__', 'Рекомендации по инвентаризации' . ($ownerName ? " ({$ownerName})" : '')];
+                $pushSection('Не инвентаризированные колодцы', $q1);
+                $pushSection('Инвентаризация более 2 лет назад', $q2);
+                $pushSection('Количество неучтенных кабелей выше среднего', $q3);
                 break;
 
             default:

@@ -4702,6 +4702,9 @@ const App = {
                 <button class="btn btn-primary btn-sm" onclick="App.applyInventoryReportFilterFromUi()">
                     <i class="fas fa-filter"></i> Применить
                 </button>
+                <button class="btn btn-secondary btn-sm" onclick="App.openInventoryRecommendationsFromInventoryReportUi()">
+                    <i class="fas fa-clipboard-list"></i> Рекомендации по инвентаризации по собственнику
+                </button>
             </div>
             <div class="text-muted" style="margin: 8px 0 12px 0;">Сортировка: по номеру направления.</div>
             <table>
@@ -4806,6 +4809,32 @@ const App = {
         const tagOwnerId = document.getElementById('report-inventory-tag-owner')?.value || '';
         const confirmTags = !!document.getElementById('report-inventory-confirm-tags')?.checked;
         return this.applyInventoryReportFilter({ ownerId, tagOwnerId, confirmTags });
+    },
+
+    openInventoryRecommendationsFromInventoryReportUi() {
+        const ownerIdRaw = document.getElementById('report-inventory-owner')?.value || '';
+        const ownerId = parseInt(ownerIdRaw || '0', 10);
+        if (!ownerId) {
+            this.notify('Выберите собственника в фильтре отчёта', 'warning');
+            return;
+        }
+        try {
+            MapManager?.showInventoryRecommendationsPanel?.(ownerId);
+        } catch (_) {
+            // fallback: просто переключимся на карту
+            try { this.switchPanel('map'); } catch (_) {}
+        }
+    },
+
+    showInventoryRecommendationsExportModal(ownerId) {
+        const oid = parseInt(ownerId || 0, 10);
+        if (!oid) {
+            this.notify('Не указан собственник', 'warning');
+            return;
+        }
+        this.showCsvDelimiterModal('Выгрузить (рекомендации по инвентаризации)', (delimiter) => {
+            return API.reports.export('inventory_recommendations', { owner_id: oid }, delimiter);
+        });
     },
 
     async applyInventoryReportFilter(opts = null) {

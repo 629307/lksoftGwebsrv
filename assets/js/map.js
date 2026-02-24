@@ -104,6 +104,9 @@ const MapManager = {
     // Предполагаемые кабели (слой)
     assumedCablesVariantNo: 1,
     assumedCablesPanelEl: null,
+    inventoryRecommendationsPanelEl: null,
+    _inventoryRecommendationsOwnerId: null,
+    _inventoryRecommendationsSelectedKey: null,
     assumedSegmentPickerEl: null,
     _assumedCablesPanelSelectedKey: null,
     _assumedRouteLayerById: new Map(),
@@ -562,6 +565,24 @@ const MapManager = {
                 el.className = 'assumed-cables-panel hidden';
                 host.appendChild(el);
                 this.assumedCablesPanelEl = el;
+                try {
+                    if (typeof L !== 'undefined' && L?.DomEvent) {
+                        L.DomEvent.disableScrollPropagation(el);
+                        L.DomEvent.disableClickPropagation(el);
+                    }
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        // Панель "Рекомендации по инвентаризации" (DOM overlay поверх карты, справа)
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                const el = document.createElement('div');
+                el.id = 'inventory-recommendations-panel';
+                el.className = 'inventory-reco-panel hidden';
+                host.appendChild(el);
+                this.inventoryRecommendationsPanelEl = el;
                 try {
                     if (typeof L !== 'undefined' && L?.DomEvent) {
                         L.DomEvent.disableScrollPropagation(el);
@@ -2290,6 +2311,171 @@ const MapManager = {
                     if (sp) sp.classList.add('hidden');
                 } catch (_) {}
             }
+        } catch (_) {}
+    },
+
+    setInventoryRecommendationsPanelVisible(visible) {
+        try {
+            const el = this.inventoryRecommendationsPanelEl;
+            if (!el) return;
+            el.classList.toggle('hidden', !visible);
+            try {
+                document.body?.classList?.toggle?.('assumed-cables-panel-open', !!visible);
+                if (visible) {
+                    const w = Math.round(el.getBoundingClientRect?.().width || 520);
+                    document.body?.style?.setProperty?.('--assumed-cables-panel-w', `${Math.max(280, w)}px`);
+                } else {
+                    document.body?.style?.removeProperty?.('--assumed-cables-panel-w');
+                }
+            } catch (_) {}
+            if (!visible) {
+                this._inventoryRecommendationsOwnerId = null;
+                this._inventoryRecommendationsSelectedKey = null;
+            }
+        } catch (_) {}
+    },
+
+    async showInventoryRecommendationsPanel(ownerId) {
+        const oid = parseInt(ownerId || 0, 10);
+        if (!oid) return;
+        try { App.switchPanel('map'); } catch (_) {}
+        // не держим две правые панели одновременно
+        try { this.setAssumedCablesPanelVisible(false); } catch (_) {}
+        this._inventoryRecommendationsOwnerId = oid;
+        this.setInventoryRecommendationsPanelVisible(true);
+        await this.refreshInventoryRecommendationsPanel();
+    },
+
+    async refreshInventoryRecommendationsPanel() {
+        const el = this.inventoryRecommendationsPanelEl;
+        if (!el || el.classList.contains('hidden')) return;
+        const oid = parseInt(this._inventoryRecommendationsOwnerId || 0, 10);
+        if (!oid) return;
+        try {
+            const resp = await API.reports.inventoryRecommendations({ owner_id: oid });
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const data = resp?.data || resp;
+            this.renderInventoryRecommendationsPanel(data);
+        } catch (e) {
+            this.renderInventoryRecommendationsPanel({
+                owner_id: oid,
+                owner_name: '',
+                summary: { part1_count: 0, part2_count: 0, part3_count: 0 },
+                parts: [],
+                _error: e?.message || 'Ошибка загрузки',
+            });
+        }
+    },
+
+    renderInventoryRecommendationsPanel(payload) {
+        const el = this.inventoryRecommendationsPanelEl;
+        if (!el) return;
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const oid = parseInt(payload?.owner_id || 0, 10) || 0;
+        const ownerName = (payload?.owner_name || '').toString().trim();
+        const summary = payload?.summary || {};
+        const c1 = Number(summary.part1_count || 0) || 0;
+        const c2 = Number(summary.part2_count || 0) || 0;
+        const c3 = Number(summary.part3_count || 0) || 0;
+        const parts = Array.isArray(payload?.parts) ? payload.parts : [];
+        const err = payload?._error ? `<span style="color: var(--danger-color);">${esc(payload._error)}</span>` : '';
+
+        const sectionHtml = (part) => {
+            const title = (part?.title || '').toString();
+            const rows = Array.isArray(part?.rows) ? part.rows : [];
+            const cnt = Number(part?.count || rows.length || 0) || 0;
+            return `
+                <div style="padding: 10px 14px; border-bottom: 1px solid var(--border-color);">
+                    <div style="font-weight:800; margin-bottom:8px; color: var(--text-primary);">
+                        ${esc(title)} — <span style="color: var(--text-secondary);">${esc(cnt)}</span>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:50px;">№</th>
+                                <th style="width:140px;">№ Колодца</th>
+                                <th>№ карточки</th>
+                                <th style="width:110px;">Дата</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.length ? rows.map((r, idx) => {
+                                const wid = Number(r.well_id || 0) || 0;
+                                const wnum = (r.well_number || '').toString();
+                                const cnum = (r.card_number || '').toString();
+                                const cdate = (r.card_date || '').toString();
+                                const key = `${part?.code || title}:${wid}`;
+                                const selected = (this._inventoryRecommendationsSelectedKey === key) ? 'ac-row-selected' : '';
+                                return `
+                                    <tr class="${selected}" data-well-id="${esc(wid)}" data-key="${esc(key)}">
+                                        <td>${idx + 1}</td>
+                                        <td>${esc(wnum || wid)}</td>
+                                        <td>${esc(cnum || '-')}</td>
+                                        <td>${esc(cdate || '-')}</td>
+                                    </tr>
+                                `;
+                            }).join('') : `
+                                <tr><td colspan="4" style="color: var(--text-secondary);">Нет данных</td></tr>
+                            `}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        };
+
+        el.innerHTML = `
+            <div class="ac-header">
+                <div class="ac-title" title="Рекомендации по инвентаризации">Рекомендации по инвентаризации</div>
+                <button type="button" class="ac-close" id="btn-ir-close" title="Закрыть">✕</button>
+            </div>
+            <div class="ac-sub">
+                <div>
+                    <div><b>Не инвентаризированные колодцы</b> — ${esc(c1)}</div>
+                    <div><b>Инвентаризация старше более 2 лет</b> — ${esc(c2)}</div>
+                    <div><b>По числу неучтенных кабелей</b> — ${esc(c3)}${err ? ` — ${err}` : ''}</div>
+                </div>
+                <div class="ac-actions">
+                    <button type="button" class="btn btn-sm btn-secondary" id="btn-ir-export" ${oid ? '' : 'disabled'}>
+                        <i class="fas fa-file-export"></i> Выгрузить
+                    </button>
+                </div>
+            </div>
+            <div class="ac-body">
+                ${parts.map(sectionHtml).join('')}
+            </div>
+        `;
+
+        try {
+            el.querySelector('#btn-ir-close')?.addEventListener('click', () => {
+                try { this.setInventoryRecommendationsPanelVisible(false); } catch (_) {}
+            });
+        } catch (_) {}
+
+        try {
+            el.querySelector('#btn-ir-export')?.addEventListener('click', () => {
+                if (!oid) return;
+                try { App?.showInventoryRecommendationsExportModal?.(oid); } catch (_) {}
+            });
+        } catch (_) {}
+
+        // click row -> show well on map + highlight (без сброса скролла)
+        try {
+            el.querySelectorAll('tbody tr[data-well-id]').forEach((tr) => {
+                tr.addEventListener('click', async () => {
+                    const wid = parseInt(tr.getAttribute('data-well-id') || '0', 10);
+                    const key = tr.getAttribute('data-key') || '';
+                    if (!wid) return;
+                    this._inventoryRecommendationsSelectedKey = key;
+                    try {
+                        el.querySelectorAll('tbody tr.ac-row-selected').forEach((x) => x.classList.remove('ac-row-selected'));
+                        tr.classList.add('ac-row-selected');
+                    } catch (_) {}
+                    try {
+                        await this.showObjectOnMap('well', wid);
+                        this.highlightSelectedObject?.('well', wid);
+                    } catch (_) {}
+                });
+            });
         } catch (_) {}
     },
 

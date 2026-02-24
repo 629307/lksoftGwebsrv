@@ -733,7 +733,8 @@ body.sidebar-resizing {
 }
 
 /* Map overlay: assumed cables panel (right) */
-.assumed-cables-panel {
+.assumed-cables-panel,
+.inventory-reco-panel {
     position: absolute;
     top: 12px;
     right: 12px;
@@ -825,11 +826,13 @@ body.assumed-cables-panel-open .info-panel {
     right: calc(10px + var(--assumed-cables-panel-w, 520px) + 12px);
 }
 
-.assumed-cables-panel.hidden {
+.assumed-cables-panel.hidden,
+.inventory-reco-panel.hidden {
     display: none;
 }
 
-.assumed-cables-panel .ac-header {
+.assumed-cables-panel .ac-header,
+.inventory-reco-panel .ac-header {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
@@ -837,7 +840,8 @@ body.assumed-cables-panel-open .info-panel {
     gap: 10px;
 }
 
-.assumed-cables-panel .ac-title {
+.assumed-cables-panel .ac-title,
+.inventory-reco-panel .ac-title {
     font-weight: 800;
     min-width: 0;
     flex: 1 1 auto;
@@ -846,7 +850,8 @@ body.assumed-cables-panel-open .info-panel {
     white-space: nowrap;
 }
 
-.assumed-cables-panel .ac-close {
+.assumed-cables-panel .ac-close,
+.inventory-reco-panel .ac-close {
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     color: var(--text-primary);
@@ -856,7 +861,8 @@ body.assumed-cables-panel-open .info-panel {
     cursor: pointer;
 }
 
-.assumed-cables-panel .ac-sub {
+.assumed-cables-panel .ac-sub,
+.inventory-reco-panel .ac-sub {
     padding: 10px 14px;
     border-bottom: 1px solid var(--border-color);
     display: flex;
@@ -867,32 +873,38 @@ body.assumed-cables-panel-open .info-panel {
     font-size: 12px;
 }
 
-.assumed-cables-panel .ac-actions {
+.assumed-cables-panel .ac-actions,
+.inventory-reco-panel .ac-actions {
     display: inline-flex;
     align-items: center;
     gap: 8px;
 }
 
-.assumed-cables-panel .ac-body {
+.assumed-cables-panel .ac-body,
+.inventory-reco-panel .ac-body {
     padding: 0;
     overflow: auto;
     flex: 1 1 auto;
 }
 
-.assumed-cables-panel table {
+.assumed-cables-panel table,
+.inventory-reco-panel table {
     width: 100%;
     border-collapse: collapse;
     font-size: 12px;
 }
 
 .assumed-cables-panel th,
-.assumed-cables-panel td {
+.assumed-cables-panel td,
+.inventory-reco-panel th,
+.inventory-reco-panel td {
     padding: 8px 10px;
     border-bottom: 1px solid var(--border-color);
     vertical-align: top;
 }
 
-.assumed-cables-panel th {
+.assumed-cables-panel th,
+.inventory-reco-panel th {
     position: sticky;
     top: 0;
     background: var(--bg-card);
@@ -901,15 +913,18 @@ body.assumed-cables-panel-open .info-panel {
     font-weight: 700;
 }
 
-.assumed-cables-panel tr {
+.assumed-cables-panel tr,
+.inventory-reco-panel tr {
     cursor: pointer;
 }
 
-.assumed-cables-panel tr:hover {
+.assumed-cables-panel tr:hover,
+.inventory-reco-panel tr:hover {
     background: var(--bg-tertiary);
 }
 
-.assumed-cables-panel tr.ac-row-selected {
+.assumed-cables-panel tr.ac-row-selected,
+.inventory-reco-panel tr.ac-row-selected {
     background: rgba(168, 85, 247, 0.12);
 }
 .owners-legend-list {

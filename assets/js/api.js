@@ -775,6 +775,10 @@ const API = {
             return API.get('/reports/inventory', params);
         },
 
+        inventoryRecommendations(params = {}) {
+            return API.get('/reports/inventory-recommendations', params);
+        },
+
         export(type, params = {}, delimiter = ';') {
             return API.download(`/reports/export/${type}`, { ...params, delimiter });
         },

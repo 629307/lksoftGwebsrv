@@ -331,6 +331,7 @@ $router->get('/api/reports/contracts', [ReportController::class, 'contracts'], [
 $router->get('/api/reports/owners', [ReportController::class, 'owners'], ['auth']);
 $router->get('/api/reports/incidents', [ReportController::class, 'incidents'], ['auth']);
 $router->get('/api/reports/inventory', [ReportController::class, 'inventory'], ['auth']);
+$router->get('/api/reports/inventory-recommendations', [ReportController::class, 'inventoryRecommendations'], ['auth']);
 $router->get('/api/reports/export/{type}', [ReportController::class, 'export'], ['auth']);
 
 // Настройки (системные)
