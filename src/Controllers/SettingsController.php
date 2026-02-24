@@ -98,7 +98,17 @@ class SettingsController extends BaseController
                 );
                 foreach ($urows as $r) {
                     $code = (string) ($r['code'] ?? '');
-                    if ($code === '' || $code === 'cable_in_well_length_m') continue;
+                    // Глобальные настройки не должны переопределяться user_settings
+                    if ($code === '') continue;
+                    if (in_array($code, [
+                        'cable_in_well_length_m',
+                        'input_well_number_start',
+                        'well_pole_number_start',
+                        'well_entry_point_kind_code',
+                        'well_pole_kind_code',
+                    ], true)) {
+                        continue;
+                    }
                     $out[$code] = (string) ($r['value'] ?? '');
                 }
             } catch (\PDOException $e) {
@@ -124,6 +134,9 @@ class SettingsController extends BaseController
         if (!$user) {
             Response::error('Требуется авторизация', 401);
         }
+        if (Auth::hasRole('readonly')) {
+            Response::error('Настройки недоступны для роли "Только чтение"', 403);
+        }
 
         // JSON body уже распарсен в Request::parseBody() при Content-Type: application/json
         $data = $this->request->input(null, []);
@@ -132,10 +145,11 @@ class SettingsController extends BaseController
         }
 
         $isAdmin = Auth::isAdmin();
+        $isUser = Auth::hasRole('user');
 
         // По ТЗ:
         // - администратор: все настройки
-        // - пользователь/только чтение: только персональные настройки (без системных разделов данных/интерфейса/WMTS)
+        // - пользователь: только персональные настройки (интерфейс карты + ссылки меню + hotkeys) + персональные "настройки по умолчанию" (панель карты)
         $allowed = $isAdmin ? [
             'map_default_zoom',
             'map_default_lat',
@@ -190,6 +204,7 @@ class SettingsController extends BaseController
             // Разрешаем только персональные настройки
             'map_layers',
             'sidebar_width',
+            // Персональные значения по умолчанию (панель карты)
             'default_type_id_direction',
             'default_type_id_well',
             'default_type_id_marker',
@@ -201,20 +216,24 @@ class SettingsController extends BaseController
             'default_contract_id',
             'default_cable_type_id',
             'default_cable_catalog_id',
+            // Стили карты (персонально)
+            'line_weight_direction',
+            'line_weight_cable',
+            'icon_size_well_marker',
+            'font_size_well_number_label',
+            'font_size_direction_length_label',
             'hotkey_add_direction',
             'hotkey_add_well',
             'hotkey_add_marker',
             'hotkey_add_duct_cable',
             'hotkey_add_ground_cable',
             'hotkey_add_aerial_cable',
-            'well_entry_point_kind_code',
-            'well_pole_kind_code',
             'selected_object_highlight_color',
             'magnet_pixels',
         ];
 
         // Роль "Пользователь": разрешаем персональную настройку ссылок меню
-        if (!$isAdmin && Auth::hasRole('user')) {
+        if (!$isAdmin && $isUser) {
             $allowed[] = 'url_geoproj';
             $allowed[] = 'url_cadastre';
         }
@@ -245,7 +264,22 @@ class SettingsController extends BaseController
             $this->db->beginTransaction();
 
             foreach ($toSave as $code => $value) {
-            if ($code === 'cable_in_well_length_m' || $code === 'input_well_number_start' || $code === 'well_pole_number_start') {
+                // Глобальные настройки
+                if (in_array($code, ['well_entry_point_kind_code', 'well_pole_kind_code'], true)) {
+                    if (!$isAdmin) {
+                        Response::error('Доступ запрещён: изменить настройки типов колодцев может только администратор', 403);
+                    }
+                    $this->db->query(
+                        "INSERT INTO app_settings(code, value, updated_at)
+                         VALUES (:code, :value, NOW())
+                         ON CONFLICT (code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                        ['code' => $code, 'value' => $value]
+                    );
+                    $saved[$code] = $value;
+                    continue;
+                }
+
+                if ($code === 'cable_in_well_length_m' || $code === 'input_well_number_start' || $code === 'well_pole_number_start') {
                     if (!Auth::isRoot()) {
                     if ($code === 'cable_in_well_length_m') {
                         Response::error('Доступ запрещён: изменить "Учитываемая длина кабеля в колодце (м)" может только пользователь root', 403);

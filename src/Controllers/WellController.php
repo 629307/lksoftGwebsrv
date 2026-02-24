@@ -422,6 +422,104 @@ class WellController extends BaseController
     }
 
     /**
+     * POST /api/wells/recalculate-owner-code-in-number
+     * Актуализировать код собственника в номере всех колодцев
+     */
+    public function recalculateOwnerCodeInNumber(): void
+    {
+        $this->checkWriteAccess();
+        $user = Auth::user();
+        $uid = (int) ($user['id'] ?? 0);
+
+        try {
+            $rows = $this->db->fetchAll("SELECT id, number, owner_id, type_id, kind_id FROM wells ORDER BY id");
+        } catch (\PDOException $e) {
+            Response::error('Ошибка загрузки списка колодцев', 500);
+        }
+
+        $updated = 0;
+        try {
+            $this->db->beginTransaction();
+
+            foreach ($rows as $r) {
+                $id = (int) ($r['id'] ?? 0);
+                if ($id <= 0) continue;
+
+                $oldNumber = (string) ($r['number'] ?? '');
+                $ownerId = (int) ($r['owner_id'] ?? 0);
+                $typeId = (int) ($r['type_id'] ?? 0);
+                $kindId = (int) ($r['kind_id'] ?? 0);
+                if ($ownerId <= 0 || $typeId <= 0) continue;
+
+                $oldParts = $this->parseNumberSeqAndSuffix($oldNumber);
+                $oldSeq = $oldParts['seq'] ?? null;
+                $oldSuffix = $this->sanitizeNumberSuffix((string) ($oldParts['suffix'] ?? ''));
+
+                // "вводной" / "опора": minSeq зависит от настроек
+                $minSeq = 1;
+                try {
+                    $kindCode = $this->getObjectKindCodeById($kindId);
+                    $kc = strtolower(trim($kindCode));
+                    $poleCode = strtolower(trim((string) $this->getAppSetting('well_pole_kind_code', 'pole')));
+                    $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+                    if ($kc !== '' && $kc === ($poleCode ?: 'pole')) {
+                        $minSeq = max(1, (int) $this->getAppSetting('well_pole_number_start', 100000));
+                    } elseif ($kc !== '' && $kc === ($entryCode ?: 'input')) {
+                        $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
+                    }
+                } catch (\Throwable $e) {
+                    $minSeq = 1;
+                }
+
+                $manualSeq = (is_int($oldSeq) && $oldSeq >= $minSeq) ? (int) $oldSeq : null;
+                $newNumber = $this->buildAutoNumber(
+                    'wells',
+                    $typeId,
+                    $ownerId,
+                    $manualSeq,
+                    ($oldSuffix !== '') ? $oldSuffix : null,
+                    $id,
+                    $minSeq
+                );
+
+                if ($newNumber !== $oldNumber) {
+                    $this->db->query(
+                        "UPDATE wells
+                         SET number = :n,
+                             updated_by = :uid,
+                             updated_at = NOW()
+                         WHERE id = :id",
+                        ['n' => $newNumber, 'uid' => $uid, 'id' => $id]
+                    );
+                    $updated++;
+                }
+            }
+
+            // Актуализируем имена направлений: <номер начального>-<номер конечного>
+            try {
+                $this->db->query(
+                    "UPDATE channel_directions cd
+                     SET number = (sw.number || '-' || ew.number),
+                         updated_by = :uid,
+                         updated_at = NOW()
+                     FROM wells sw, wells ew
+                     WHERE cd.start_well_id = sw.id AND cd.end_well_id = ew.id",
+                    ['uid' => $uid]
+                );
+            } catch (\Throwable $e) {
+                // best-effort: если таблицы/колонки отсутствуют — не валим всю операцию
+            }
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        Response::success(['updated' => $updated], 'Номера колодцев обновлены');
+    }
+
+    /**
      * PUT /api/wells/{id}
      * Обновление колодца
      */

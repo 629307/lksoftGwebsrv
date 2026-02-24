@@ -133,6 +133,8 @@ const App = {
                     'btn-inventory-unacc-labels',
                     'btn-inventory-mode',
                     'btn-recalc-inventory-unaccounted',
+                    'btn-recalc-well-owner-code-in-number',
+                    'btn-recalc-direction-names',
                 ].forEach((id) => {
                     const el = document.getElementById(id);
                     if (!el) return;
@@ -712,7 +714,9 @@ const App = {
         document.getElementById('btn-add-object').addEventListener('click', () => this.showAddObjectModal(this.currentTab));
         document.getElementById('btn-find-clones')?.addEventListener('click', () => this.findWellClones());
         document.getElementById('btn-recalc-inventory-unaccounted')?.addEventListener('click', () => this.recalculateInventoryUnaccounted());
+        document.getElementById('btn-recalc-well-owner-code-in-number')?.addEventListener('click', () => this.recalculateWellOwnerCodeInNumber());
         document.getElementById('btn-import').addEventListener('click', () => this.showImportModal());
+        document.getElementById('btn-recalc-direction-names')?.addEventListener('click', () => this.recalculateDirectionNames());
         document.getElementById('btn-export').addEventListener('click', () => this.exportObjects());
         document.getElementById('btn-recalc-cable-lengths')?.addEventListener('click', () => this.recalculateCableLengths());
         document.getElementById('btn-delete-selected')?.addEventListener('click', () => this.deleteSelectedObjects());
@@ -1949,10 +1953,14 @@ const App = {
         }
         // Кнопка "Пересчитать длины" — только для вкладки "Кабели"
         document.getElementById('btn-recalc-cable-lengths')?.classList.toggle('hidden', tab !== 'unified_cables' || !this.canWrite());
+        // Кнопка "Актуализировать собственника в номере" — только для "Колодцы"
+        document.getElementById('btn-recalc-well-owner-code-in-number')?.classList.toggle('hidden', tab !== 'wells' || !this.canWrite());
         // Кнопка "Пересчитать неучтенные" — только для "Колодцы"
         document.getElementById('btn-recalc-inventory-unaccounted')?.classList.toggle('hidden', tab !== 'wells' || !this.canWrite());
         // Кнопка "Найти клоны" — только для "Колодцы"
         document.getElementById('btn-find-clones')?.classList.toggle('hidden', tab !== 'wells');
+        // Кнопка "Обновить имена" — только для "Направления"
+        document.getElementById('btn-recalc-direction-names')?.classList.toggle('hidden', tab !== 'directions' || !this.canWrite());
         // Чекбоксы "Колодцы ..." — только для "Колодцы"
         try {
             const wrap = document.getElementById('wells-extra-filters');
@@ -2613,6 +2621,58 @@ const App = {
             try { MapManager.loadAllLayers?.(); } catch (_) {}
         } catch (e) {
             this.notify(e?.message || 'Ошибка пересчёта', 'error');
+        }
+    },
+
+    async recalculateWellOwnerCodeInNumber() {
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (this.currentTab !== 'wells') {
+            this.switchTab('wells');
+        }
+        if (!confirm('Актуализировать код собственника в номере для ВСЕХ колодцев?')) return;
+        try {
+            this.notify('Обновление номеров колодцев...', 'info');
+            const resp = await API.wells.recalculateOwnerCodeInNumber();
+            if (resp?.success === false) {
+                this.notify(resp?.message || 'Ошибка обновления', 'error');
+                return;
+            }
+            const meta = resp?.data || resp || {};
+            const cnt = meta?.updated ?? null;
+            this.notify(`Номера колодцев обновлены${cnt !== null ? ` (колодцев: ${cnt})` : ''}`, 'success');
+            this.loadObjects();
+            try { MapManager.loadAllLayers?.(); } catch (_) {}
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка обновления номеров колодцев', 'error');
+        }
+    },
+
+    async recalculateDirectionNames() {
+        if (!this.canWrite()) {
+            this.notify('Недостаточно прав', 'error');
+            return;
+        }
+        if (this.currentTab !== 'directions') {
+            this.switchTab('directions');
+        }
+        if (!confirm('Обновить имена (номера) ВСЕХ направлений: <начальный>-<конечный>?')) return;
+        try {
+            this.notify('Обновление направлений...', 'info');
+            const resp = await API.channelDirections.recalculateNames();
+            if (resp?.success === false) {
+                this.notify(resp?.message || 'Ошибка обновления', 'error');
+                return;
+            }
+            const meta = resp?.data || resp || {};
+            const cnt = meta?.updated ?? null;
+            this.notify(`Направления обновлены${cnt !== null ? ` (направлений: ${cnt})` : ''}`, 'success');
+            this.loadObjects();
+            try { MapManager.loadAllLayers?.(); } catch (_) {}
+        } catch (e) {
+            this.notify(e?.message || 'Ошибка обновления направлений', 'error');
         }
     },
 
@@ -5659,8 +5719,45 @@ const App = {
     },
 
     async loadSettingsPanel() {
-        // Панель доступна всем пользователям (персональные настройки)
+        // Панель доступна всем пользователям, но набор видимых секций зависит от роли
         await this.loadSettings().catch(() => {});
+
+        const roleCode = (this.user?.role?.code || '').toString();
+        const isAdminLike = this.isAdmin() || this.isRoot();
+        // По ТЗ:
+        // - admin/root: все секции
+        // - user: только интерфейс карты + ссылки меню + hotkeys
+        // - readonly: панель недоступна (switchPanel принудительно возвращает на карту), но на всякий случай скроем всё
+        const hideSection = (id, hide) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.toggle('hidden', !!hide);
+            // Скрываем визуальный разделитель (hr) перед секцией, если он есть
+            try {
+                const prev = el.previousElementSibling;
+                if (prev && String(prev.tagName || '').toUpperCase() === 'HR') {
+                    prev.classList.toggle('hidden', !!hide);
+                }
+            } catch (_) {}
+        };
+        if (roleCode === 'user') {
+            hideSection('settings-section-data', true);
+            hideSection('settings-section-wmts', true);
+        } else if (!isAdminLike) {
+            // максимально ограничительный режим для неизвестных ролей
+            hideSection('settings-section-data', true);
+            hideSection('settings-section-wmts', true);
+        } else {
+            hideSection('settings-section-data', false);
+            hideSection('settings-section-wmts', false);
+        }
+        if (roleCode === 'readonly') {
+            hideSection('settings-section-data', true);
+            hideSection('settings-section-ui', true);
+            hideSection('settings-section-links', true);
+            hideSection('settings-section-wmts', true);
+            hideSection('settings-section-hotkeys', true);
+        }
 
         const z = document.getElementById('settings-map-zoom');
         const lat = document.getElementById('settings-map-lat');
@@ -5736,7 +5833,8 @@ const App = {
         if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
 
         // Заполняем список "Код — точка ввода" (object_kinds.code) только для вида объекта "Колодец"
-        if (entryKind || poleKind) {
+        // Доступно только для admin/root (секция "Настройка данных ГИС")
+        if ((entryKind || poleKind) && isAdminLike) {
             try {
                 const [typesResp, kindsResp] = await Promise.all([
                     API.references.all('object_types'),
@@ -5764,28 +5862,6 @@ const App = {
             } catch (_) {
                 // ignore
             }
-        }
-
-        // По ролям: не-админ не может менять системные разделы настроек
-        if (!this.isAdmin()) {
-            const roleCode = (this.user?.role?.code || '').toString();
-            // "Настройка ссылок меню" — персональная и доступна роли "Пользователь"
-            const canEditLinks = (roleCode === 'user');
-            const disable = (el) => {
-                if (!el) return;
-                el.disabled = true;
-                try { el.style.background = 'var(--bg-tertiary)'; } catch (_) {}
-            };
-            const toDisable = [
-                z, lat, lng,
-                wDir, wCable, iconSize, fsWell, fsDirLen,
-                wmtsUrlTmpl, wmtsStyle, wmtsTms, wmtsTm, wmtsTr, wmtsTc,
-                entryKind, poleKind,
-            ];
-            if (!canEditLinks) {
-                toDisable.push(geo, cad);
-            }
-            toDisable.forEach(disable);
         }
 
         // Админ: секция бэкапов СУБД

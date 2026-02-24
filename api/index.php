@@ -189,6 +189,7 @@ $router->get('/api/wells/geojson', [WellController::class, 'geojson'], ['auth'])
 $router->get('/api/wells/exists', [WellController::class, 'existsNumber'], ['auth']);
 $router->get('/api/wells/clones', [WellController::class, 'clones'], ['auth']);
 $router->get('/api/wells/export', [WellController::class, 'export'], ['auth']);
+$router->post('/api/wells/recalculate-owner-code-in-number', [WellController::class, 'recalculateOwnerCodeInNumber'], ['auth']);
 $router->post('/api/wells/import-text/preview', [WellController::class, 'importTextPreview'], ['auth']);
 $router->post('/api/wells/import-text', [WellController::class, 'importText'], ['auth']);
 $router->get('/api/wells/{id}', [WellController::class, 'show'], ['auth']);
@@ -204,6 +205,7 @@ $router->get('/api/channel-directions/shortest-path', [ChannelController::class,
 $router->get('/api/channel-directions/geojson-by-ids', [ChannelController::class, 'geojsonByIds'], ['auth']);
 $router->get('/api/channel-directions/stats', [ChannelController::class, 'stats'], ['auth']);
 $router->get('/api/channel-directions/export', [ChannelController::class, 'exportDirections'], ['auth']);
+$router->post('/api/channel-directions/recalculate-names', [ChannelController::class, 'recalculateNames'], ['auth']);
 $router->get('/api/channel-directions/{id}', [ChannelController::class, 'show'], ['auth']);
 $router->post('/api/channel-directions', [ChannelController::class, 'store'], ['auth']);
 $router->put('/api/channel-directions/{id}', [ChannelController::class, 'update'], ['auth']);

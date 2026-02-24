@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.4.4" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.4.5" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -379,6 +379,9 @@
                             <button class="btn btn-primary" id="btn-add-object">
                                 <i class="fas fa-plus"></i> Добавить
                             </button>
+                            <button class="btn btn-secondary hidden" id="btn-recalc-well-owner-code-in-number" title="Актуализировать код собственника в номере колодца">
+                                <i class="fas fa-id-badge"></i> Актуализировать собственника в номере
+                            </button>
                             <button class="btn btn-secondary hidden" id="btn-recalc-inventory-unaccounted" title="Пересчитать неучтенные кабели (Инвентаризация)">
                                 <i class="fas fa-sync-alt"></i> Пересчитать неучтенные
                             </button>
@@ -390,6 +393,9 @@
                             </button>
                             <button class="btn btn-secondary" id="btn-import">
                                 <i class="fas fa-upload"></i> Загрузить
+                            </button>
+                            <button class="btn btn-secondary hidden" id="btn-recalc-direction-names" title="Обновить номера направлений по номерам колодцев (Начальный-Конечный)">
+                                <i class="fas fa-sync-alt"></i> Обновить имена
                             </button>
                             <button class="btn btn-secondary" id="btn-export">
                                 <i class="fas fa-download"></i> Выгрузить
@@ -651,6 +657,7 @@
                     </div>
                     <div class="table-container">
                         <form id="settings-form" style="max-width: 720px;">
+                            <div id="settings-section-data">
                             <h3 style="margin: 0 0 10px 0;">Настройка данных ГИС</h3>
                             <div class="form-group">
                                 <label>Зум карты по умолчанию</label>
@@ -678,8 +685,24 @@
                                 <input type="number" id="settings-pole-well-number-start" step="1" min="1" placeholder="100000">
                                 <p class="text-muted">Используется для автоматической нумерации колодцев типа "Опора‑Мачта" (код задаётся в настройке "Код — Опора‑Мачта").</p>
                             </div>
+                            <div class="form-group">
+                                <label>Код — точка ввода (Тип объекта колодца)</label>
+                                <select id="settings-well-entry-kind-code">
+                                    <option value="">Не задано</option>
+                                </select>
+                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец".</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Код — Опора-Мачта (Тип объекта колодца)</label>
+                                <select id="settings-well-pole-kind-code">
+                                    <option value="">Не задано</option>
+                                </select>
+                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец". Используется для отображения “Опора‑Мачта” треугольником.</p>
+                            </div>
+                            </div>
 
                             <hr style="margin: 18px 0;">
+                            <div id="settings-section-ui">
                             <h3 style="margin: 0 0 10px 0;">Настройка интерфейса карты ГИС</h3>
                             <div class="form-group">
                                 <label>Толщина линий — Направление</label>
@@ -712,22 +735,10 @@
                                 <input type="number" id="settings-magnet-pixels" step="1" min="0" placeholder="0">
                                 <p class="text-muted">Если курсор ближе к объекту чем на X пикселей — попадание/наведение срабатывает “как будто по объекту”. 0 — выключено.</p>
                             </div>
-                            <div class="form-group">
-                                <label>Код — точка ввода (Тип объекта колодца)</label>
-                                <select id="settings-well-entry-kind-code">
-                                    <option value="">Не задано</option>
-                                </select>
-                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец".</p>
-                            </div>
-                            <div class="form-group">
-                                <label>Код — Опора-Мачта (Тип объекта колодца)</label>
-                                <select id="settings-well-pole-kind-code">
-                                    <option value="">Не задано</option>
-                                </select>
-                                <p class="text-muted">Выбор из справочника "Типы объектов" только для вида объекта "Колодец". Используется для отображения “Опора‑Мачта” треугольником.</p>
                             </div>
 
                             <hr style="margin: 18px 0;">
+                            <div id="settings-section-links">
                             <h3 style="margin: 0 0 10px 0;">Настройка ссылок меню</h3>
                             <div class="form-group">
                                 <label>Ссылка на Ресурс для пересчёта координат</label>
@@ -737,8 +748,10 @@
                                 <label>Ссылка на Публичную кадастровую карту</label>
                                 <input type="url" id="settings-url-cadastre" placeholder="https://nspd.gov.ru/...">
                             </div>
+                            </div>
 
                             <hr style="margin: 18px 0;">
+                            <div id="settings-section-wmts">
                             <h3 style="margin: 0 0 10px 0;">Настройка слоя WMTS</h3>
                             <div class="form-group">
                                 <label>URL шаблон</label>
@@ -768,8 +781,10 @@
                                 <input type="text" id="settings-wmts-tilecol">
                                 <p class="text-muted">Обычно это <strong>{x}</strong>.</p>
                             </div>
+                            </div>
 
                             <hr style="margin: 18px 0;">
+                            <div id="settings-section-hotkeys">
                             <h3 style="margin: 0 0 10px 0;">Hotkey (Alt + клавиша) для панели инструментов карты</h3>
                             <p class="text-muted" style="margin-top: 0;">Укажите одну цифру или латинскую букву. Пример: <strong>A</strong> означает горячую клавишу <strong>Alt + A</strong>. Оставьте пустым, чтобы отключить.</p>
 
@@ -798,6 +813,7 @@
                                 <input type="text" id="settings-hotkey-add-aerial-cable" maxlength="1" placeholder="Напр.: A">
                             </div>
                             <p class="text-muted">Настройки применяются к карте и ссылкам в боковой панели.</p>
+                            </div>
 
                             <hr style="margin: 18px 0;">
                             <div class="admin-only" id="db-backup-settings">
@@ -901,8 +917,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.4.4"></script>
-    <script src="assets/js/map.js?v=2.4.4"></script>
-    <script src="assets/js/app.js?v=2.4.4"></script>
+    <script src="assets/js/api.js?v=2.4.5"></script>
+    <script src="assets/js/map.js?v=2.4.5"></script>
+    <script src="assets/js/app.js?v=2.4.5"></script>
 </body>
 </html>

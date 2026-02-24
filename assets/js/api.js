@@ -334,6 +334,10 @@ const API = {
         dismantle(id) {
             return API.post(`/wells/${id}/dismantle`, {});
         },
+
+        recalculateOwnerCodeInNumber() {
+            return API.post('/wells/recalculate-owner-code-in-number', {});
+        },
     },
 
     // ========================
@@ -393,6 +397,10 @@ const API = {
         geojsonByIds(ids = []) {
             const list = Array.isArray(ids) ? ids : [];
             return API.get('/channel-directions/geojson-by-ids', { ids: list.join(',') });
+        },
+
+        recalculateNames() {
+            return API.post('/channel-directions/recalculate-names', {});
         },
     },
 

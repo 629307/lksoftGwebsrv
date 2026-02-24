@@ -1477,6 +1477,36 @@ class ChannelController extends BaseController
     }
 
     /**
+     * POST /api/channel-directions/recalculate-names
+     * Актуализировать номера направлений: <номер начального колодца>-<номер конечного колодца>
+     */
+    public function recalculateNames(): void
+    {
+        $this->checkWriteAccess();
+        $user = Auth::user();
+        $uid = (int) ($user['id'] ?? 0);
+
+        try {
+            $stmt = $this->db->query(
+                "UPDATE channel_directions cd
+                 SET number = (sw.number || '-' || ew.number),
+                     updated_by = :uid,
+                     updated_at = NOW()
+                 FROM wells sw, wells ew
+                 WHERE cd.start_well_id = sw.id
+                   AND cd.end_well_id = ew.id
+                   AND cd.number IS DISTINCT FROM (sw.number || '-' || ew.number)",
+                ['uid' => $uid]
+            );
+            $updated = $stmt->rowCount();
+        } catch (\PDOException $e) {
+            Response::error('Ошибка актуализации направлений', 500);
+        }
+
+        Response::success(['updated' => (int) $updated], 'Направления обновлены');
+    }
+
+    /**
      * GET /api/cable-channels/export
      * Экспорт каналов в CSV
      */

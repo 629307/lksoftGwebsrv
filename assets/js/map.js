@@ -1621,6 +1621,12 @@ const MapManager = {
                                 });
                                 return;
                             }
+                            // Режим добавления кабеля (ломаная): кликом по объекту добавляем точку, а не открываем инфо
+                            if (this.addCableMode && e?.latlng) {
+                                L.DomEvent.stopPropagation(e);
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             L.DomEvent.stopPropagation(e);
                             this.handleObjectsClick(e);
                         });
@@ -3075,6 +3081,12 @@ const MapManager = {
                                 await this.handleDirectionClickForDuctCable(feature.properties?.id);
                                 return;
                             }
+                            // Режим добавления кабеля (ломаная): кликом по линии добавляем точку, а не открываем инфо
+                            if (this.addCableMode && e?.latlng) {
+                                L.DomEvent.stopPropagation(e);
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             L.DomEvent.stopPropagation(e);
                             this.handleObjectsClick(e);
                         });
@@ -3127,6 +3139,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.addCableMode && e?.latlng) {
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             this.handleObjectsClick(e);
                         });
                         
@@ -3196,6 +3212,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'unified_cable', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.addCableMode && e?.latlng) {
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             this.handleObjectsClick(e);
                         });
                         
@@ -5194,6 +5214,19 @@ const MapManager = {
             let bounds = null;
             let cableGeometry = null;
             let highlightRouteDirections = false;
+            const selectObjectAfterMove = () => {
+                try {
+                    // map objectType (из списков/панелей) -> objectType метаданных слоёв карты
+                    const ot = (objectType || '').toString();
+                    const metaType =
+                        (ot === 'wells' || ot === 'well') ? 'well' :
+                        (ot === 'directions' || ot === 'channels' || ot === 'channel_direction') ? 'channel_direction' :
+                        (ot === 'unified_cables') ? 'unified_cable' :
+                        null;
+                    if (!metaType) return;
+                    this.highlightSelectedObject(metaType, objectId);
+                } catch (_) {}
+            };
 
             const boundsFromGeometry = (geom) => {
                 try {
@@ -5324,6 +5357,9 @@ const MapManager = {
                 }
             }, 100);
 
+            // Подсветка выбранного объекта (как при клике на карте)
+            setTimeout(() => selectObjectAfterMove(), 220);
+
             // Для кабелей дополнительно делаем подсветку "без фильтров" (поверх слоёв)
             if (objectType === 'unified_cables') {
                 if (cableGeometry && cableGeometry.type) {
@@ -5402,6 +5438,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'well', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.addCableMode && e?.latlng) {
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             this.handleObjectsClick(e);
                         });
                         return;
@@ -5411,6 +5451,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.addCableMode && e?.latlng) {
+                                this.handleAddCableClick(e.latlng);
+                                return;
+                            }
                             this.handleObjectsClick(e);
                         });
                     }
@@ -5440,6 +5484,10 @@ const MapManager = {
                     layer._igsMeta = { objectType, properties: feature.properties };
                     layer.on('click', (e) => {
                         L.DomEvent.stopPropagation(e);
+                        if (this.addCableMode && e?.latlng) {
+                            this.handleAddCableClick(e.latlng);
+                            return;
+                        }
                         this.handleObjectsClick(e);
                     });
                 };
