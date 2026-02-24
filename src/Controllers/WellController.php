@@ -292,9 +292,11 @@ class WellController extends BaseController
         try {
             $kindCode = $this->getObjectKindCodeById((int) ($data['kind_id'] ?? 0));
             $kc = strtolower(trim($kindCode));
-            if ($kc === 'pole') {
-                $minSeq = 100000;
-            } elseif ($kc === 'input') {
+            $poleCode = strtolower(trim((string) $this->getAppSetting('well_pole_kind_code', 'pole')));
+            $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+            if ($kc !== '' && $kc === ($poleCode ?: 'pole')) {
+                $minSeq = max(1, (int) $this->getAppSetting('well_pole_number_start', 100000));
+            } elseif ($kc !== '' && $kc === ($entryCode ?: 'input')) {
                 $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
             }
         } catch (\Throwable $e) {
@@ -470,9 +472,11 @@ class WellController extends BaseController
             try {
                 $kindCode = $this->getObjectKindCodeById($newKindId);
                 $kc = strtolower(trim($kindCode));
-                if ($kc === 'pole') {
-                    $minSeq = 100000;
-                } elseif ($kc === 'input') {
+                $poleCode = strtolower(trim((string) $this->getAppSetting('well_pole_kind_code', 'pole')));
+                $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+                if ($kc !== '' && $kc === ($poleCode ?: 'pole')) {
+                    $minSeq = max(1, (int) $this->getAppSetting('well_pole_number_start', 100000));
+                } elseif ($kc !== '' && $kc === ($entryCode ?: 'input')) {
                     $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
                 }
             } catch (\Throwable $e) {

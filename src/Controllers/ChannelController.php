@@ -1090,7 +1090,12 @@ class ChannelController extends BaseController
             $minSeq = 1;
             try {
                 $kindCode = $this->getObjectKindCodeById((int) ($wellData['kind_id'] ?? 0));
-                if (strtolower(trim($kindCode)) === 'input') {
+                $kc = strtolower(trim((string) $kindCode));
+                $poleCode = strtolower(trim((string) $this->getAppSetting('well_pole_kind_code', 'pole')));
+                $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+                if ($kc !== '' && $kc === ($poleCode ?: 'pole')) {
+                    $minSeq = max(1, (int) $this->getAppSetting('well_pole_number_start', 100000));
+                } elseif ($kc !== '' && $kc === ($entryCode ?: 'input')) {
                     $minSeq = max(1, (int) $this->getAppSetting('input_well_number_start', 1));
                 }
             } catch (\Throwable $e) {

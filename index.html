@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.4.3" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.4.4" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -673,6 +673,11 @@
                                 <input type="number" id="settings-input-well-number-start" step="1" min="1" placeholder="Напр.: 1000">
                                 <p class="text-muted">Используется для автоматической нумерации колодцев типа "Ввод в здание".</p>
                             </div>
+                            <div class="form-group">
+                                <label>Начало нумерации Объектов Опора-Мачта</label>
+                                <input type="number" id="settings-pole-well-number-start" step="1" min="1" placeholder="100000">
+                                <p class="text-muted">Используется для автоматической нумерации колодцев типа "Опора‑Мачта" (код задаётся в настройке "Код — Опора‑Мачта").</p>
+                            </div>
 
                             <hr style="margin: 18px 0;">
                             <h3 style="margin: 0 0 10px 0;">Настройка интерфейса карты ГИС</h3>
@@ -896,8 +901,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.4.3"></script>
-    <script src="assets/js/map.js?v=2.4.3"></script>
-    <script src="assets/js/app.js?v=2.4.3"></script>
+    <script src="assets/js/api.js?v=2.4.4"></script>
+    <script src="assets/js/map.js?v=2.4.4"></script>
+    <script src="assets/js/app.js?v=2.4.4"></script>
 </body>
 </html>
