@@ -4235,8 +4235,14 @@ const App = {
                     if (selectId === 'modal-owner-select') {
                         select.dispatchEvent(new Event('change'));
                     }
+                    if (selectId === 'modal-kind-select') {
+                        select.dispatchEvent(new Event('change'));
+                    }
                 }
             });
+
+            // Колодцы: если выбран "ввод в здание" — собственник принудительно "Не указан"
+            try { this.enforceInputWellOwnerInModal?.(); } catch (_) {}
 
             // Для кабелей — после установки типа загружаем каталог и применяем сохранённое значение
             if (type === 'unified_cables' && document.getElementById('modal-cable-type-select')?.value) {
@@ -7911,7 +7917,7 @@ const App = {
                         : (kinds.data || []);
                     const kindSelect = document.getElementById('modal-kind-select');
                     kindSelect.innerHTML = '<option value="">Выберите...</option>' +
-                        filtered.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+                        filtered.map(k => `<option value="${k.id}" data-code="${this.escapeHtml(k.code || '')}" data-is-default="${k.is_default ? 1 : 0}">${this.escapeHtml(k.name || '')}</option>`).join('');
                     // Персональный дефолт для каналов берём из map-defaults: default_ref_channel
                     const udef = this.settings?.default_ref_channel || '';
                     if (!pickUserDefault(kindSelect, udef, { forceIfDefault: true })) pickDefault(kindSelect);
@@ -7925,7 +7931,7 @@ const App = {
                 } else if (!kindsHandled) {
                     document.getElementById('modal-kind-select').innerHTML = 
                         '<option value="">Выберите...</option>' +
-                        kinds.data.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+                        kinds.data.map(k => `<option value="${k.id}" data-code="${this.escapeHtml(k.code || '')}" data-is-default="${k.is_default ? 1 : 0}">${this.escapeHtml(k.name || '')}</option>`).join('');
                     pickDefault(document.getElementById('modal-kind-select'));
                 }
 
@@ -7946,6 +7952,19 @@ const App = {
                 if (kindSelect) {
                     if (!pickUserDefault(kindSelect, udefKind, { forceIfDefault: true })) pickDefault(kindSelect);
                 }
+                try {
+                    // после заполнения kinds проверяем правило "ввод в здание" -> собственник "Не указан"
+                    this.enforceInputWellOwnerInModal?.();
+                    if (!kindSelect?._igsBoundEnforceInputOwner) {
+                        kindSelect._igsBoundEnforceInputOwner = true;
+                        kindSelect.addEventListener('change', () => this.enforceInputWellOwnerInModal?.());
+                    }
+                    const ownerSelect = document.getElementById('modal-owner-select');
+                    if (ownerSelect && !ownerSelect._igsBoundEnforceInputOwner) {
+                        ownerSelect._igsBoundEnforceInputOwner = true;
+                        ownerSelect.addEventListener('change', () => this.enforceInputWellOwnerInModal?.());
+                    }
+                } catch (_) {}
             }
             
             if (statuses.success && document.getElementById('modal-status-select')) {
@@ -8115,12 +8134,51 @@ const App = {
         );
         
         kindSelect.innerHTML = '<option value="">Выберите...</option>' +
-            filteredKinds.map(k => `<option value="${k.id}" data-is-default="${k.is_default ? 1 : 0}">${k.name}</option>`).join('');
+            filteredKinds.map(k => `<option value="${k.id}" data-code="${this.escapeHtml(k.code || '')}" data-is-default="${k.is_default ? 1 : 0}">${this.escapeHtml(k.name || '')}</option>`).join('');
 
         // Автовыбор значения по умолчанию (если ничего не выбрано)
         if (!kindSelect.value) {
             const def = filteredKinds.find(k => k.is_default);
             if (def) kindSelect.value = String(def.id);
+        }
+        try { this.enforceInputWellOwnerInModal?.(); } catch (_) {}
+    },
+
+    enforceInputWellOwnerInModal() {
+        try {
+            const kindSelect = document.getElementById('modal-kind-select');
+            const ownerSelect = document.getElementById('modal-owner-select');
+            if (!kindSelect || !ownerSelect) return;
+
+            const entryCode = (this.settings?.well_entry_point_kind_code ?? 'input').toString().trim().toLowerCase();
+            const kindCode = (kindSelect.selectedOptions?.[0]?.dataset?.code || '').toString().trim().toLowerCase();
+            const isEntry = !!entryCode && !!kindCode && (kindCode === entryCode);
+
+            const defaultOpt = Array.from(ownerSelect.options || []).find(o => {
+                const oc = (o?.dataset?.code || '').toString().trim().toLowerCase();
+                const txt = (o?.textContent || '').toString().trim().toLowerCase();
+                return oc === 'default' || txt.includes('не указан');
+            });
+            const defaultOwnerId = defaultOpt?.value ? String(defaultOpt.value) : '';
+
+            if (isEntry && defaultOwnerId) {
+                // Выставляем "Не указан" и блокируем выбор (на сервере тоже принудительно)
+                ownerSelect.value = defaultOwnerId;
+                try { ownerSelect.dispatchEvent(new Event('change')); } catch (_) {}
+                ownerSelect.disabled = true;
+                ownerSelect.title = 'Для типа "Ввод в здание" собственник задаётся автоматически: "Не указан"';
+                try { ownerSelect.style.background = 'var(--bg-tertiary)'; } catch (_) {}
+                return;
+            }
+
+            // Иначе — разблокируем
+            if (ownerSelect.disabled) {
+                ownerSelect.disabled = false;
+                ownerSelect.title = '';
+                try { ownerSelect.style.background = ''; } catch (_) {}
+            }
+        } catch (_) {
+            // ignore
         }
     },
 

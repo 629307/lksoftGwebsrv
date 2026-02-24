@@ -10,6 +10,26 @@ use App\Core\Auth;
 
 class WellController extends BaseController
 {
+    private function getDefaultOwnerId(): int
+    {
+        // "Не указан" — системный собственник по умолчанию.
+        // В schema.sql он создаётся как code='default', name='Не указан'.
+        $row = $this->db->fetch(
+            "SELECT id
+             FROM owners
+             WHERE code = 'default'
+                OR lower(name) LIKE '%не указан%'
+                OR lower(short_name) IN ('н/у','ну')
+             ORDER BY (code = 'default') DESC, id
+             LIMIT 1"
+        );
+        $id = (int) ($row['id'] ?? 0);
+        if ($id <= 0) {
+            Response::error('Не найден собственник по умолчанию (Не указан). Создайте owners.code = default', 500);
+        }
+        return $id;
+    }
+
     /**
      * GET /api/wells
      * Список колодцев
@@ -266,10 +286,12 @@ class WellController extends BaseController
         $this->checkWriteAccess();
 
         $errors = $this->request->validate([
-            'owner_id' => 'required|integer',
             'type_id' => 'required|integer',
             'kind_id' => 'required|integer',
             'status_id' => 'required|integer',
+            // Собственник для "ввода в здание" задаётся принудительно как "Не указан".
+            // Поэтому owner_id для store может отсутствовать (если поле отключено в UI).
+            'owner_id' => 'integer',
         ]);
 
         if (!empty($errors)) {
@@ -281,6 +303,27 @@ class WellController extends BaseController
             'depth', 'material', 'installation_date', 'notes',
             'coords_needs_refine'
         ]);
+
+        // "Ввод в здание": собственник всегда "Не указан" (принудительно)
+        $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+        $isEntry = false;
+        try {
+            $kindCode = $this->getObjectKindCodeById((int) ($data['kind_id'] ?? 0));
+            $kc = strtolower(trim($kindCode));
+            $isEntry = ($kc !== '' && $kc === ($entryCode ?: 'input'));
+        } catch (\Throwable $e) {
+            $isEntry = false;
+        }
+        if ($isEntry) {
+            $data['owner_id'] = $this->getDefaultOwnerId();
+        } else {
+            $oidRaw = $data['owner_id'] ?? null;
+            $oid = (int) ($oidRaw ?? 0);
+            if ($oid <= 0) {
+                Response::error('Ошибка валидации', 422, ['owner_id' => ['Поле owner_id обязательно для заполнения']]);
+            }
+            $data['owner_id'] = $oid;
+        }
 
         // Формирование номера:
         // <Код номера>-<Код собственника>-<seq>(-суффикс)
@@ -555,9 +598,24 @@ class WellController extends BaseController
         $requestedSuffix = $this->request->input('number_suffix'); // может отсутствовать
         $newSuffix = ($requestedSuffix !== null) ? $this->sanitizeNumberSuffix((string) $requestedSuffix) : $oldSuffix;
 
-        $newOwnerId = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : (int) ($oldWell['owner_id'] ?? 0);
-        $newTypeId  = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldWell['type_id'] ?? 0);
         $newKindId  = array_key_exists('kind_id', $data) ? (int) $data['kind_id'] : (int) ($oldWell['kind_id'] ?? 0);
+        $newTypeId  = array_key_exists('type_id', $data) ? (int) $data['type_id'] : (int) ($oldWell['type_id'] ?? 0);
+
+        // "Ввод в здание": собственник всегда "Не указан" (принудительно)
+        $entryCode = strtolower(trim((string) $this->getAppSetting('well_entry_point_kind_code', 'input')));
+        $isEntry = false;
+        try {
+            $kindCode = $this->getObjectKindCodeById((int) $newKindId);
+            $kc = strtolower(trim($kindCode));
+            $isEntry = ($kc !== '' && $kc === ($entryCode ?: 'input'));
+        } catch (\Throwable $e) {
+            $isEntry = false;
+        }
+        if ($isEntry) {
+            $data['owner_id'] = $this->getDefaultOwnerId();
+        }
+
+        $newOwnerId = array_key_exists('owner_id', $data) ? (int) $data['owner_id'] : (int) ($oldWell['owner_id'] ?? 0);
 
         $needRenumber =
             ($newOwnerId !== (int) ($oldWell['owner_id'] ?? 0)) ||
