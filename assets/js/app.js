@@ -163,6 +163,20 @@ const App = {
                     btn.title = 'Недоступно для роли "Только чтение"';
                 });
             } catch (_) {}
+
+            // Фильтры: ТУ и Состояние недоступны для роли readonly
+            try {
+                const dis = (id, title) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    el.disabled = true;
+                    el.title = title || 'Недоступно для роли "Только чтение"';
+                    try { el.style.background = 'var(--bg-tertiary)'; } catch (_) {}
+                    try { el.value = ''; } catch (_) {}
+                };
+                dis('filter-group', 'Недоступно для роли "Только чтение"');
+                dis('filter-status', 'Недоступно для роли "Только чтение"');
+            } catch (_) {}
         }
 
         // Кнопка "Загрузить" доступна только для колодцев + права на запись
@@ -1680,6 +1694,9 @@ const App = {
             const groups = await API.groups.list({ limit: 500 });
             if (groups.success !== false) {
                 const select = document.getElementById('filter-group');
+                if (!select) return;
+                // сбросим, чтобы не дублировать при повторной загрузке
+                select.innerHTML = '<option value="">Все объекты</option>';
                 const groupsData = groups.data || groups;
                 groupsData.forEach(item => {
                     select.innerHTML += `<option value="${item.id}">${item.name}</option>`;
@@ -1690,6 +1707,8 @@ const App = {
             const owners = await API.references.all('owners');
             if (owners.success) {
                 const select = document.getElementById('filter-owner');
+                if (!select) return;
+                select.innerHTML = '<option value="">Все</option>';
                 owners.data.forEach(item => {
                     select.innerHTML += `<option value="${item.id}">${item.name}</option>`;
                 });
@@ -1699,6 +1718,8 @@ const App = {
             const statuses = await API.references.all('object_status');
             if (statuses.success) {
                 const select = document.getElementById('filter-status');
+                if (!select) return;
+                select.innerHTML = '<option value="">Все</option>';
                 statuses.data.forEach(item => {
                     select.innerHTML += `<option value="${item.id}">${item.name}</option>`;
                 });
@@ -1708,7 +1729,14 @@ const App = {
             const contracts = await API.references.all('contracts');
             if (contracts.success) {
                 const select = document.getElementById('filter-contract');
-                contracts.data.forEach(item => {
+                if (!select) return;
+                select.innerHTML = '<option value="">Все</option>';
+                const isReadonly = (this.user?.role?.code || '') === 'readonly';
+                const userOwnerId = parseInt(this.user?.owner_id || 0, 10) || 0;
+                const list = isReadonly && userOwnerId
+                    ? (contracts.data || []).filter(c => String(c.owner_id || '') === String(userOwnerId))
+                    : (contracts.data || []);
+                list.forEach(item => {
                     select.innerHTML += `<option value="${item.id}">${item.number} - ${item.name}</option>`;
                 });
             }
@@ -1721,10 +1749,16 @@ const App = {
      * Применение фильтров
      */
     applyFilters() {
-        const groupId = document.getElementById('filter-group').value;
+        let groupId = document.getElementById('filter-group').value;
         const ownerId = document.getElementById('filter-owner').value;
-        const statusId = document.getElementById('filter-status').value;
+        let statusId = document.getElementById('filter-status').value;
         const contractId = document.getElementById('filter-contract').value;
+
+        // Роль "Только чтение": фильтры ТУ и Состояние недоступны
+        if ((this.user?.role?.code || '') === 'readonly') {
+            groupId = '';
+            statusId = '';
+        }
         
         // Собираем все фильтры
         const filters = {};
@@ -2703,8 +2737,13 @@ const App = {
                     ownersResp.data.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
             }
             if (contractsResp?.success) {
+                const isReadonly = (this.user?.role?.code || '') === 'readonly';
+                const userOwnerId = parseInt(this.user?.owner_id || 0, 10) || 0;
+                const list = isReadonly && userOwnerId
+                    ? (contractsResp.data || []).filter(c => String(c.owner_id || '') === String(userOwnerId))
+                    : (contractsResp.data || []);
                 contractSelect.innerHTML = '<option value="">Контракт: все</option>' +
-                    contractsResp.data.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
+                    list.map(c => `<option value="${c.id}">${c.number} — ${c.name}</option>`).join('');
             }
         } catch (e) {
             // ignore
