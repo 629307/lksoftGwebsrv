@@ -403,6 +403,15 @@ const MapManager = {
         return !!kindCode && kindCode === target;
     },
 
+    isInbuildingDirection(props) {
+        const target = (typeof App !== 'undefined'
+            ? (App?.settings?.direction_inbuilding_status_code || 'inbuilding')
+            : 'inbuilding'
+        ).toString().trim().toLowerCase() || 'inbuilding';
+        const sc = (props?.status_code || '').toString().trim().toLowerCase();
+        return !!sc && sc === target;
+    },
+
     createWellMarker(latlng, props) {
         const base = props?.type_color || this.colors.wells;
         const legendColor = (props?.owner_color || '').toString().trim();
@@ -3067,8 +3076,8 @@ const MapManager = {
                             weight: this.getDirectionLineWeight(),
                             opacity: 0.8,
                         };
-                        // Статус "inbuilding": линия прерывистая (без изменения цветовой схемы)
-                        if ((props.status_code || '').toString().trim().toLowerCase() === 'inbuilding') {
+                        // Статус "по зданию": линия прерывистая (без изменения цветовой схемы)
+                        if (this.isInbuildingDirection(props)) {
                             style.dashArray = '6, 6';
                         }
                         return style;
@@ -5507,7 +5516,7 @@ const MapManager = {
                     const latlngs = L.GeoJSON.coordsToLatLngs(geom.coordinates, geom.type === 'MultiLineString' ? 1 : 0);
                     if (ot === 'channel_direction') {
                         const props = f?.properties || {};
-                        const isInbuilding = (props.status_code || '').toString().trim().toLowerCase() === 'inbuilding';
+                        const isInbuilding = this.isInbuildingDirection(props);
                         addLine(this.layers.channels, 'channel_direction', f, latlngs, {
                             color: this.colors.channels,
                             weight: this.getDirectionLineWeight(),

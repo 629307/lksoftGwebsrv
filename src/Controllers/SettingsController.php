@@ -58,6 +58,8 @@ class SettingsController extends BaseController
             'default_cable_catalog_id' => '',
             'well_entry_point_kind_code' => 'input',
             'well_pole_kind_code' => 'pole',
+            // Направления: код статуса "по зданию" (для спец-правил и отображения)
+            'direction_inbuilding_status_code' => 'inbuilding',
             // hotkeys
             'hotkey_add_direction' => 'a',
             'hotkey_add_well' => 's',
@@ -106,6 +108,7 @@ class SettingsController extends BaseController
                         'well_pole_number_start',
                         'well_entry_point_kind_code',
                         'well_pole_kind_code',
+                        'direction_inbuilding_status_code',
                     ], true)) {
                         continue;
                     }
@@ -157,6 +160,7 @@ class SettingsController extends BaseController
             'cable_in_well_length_m',
             'input_well_number_start',
             'well_pole_number_start',
+            'direction_inbuilding_status_code',
             'url_geoproj',
             'url_cadastre',
             'map_layers',
@@ -265,9 +269,20 @@ class SettingsController extends BaseController
 
             foreach ($toSave as $code => $value) {
                 // Глобальные настройки
-                if (in_array($code, ['well_entry_point_kind_code', 'well_pole_kind_code'], true)) {
-                    if (!$isAdmin) {
-                        Response::error('Доступ запрещён: изменить настройки типов колодцев может только администратор', 403);
+                if (in_array($code, ['well_entry_point_kind_code', 'well_pole_kind_code', 'direction_inbuilding_status_code'], true)) {
+                    if (!Auth::isAdmin() && !Auth::isRoot()) {
+                        Response::error('Доступ запрещён: изменить глобальные настройки может только администратор', 403);
+                    }
+                    if ($code === 'direction_inbuilding_status_code') {
+                        $v = strtolower(trim((string) $value));
+                        if ($v === '') {
+                            Response::error('Некорректное значение настройки: direction_inbuilding_status_code', 422);
+                        }
+                        $exists = $this->db->fetch("SELECT id FROM object_status WHERE code = :c LIMIT 1", ['c' => $v]);
+                        if (!$exists) {
+                            Response::error('Некорректное состояние: такого кода нет в справочнике "Состояния"', 422);
+                        }
+                        $value = $v;
                     }
                     $this->db->query(
                         "INSERT INTO app_settings(code, value, updated_at)

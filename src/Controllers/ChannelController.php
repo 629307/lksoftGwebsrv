@@ -10,6 +10,8 @@ use App\Core\Auth;
 
 class ChannelController extends BaseController
 {
+    private ?string $inbuildingDirectionStatusCodeCache = null;
+
     private function getStatusCodeById(?int $statusId): string
     {
         $id = (int) ($statusId ?? 0);
@@ -38,9 +40,21 @@ class ChannelController extends BaseController
         return $id;
     }
 
+    private function getInbuildingDirectionStatusCode(): string
+    {
+        if ($this->inbuildingDirectionStatusCodeCache !== null) {
+            return $this->inbuildingDirectionStatusCodeCache;
+        }
+        $raw = strtolower(trim((string) $this->getAppSetting('direction_inbuilding_status_code', 'inbuilding')));
+        $this->inbuildingDirectionStatusCodeCache = $raw !== '' ? $raw : 'inbuilding';
+        return $this->inbuildingDirectionStatusCodeCache;
+    }
+
     private function isInbuildingDirectionByStatusId(?int $statusId): bool
     {
-        return $this->getStatusCodeById($statusId) === 'inbuilding';
+        $target = $this->getInbuildingDirectionStatusCode();
+        if ($target === '') return false;
+        return $this->getStatusCodeById($statusId) === $target;
     }
 
     private function getDefaultChannelKindId(?int $userId = null): ?int
@@ -624,7 +638,7 @@ class ChannelController extends BaseController
             }
         }
 
-        // Спец-правило: статус "inbuilding" (в здании)
+        // Спец-правило: статус "по зданию" (задаётся настройкой direction_inbuilding_status_code)
         // - собственник всегда "Не указан" (default)
         // - количество каналов всегда 1
         if ($this->isInbuildingDirectionByStatusId(isset($data['status_id']) ? (int) $data['status_id'] : null)) {
@@ -728,7 +742,7 @@ class ChannelController extends BaseController
             : (int) ($oldDirection['status_id'] ?? 0);
         $isInbuilding = $this->isInbuildingDirectionByStatusId($newStatusId);
 
-        // Спец-правило: статус "inbuilding"
+        // Спец-правило: статус "по зданию"
         // - собственник всегда default
         // - каналов всегда 1 (лишние удаляем, если не используются кабелями)
         if ($isInbuilding) {
@@ -760,7 +774,8 @@ class ChannelController extends BaseController
                              LIMIT 50"
                         );
                         if (!empty($used)) {
-                            Response::error('Нельзя установить статус "В здании": дополнительные каналы используются кабелями', 400);
+                            $code = $this->getInbuildingDirectionStatusCode();
+                            Response::error('Нельзя установить статус "по зданию" (' . $code . '): дополнительные каналы используются кабелями', 400);
                         }
 
                         // удаляем лишние каналы (и их фото)
@@ -907,7 +922,8 @@ class ChannelController extends BaseController
         }
 
         if ($this->isInbuildingDirectionByStatusId((int) ($direction['status_id'] ?? 0))) {
-            Response::error('Для направления со статусом "В здании" количество каналов всегда 1. Добавление каналов запрещено.', 400);
+            $code = $this->getInbuildingDirectionStatusCode();
+            Response::error('Для направления со статусом "по зданию" (' . $code . ') количество каналов всегда 1. Добавление каналов запрещено.', 400);
         }
 
         // Проверяем количество каналов
@@ -973,7 +989,8 @@ class ChannelController extends BaseController
         }
 
         if ($this->isInbuildingDirectionByStatusId((int) ($direction['status_id'] ?? 0))) {
-            Response::error('Для направления со статусом "В здании" количество каналов всегда 1. Добавление каналов запрещено.', 400);
+            $code = $this->getInbuildingDirectionStatusCode();
+            Response::error('Для направления со статусом "по зданию" (' . $code . ') количество каналов всегда 1. Добавление каналов запрещено.', 400);
         }
 
         $target = (int) ($this->request->input('target_count') ?? 0);
@@ -1158,7 +1175,7 @@ class ChannelController extends BaseController
             }
 
             $dirBase = [
-                // Статус "inbuilding": собственник всегда default
+                // Статус "по зданию": собственник всегда default
                 'owner_id' => $isInbuilding ? $this->getDefaultOwnerId() : ($direction['owner_id'] ?? null),
                 'type_id' => $direction['type_id'] ?? null,
                 'status_id' => $direction['status_id'] ?? null,
@@ -1213,7 +1230,7 @@ class ChannelController extends BaseController
                  ORDER BY channel_number",
                 ['id' => $directionId]
             );
-            // Статус "inbuilding": каналов всегда 1
+            // Статус "по зданию": каналов всегда 1
             if ($isInbuilding) {
                 $channels = array_values(array_filter($channels, fn($ch) => (int) ($ch['channel_number'] ?? 0) === 1));
                 if (!$channels) {
@@ -1629,11 +1646,12 @@ class ChannelController extends BaseController
         $directionId = (int) ($channel['direction_id'] ?? 0);
         $channelNumber = (int) ($channel['channel_number'] ?? 0);
 
-        // Статус "inbuilding": канал должен оставаться ровно один — удаление запрещаем
+        // Статус "по зданию": канал должен оставаться ровно один — удаление запрещаем
         if ($directionId > 0) {
             $dir = $this->db->fetch("SELECT status_id FROM channel_directions WHERE id = :id", ['id' => $directionId]);
             if ($dir && $this->isInbuildingDirectionByStatusId((int) ($dir['status_id'] ?? 0))) {
-                Response::error('Нельзя удалить канал: для направления со статусом "В здании" количество каналов всегда 1', 400);
+                $code = $this->getInbuildingDirectionStatusCode();
+                Response::error('Нельзя удалить канал: для направления со статусом "по зданию" (' . $code . ') количество каналов всегда 1', 400);
             }
         }
 

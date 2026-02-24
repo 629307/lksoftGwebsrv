@@ -5786,6 +5786,7 @@ const App = {
         const wmtsTc = document.getElementById('settings-wmts-tilecol');
         const entryKind = document.getElementById('settings-well-entry-kind-code');
         const poleKind = document.getElementById('settings-well-pole-kind-code');
+        const inbuildingStatus = document.getElementById('settings-direction-inbuilding-status-code');
         const hkDir = document.getElementById('settings-hotkey-add-direction');
         const hkWell = document.getElementById('settings-hotkey-add-well');
         const hkMarker = document.getElementById('settings-hotkey-add-marker');
@@ -5837,6 +5838,7 @@ const App = {
         if (hkDuct) hkDuct.value = (this.settings.hotkey_add_duct_cable ?? '');
         if (hkGround) hkGround.value = (this.settings.hotkey_add_ground_cable ?? '');
         if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
+        if (inbuildingStatus) inbuildingStatus.value = (this.settings.direction_inbuilding_status_code ?? 'inbuilding');
 
         // Заполняем список "Код — точка ввода" (object_kinds.code) только для вида объекта "Колодец"
         // Доступно только для admin/root (секция "Настройка данных ГИС")
@@ -5867,6 +5869,32 @@ const App = {
                 }
             } catch (_) {
                 // ignore
+            }
+        }
+
+        // Заполняем список статусов для "Направление по зданию" (object_status.code)
+        if (inbuildingStatus) {
+            if (isAdminLike) {
+                try {
+                    const resp = await API.references.all('object_status');
+                    const rows = resp?.data || resp || [];
+                    const list = Array.isArray(rows) ? rows : [];
+                    list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'));
+                    inbuildingStatus.innerHTML = '<option value="">Не задано</option>' +
+                        list.map(s => {
+                            const code = (s.code || '').toString();
+                            const name = (s.name || '').toString();
+                            return `<option value="${this.escapeHtml(code)}">${this.escapeHtml(name)}${code ? ` (${this.escapeHtml(code)})` : ''}</option>`;
+                        }).join('');
+                    inbuildingStatus.value = (this.settings.direction_inbuilding_status_code ?? 'inbuilding');
+                    inbuildingStatus.disabled = !(this.isAdmin() || this.isRoot());
+                    if (inbuildingStatus.disabled) inbuildingStatus.style.background = 'var(--bg-tertiary)';
+                } catch (_) {
+                    // ignore
+                }
+            } else {
+                inbuildingStatus.disabled = true;
+                try { inbuildingStatus.style.background = 'var(--bg-tertiary)'; } catch (_) {}
             }
         }
 
@@ -6107,6 +6135,7 @@ const App = {
         const wmtsTc = document.getElementById('settings-wmts-tilecol')?.value;
         const entryKind = document.getElementById('settings-well-entry-kind-code')?.value;
         const poleKind = document.getElementById('settings-well-pole-kind-code')?.value;
+        const inbuildingStatus = document.getElementById('settings-direction-inbuilding-status-code')?.value;
         const hkDir = document.getElementById('settings-hotkey-add-direction')?.value;
         const hkWell = document.getElementById('settings-hotkey-add-well')?.value;
         const hkMarker = document.getElementById('settings-hotkey-add-marker')?.value;
@@ -6152,8 +6181,11 @@ const App = {
             wmts_tilematrix: wmtsTm,
             wmts_tilerow: wmtsTr,
             wmts_tilecol: wmtsTc,
-            well_entry_point_kind_code: (entryKind ?? '').toString(),
-            well_pole_kind_code: (poleKind ?? '').toString(),
+            ...(this.isAdmin() || this.isRoot() ? {
+                well_entry_point_kind_code: (entryKind ?? '').toString(),
+                well_pole_kind_code: (poleKind ?? '').toString(),
+                direction_inbuilding_status_code: (inbuildingStatus ?? '').toString().trim(),
+            } : {}),
         };
         try {
             payload.hotkey_add_direction = validateHotkey('Добавить направление', hkDir);
