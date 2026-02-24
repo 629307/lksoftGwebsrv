@@ -852,9 +852,82 @@ class AssumedCableController extends BaseController
             }
             if (!$capAdj) return [];
 
+            // Компоненты связности по capacity>0 и "точка присоединения" к полной топологии.
+            // Если у компоненты ровно одна точка присоединения, то в METHOD 1
+            // мы даём приоритет магистрали "от точки присоединения вглубь" (root->leaf),
+            // даже если есть более длинные leaf->leaf маршруты внутри ветки.
+            $nodeToComp = [];
+            $compHasSingleAttach = []; // compId => bool
+            $compRoot = []; // compId => wellId (0 если нет/неоднозначно)
+            $visited = [];
+            $compId = 0;
+            foreach (array_keys($capAdj) as $start) {
+                $start = (int) $start;
+                if ($start <= 0 || isset($visited[$start])) continue;
+                $compId++;
+                $stack = [$start];
+                $visited[$start] = true;
+                $nodes = [];
+                $nodeSet = [];
+                while ($stack) {
+                    $u = (int) array_pop($stack);
+                    $nodes[] = $u;
+                    $nodeSet[$u] = true;
+                    foreach (($capAdj[$u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        if ($v <= 0 || isset($visited[$v])) continue;
+                        $visited[$v] = true;
+                        $stack[] = $v;
+                    }
+                }
+                foreach ($nodes as $u) $nodeToComp[(int) $u] = $compId;
+
+                $attach = [];
+                foreach ($nodes as $u) {
+                    foreach (($fullAdj[(int) $u] ?? []) as $e) {
+                        $v = (int) ($e['to'] ?? 0);
+                        if ($v <= 0) continue;
+                        if (!isset($nodeSet[$v])) {
+                            $attach[(int) $u] = true;
+                            break;
+                        }
+                    }
+                }
+                if (count($attach) === 1) {
+                    $rootWell = (int) array_key_first($attach);
+                    $compHasSingleAttach[$compId] = true;
+                    $compRoot[$compId] = $rootWell;
+                } else {
+                    $compHasSingleAttach[$compId] = false;
+                    $compRoot[$compId] = 0;
+                }
+            }
+
             $paths = $enumerateAllSimplePaths($capAdj);
-            // сортировка по убыванию длины: сначала по числу рёбер, затем по метрам
+            foreach ($paths as &$p) {
+                $sw = (int) ($p['start_well_id'] ?? 0);
+                $ew = (int) ($p['end_well_id'] ?? 0);
+                $cid = (int) ($nodeToComp[$sw] ?? 0);
+                $p['_cid'] = $cid;
+                $root = (int) ($compRoot[$cid] ?? 0);
+                $isSingle = (bool) ($compHasSingleAttach[$cid] ?? false);
+                $p['_root'] = $root;
+                $p['_root_end'] = ($isSingle && $root > 0 && ($sw === $root || $ew === $root)) ? 1 : 0;
+            }
+            unset($p);
+
+            // сортировка:
+            // - ВНУТРИ компоненты с единой точкой присоединения: сначала root->* или *->root,
+            //   затем по числу рёбер и длине.
+            // - Между разными компонентами: по числу рёбер и длине (как раньше).
             usort($paths, function($x, $y) {
+                $cx = (int) ($x['_cid'] ?? 0);
+                $cy = (int) ($y['_cid'] ?? 0);
+                if ($cx > 0 && $cx === $cy) {
+                    $rx = (int) ($x['_root_end'] ?? 0);
+                    $ry = (int) ($y['_root_end'] ?? 0);
+                    if ($rx !== $ry) return $ry <=> $rx;
+                }
                 $ex = (int) ($x['edges_count'] ?? 0);
                 $ey = (int) ($y['edges_count'] ?? 0);
                 if ($ex !== $ey) return $ey <=> $ex;
