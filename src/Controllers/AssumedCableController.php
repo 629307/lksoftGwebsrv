@@ -647,8 +647,84 @@ class AssumedCableController extends BaseController
             return $did;
         };
 
+        // БАЗОВОЕ ПРАВИЛО:
+        // Кабель = непрерывная последовательность рёбер, у которых capacity>0 (на момент построения).
+        // При этом путь по топологии может проходить через рёбра с capacity=0 — они разрывают кабель на сегменты.
+        //
+        // Важно: сегментацию делаем ДО списания capacity, иначе ребро с capacity=1 станет 0 и "исчезнет" из кабеля.
+        $segmentCapacityRunsInPath = function(array $route, array $rem) use ($dirs): array {
+            $dirIds = array_values(array_map('intval', (array) ($route['direction_ids'] ?? [])));
+            $startWell = (int) ($route['start_well_id'] ?? 0);
+            if (!$dirIds || $startWell <= 0) return [];
+
+            $segments = [];
+            $cur = $startWell;
+            $open = false;
+            $segStart = 0;
+            $segDirs = [];
+
+            foreach ($dirIds as $dirId) {
+                $dirId = (int) $dirId;
+                $d = $dirs[$dirId] ?? null;
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                $next = 0;
+                if ($cur === $a) $next = $b;
+                else if ($cur === $b) $next = $a;
+                else $next = $b; // fallback
+
+                $cap = (int) ($rem[$dirId] ?? 0);
+                if ($cap > 0) {
+                    if (!$open) {
+                        $open = true;
+                        $segStart = $cur;
+                        $segDirs = [];
+                    }
+                    $segDirs[] = $dirId;
+                } else {
+                    if ($open && $segDirs) {
+                        $segments[] = [
+                            'start_well_id' => $segStart,
+                            'end_well_id' => $cur,
+                            'direction_ids' => $segDirs,
+                            'weight' => 0.0,
+                        ];
+                    }
+                    $open = false;
+                    $segStart = 0;
+                    $segDirs = [];
+                }
+
+                if ($next > 0) $cur = $next;
+            }
+
+            if ($open && $segDirs) {
+                $segments[] = [
+                    'start_well_id' => $segStart,
+                    'end_well_id' => $cur,
+                    'direction_ids' => $segDirs,
+                    'weight' => 0.0,
+                ];
+            }
+
+            return $segments;
+        };
+
+        $consumeCapacitySegment = function(array &$rem, array $segment): bool {
+            $dirIds = array_values(array_map('intval', (array) ($segment['direction_ids'] ?? [])));
+            if (!$dirIds) return false;
+            // must have capacity on ALL edges in segment
+            foreach ($dirIds as $dirId) {
+                if ((int) ($rem[(int) $dirId] ?? 0) <= 0) return false;
+            }
+            foreach ($dirIds as $dirId) {
+                $rem[(int) $dirId] = (int) $rem[(int) $dirId] - 1;
+            }
+            return true;
+        };
+
         // METHOD 1: Global Longest Paths with Capacity Consumption (Greedy)
-        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute): array {
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
@@ -673,11 +749,19 @@ class AssumedCableController extends BaseController
                 $k2 = implode(',', array_reverse($dirIds));
                 $key = strcmp($k1, $k2) <= 0 ? $k1 : $k2;
                 $s = $scoreRoute($cand, $rem);
+                $cand['_edges'] = count($dirIds);
                 $cand['_len'] = (float) ($s['len'] ?? 0);
                 $uniq[$key] = $cand;
             }
             $cands = array_values($uniq);
-            usort($cands, fn($a, $b) => ((float) ($b['_len'] ?? 0) <=> (float) ($a['_len'] ?? 0)));
+            usort($cands, function($a, $b) {
+                $ea = (int) ($a['_edges'] ?? 0);
+                $eb = (int) ($b['_edges'] ?? 0);
+                if ($ea !== $eb) return $eb <=> $ea;
+                $la = (float) ($a['_len'] ?? 0);
+                $lb = (float) ($b['_len'] ?? 0);
+                return $lb <=> $la;
+            });
 
             // 2) жадно потребляем capacity по пути, пока есть ресурс
             while ($anyCapacityLeft($rem) && count($routes) < $maxRoutes) {
@@ -685,11 +769,13 @@ class AssumedCableController extends BaseController
                 foreach ($cands as $cand) {
                     if (count($routes) >= $maxRoutes) break;
                     if (!$routeConsumesAny($cand, $rem)) continue;
-                    if ($consumeRoute($rem, $cand)) {
+                    // разбиваем на сегменты подряд идущих capacity>0
+                    $segments = $segmentCapacityRunsInPath($cand, $rem);
+                    foreach ($segments as $seg) {
+                        if (count($routes) >= $maxRoutes) break;
+                        if (!$consumeCapacitySegment($rem, $seg)) continue;
                         $progress = true;
-                        $r = $cand;
-                        unset($r['_len']);
-                        $routes[] = $r;
+                        $routes[] = $seg;
                     }
                 }
                 if (!$progress) break;
@@ -717,7 +803,7 @@ class AssumedCableController extends BaseController
         };
 
         // METHOD 2: Capacity-Aware Iterative Longest Path Extraction
-        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute): array {
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
@@ -726,7 +812,7 @@ class AssumedCableController extends BaseController
                 $comps = $buildFullComponents($fullAdj, $rem, $supply0);
                 if (!$comps) break;
 
-                $best = null;
+                $bestSeg = null;
                 $bestScore = -1e100;
                 foreach ($comps as $c) {
                     $dirAll = $c['dir_ids_all'] ?? [];
@@ -734,18 +820,22 @@ class AssumedCableController extends BaseController
                     foreach ([ [false,false], [false,true], [true,false] ] as $opt) {
                         $p = $mstDiameterPath($dirAll, $rem, (bool) $opt[0], (bool) $opt[1]);
                         if (!$p) continue;
-                        $s = $scoreRoute($p, $rem);
-                        if (!($s['ok'] ?? false)) continue;
-                        if ((float) ($s['score'] ?? -1e100) > $bestScore) {
-                            $bestScore = (float) $s['score'];
-                            $best = $p;
+                        // берём лучший СЕГМЕНТ (подряд capacity>0) внутри пути
+                        $segs = $segmentCapacityRunsInPath($p, $rem);
+                        foreach ($segs as $seg) {
+                            $s = $scoreRoute($seg, $rem);
+                            if (!($s['ok'] ?? false)) continue;
+                            if ((float) ($s['score'] ?? -1e100) > $bestScore) {
+                                $bestScore = (float) $s['score'];
+                                $bestSeg = $seg;
+                            }
                         }
                     }
                 }
-                if (!$best) break;
+                if (!$bestSeg) break;
 
-                if (!$consumeRoute($rem, $best)) break;
-                $routes[] = $best;
+                if (!$consumeCapacitySegment($rem, $bestSeg)) break;
+                $routes[] = $bestSeg;
             }
 
             return $routes;
@@ -753,7 +843,7 @@ class AssumedCableController extends BaseController
 
         // METHOD 3: Max-flow style decomposition into long continuous paths (full graph transit)
         // Ресурс: capacity на рёбрах (rem>0). Топология: ВСЕ направления (в т.ч. rem=0).
-        $buildRoutesMethod3 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $anyCapacityLeft, $consumeRoute, $routeConsumesAny): array {
+        $buildRoutesMethod3 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $anyCapacityLeft, $consumeRoute, $routeConsumesAny, $consumeCapacitySegment): array {
             $rem = $baseRem;
             $routes = [];
             $maxRoutes = 20000;
@@ -851,6 +941,7 @@ class AssumedCableController extends BaseController
 
                 $cur = $start;
                 $pathDirs = [];
+                $pathCapFlags = []; // true если на ребре была capacity>0 и мы её списали
                 $safety = 0;
                 while ($anyCapacityLeft($rem) && $safety++ < 5000) {
                     // try consume longest incident capacity edge
@@ -871,8 +962,13 @@ class AssumedCableController extends BaseController
                         $a = (int) ($d['a'] ?? 0);
                         $b = (int) ($d['b'] ?? 0);
                         $pathDirs[] = $bestDir;
-                        // consume on this edge
-                        if ((int) ($rem[$bestDir] ?? 0) > 0) $rem[$bestDir] = (int) $rem[$bestDir] - 1;
+                        // consume on this edge (capacity>0 гарантировано)
+                        if ((int) ($rem[$bestDir] ?? 0) > 0) {
+                            $rem[$bestDir] = (int) $rem[$bestDir] - 1;
+                            $pathCapFlags[] = true;
+                        } else {
+                            $pathCapFlags[] = false;
+                        }
                         $cur = ($cur === $a) ? $b : $a;
                         continue;
                     }
@@ -888,23 +984,69 @@ class AssumedCableController extends BaseController
                         $dirId = (int) $dirId;
                         if ($dirId <= 0) continue;
                         $pathDirs[] = $dirId;
-                        if ((int) ($rem[$dirId] ?? 0) > 0) $rem[$dirId] = (int) $rem[$dirId] - 1;
+                        if ((int) ($rem[$dirId] ?? 0) > 0) {
+                            $rem[$dirId] = (int) $rem[$dirId] - 1;
+                            $pathCapFlags[] = true;
+                        } else {
+                            $pathCapFlags[] = false;
+                        }
                     }
                     $cur = (int) $reach;
                 }
 
                 if (!$pathDirs) break;
-                $route = [
-                    'start_well_id' => $start,
-                    'end_well_id' => $cur,
-                    'direction_ids' => $pathDirs,
-                    'weight' => 0.0,
-                ];
-                if (!$routeConsumesAny($route, $baseRem)) {
-                    // should not happen, but safety
-                    break;
+
+                // Разбиваем по подряд идущим "capacity>0" рёбрам (capFlags=true)
+                // и сохраняем КАБЕЛИ только как такие сегменты.
+                $curWell = $start;
+                $open = false;
+                $segStart = 0;
+                $segDirs = [];
+                $n = count($pathDirs);
+                for ($i = 0; $i < $n; $i++) {
+                    $dirId = (int) ($pathDirs[$i] ?? 0);
+                    $isCap = !!($pathCapFlags[$i] ?? false);
+                    $d = $dirs[$dirId] ?? null;
+                    $a = (int) ($d['a'] ?? 0);
+                    $b = (int) ($d['b'] ?? 0);
+                    $next = 0;
+                    if ($curWell === $a) $next = $b;
+                    else if ($curWell === $b) $next = $a;
+                    else $next = $b;
+
+                    if ($isCap) {
+                        if (!$open) {
+                            $open = true;
+                            $segStart = $curWell;
+                            $segDirs = [];
+                        }
+                        $segDirs[] = $dirId;
+                    } else {
+                        if ($open && $segDirs) {
+                            $routes[] = [
+                                'start_well_id' => $segStart,
+                                'end_well_id' => $curWell,
+                                'direction_ids' => $segDirs,
+                                'weight' => 0.0,
+                            ];
+                            if (count($routes) >= $maxRoutes) break;
+                        }
+                        $open = false;
+                        $segStart = 0;
+                        $segDirs = [];
+                    }
+
+                    if ($next > 0) $curWell = $next;
                 }
-                $routes[] = $route;
+                if (count($routes) >= $maxRoutes) break;
+                if ($open && $segDirs) {
+                    $routes[] = [
+                        'start_well_id' => $segStart,
+                        'end_well_id' => $curWell,
+                        'direction_ids' => $segDirs,
+                        'weight' => 0.0,
+                    ];
+                }
             }
 
             return $routes;
