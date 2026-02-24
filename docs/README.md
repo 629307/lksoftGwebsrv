@@ -78,7 +78,7 @@ git clone <repository_url> lksoftGwebsrv
 
 ```sql
 CREATE DATABASE lksoftgwebsrv;
-CREATE USER lksoftgwebsrv WITH PASSWORD 'lksoftGwebsrv';
+CREATE USER lksoftgwebsrv WITH PASSWORD '<pswd>';
 GRANT ALL PRIVILEGES ON DATABASE lksoftgwebsrv TO lksoftgwebsrv;
 ```
 
@@ -92,7 +92,7 @@ CREATE EXTENSION postgis;
 Выполните скрипт создания схемы:
 
 ```bash
-psql -h 10.16.10.150 -U lksoftgwebsrv -d lksoftgwebsrv -f database/schema.sql
+psql -h <ip> -U lksoftgwebsrv -d lksoftgwebsrv -f database/schema.sql
 ```
 
 ### 3. Настройка конфигурации
