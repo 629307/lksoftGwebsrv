@@ -163,19 +163,14 @@
                                 </button>
                             </span>
                         </label>
-                        <label class="layer-item">
+                        <label class="layer-item layer-item-with-controls">
                             <input type="checkbox" id="layer-inventory">
                             <span class="layer-icon" style="background: #6b7280;"></span>
                             <span class="layer-title">Инвентаризация</span>
-                            <button type="button" class="layer-inline-btn" id="btn-inventory-unacc-labels" title="Подсказки: неучтенные кабели (вкл/выкл)">
-                                <i class="fas fa-tag"></i>
-                            </button>
-                        </label>
-                        <label class="layer-item layer-item-with-controls">
-                            <input type="checkbox" id="layer-assumed-cables">
-                            <span class="layer-icon" style="background: #a855f7;"></span>
-                            <span class="layer-title layer-title-wrap">Предполагаемые кабели</span>
-                            <span class="layer-inline-controls" id="assumed-cables-controls">
+                            <span class="layer-inline-controls" id="inventory-inline-controls">
+                                <button type="button" class="layer-inline-btn layer-inline-btn-wide" id="btn-toggle-assumed-cables" title="Предполагаемые кабели (режим)">
+                                    Предполагаемые кабели
+                                </button>
                                 <select id="assumed-cables-variant" class="layer-inline-select" title="Вариант расчёта (1/2/3)">
                                     <option value="1">1</option>
                                     <option value="2">2</option>
@@ -183,6 +178,9 @@
                                 </select>
                                 <button type="button" class="layer-inline-btn" id="btn-assumed-cables-rebuild" title="Пересчитать предполагаемые кабели">
                                     <i class="fas fa-sync"></i>
+                                </button>
+                                <button type="button" class="layer-inline-btn" id="btn-inventory-unacc-labels" title="Подсказки: неучтенные кабели (вкл/выкл)">
+                                    <i class="fas fa-tag"></i>
                                 </button>
                             </span>
                         </label>

@@ -2380,7 +2380,7 @@ const MapManager = {
                                 </tr>
                             `;
                         }).join('') : `
-                            <tr><td colspan="5" style="color: var(--text-secondary);">Нет данных. Нажмите “Пересчитать” в слое “Предполагаемые кабели”.</td></tr>
+                            <tr><td colspan="5" style="color: var(--text-secondary);">Нет данных. Включите режим “Предполагаемые кабели” в слое “Инвентаризация” и нажмите “Пересчитать”.</td></tr>
                         `}
                     </tbody>
                 </table>
@@ -2391,10 +2391,8 @@ const MapManager = {
         try {
             el.querySelector('#btn-ac-close')?.addEventListener('click', () => {
                 try {
-                    const cb = document.getElementById('layer-assumed-cables');
-                    if (cb) {
-                        cb.checked = false;
-                        cb.dispatchEvent(new Event('change'));
+                    if (typeof App !== 'undefined' && App?.setAssumedCablesModeEnabled) {
+                        App.setAssumedCablesModeEnabled(false, { ensureInventoryOn: false });
                     } else {
                         this.setAssumedCablesPanelVisible(false);
                     }

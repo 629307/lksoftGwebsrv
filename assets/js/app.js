@@ -19,6 +19,7 @@ const App = {
     _mapDefaultsCache: null,
     _layerPrefsSaveTimer: null,
     _suppressLayerPrefSave: false,
+    assumedCablesModeEnabled: false, // режим "Предполагаемые кабели" внутри слоя "Инвентаризация"
 
     // ТУ режим (на карте): создаваемые объекты -> planned + автопривязка к выбранному ТУ
     tuModeEnabled: false,
@@ -162,7 +163,7 @@ const App = {
         // Подтягиваем цвета типов объектов (слои + отрисовка на карте)
         this.refreshObjectTypeColors().catch(() => {});
 
-        // Предполагаемые кабели: вариант (localStorage) + доступность кнопки пересчёта
+        // Предполагаемые кабели: вариант (localStorage) + режим (внутри слоя "Инвентаризация")
         try {
             const rawV = localStorage.getItem('igs_assumed_cables_variant');
             const v = parseInt(rawV || '1', 10);
@@ -171,14 +172,16 @@ const App = {
             const sel = document.getElementById('assumed-cables-variant');
             if (sel) sel.value = String(vv);
         } catch (_) {}
-        // при старте: синхронизируем disabled/active состояние inline-кнопок слоёв
+        // по умолчанию: режим "Предполагаемые кабели" выключен
+        try { this.assumedCablesModeEnabled = false; } catch (_) {}
         try {
-            const cb = document.getElementById('layer-assumed-cables');
-            const checked = !!cb?.checked;
+            const btnMode = document.getElementById('btn-toggle-assumed-cables');
+            if (btnMode) btnMode.classList.toggle('active', false);
             const sel = document.getElementById('assumed-cables-variant');
             const btn = document.getElementById('btn-assumed-cables-rebuild');
-            if (sel) sel.disabled = !checked;
-            if (btn) btn.disabled = !checked || !this.canWrite();
+            if (sel) sel.disabled = true;
+            if (btn) btn.disabled = true;
+            try { MapManager.setAssumedCablesPanelVisible?.(false); } catch (_) {}
         } catch (_) {}
         // при старте: если слой колодцев включен/выключен — disabled кнопок подсказок
         try {
@@ -339,7 +342,6 @@ const App = {
             wells: 'layer-wells',
             channels: 'layer-channels',
             inventory: 'layer-inventory',
-            assumedCables: 'layer-assumed-cables',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -361,7 +363,6 @@ const App = {
             wells: 'layer-wells',
             channels: 'layer-channels',
             inventory: 'layer-inventory',
-            assumedCables: 'layer-assumed-cables',
             markers: 'layer-markers',
             groundCables: 'layer-ground-cables',
             aerialCables: 'layer-aerial-cables',
@@ -482,6 +483,16 @@ const App = {
             } catch (_) {}
         });
 
+        // Переключатель "Предполагаемые кабели" (режим внутри слоя "Инвентаризация")
+        document.getElementById('btn-toggle-assumed-cables')?.addEventListener('click', (e) => {
+            try {
+                e.preventDefault();
+                e.stopPropagation();
+            } catch (_) {}
+            const next = !this.assumedCablesModeEnabled;
+            this.setAssumedCablesModeEnabled(next, { ensureInventoryOn: true });
+        });
+
         // Предполагаемые кабели: выбор варианта (1/2/3) + пересчёт
         const assumedVariant = document.getElementById('assumed-cables-variant');
         if (assumedVariant) {
@@ -495,9 +506,11 @@ const App = {
                 MapManager.assumedCablesVariantNo = vv;
                 try { localStorage.setItem('igs_assumed_cables_variant', String(vv)); } catch (_) {}
                 try {
-                    const cb = document.getElementById('layer-assumed-cables');
-                    if (cb?.checked) MapManager.loadAssumedCablesLayer?.();
-                    if (cb?.checked) MapManager.refreshAssumedCablesPanel?.();
+                    const invOn = !!document.getElementById('layer-inventory')?.checked;
+                    if (invOn && this.assumedCablesModeEnabled) {
+                        MapManager.loadAssumedCablesLayer?.();
+                        MapManager.refreshAssumedCablesPanel?.();
+                    }
                 } catch (_) {}
             });
         }
@@ -1264,7 +1277,6 @@ const App = {
             'layer-wells': 'wells',
             'layer-channels': 'channels',
             'layer-inventory': 'inventory',
-            'layer-assumed-cables': 'assumedCables',
             'layer-markers': 'markers',
             'layer-ground-cables': 'groundCables',
             'layer-aerial-cables': 'aerialCables',
@@ -1273,21 +1285,6 @@ const App = {
         
         const layerName = layerMap[input.id];
         if (!layerName) return;
-
-        // Предполагаемые кабели: при включении показываем правую панель, при выключении скрываем
-        if (input.id === 'layer-assumed-cables') {
-            try {
-                MapManager.setAssumedCablesPanelVisible?.(!!input.checked);
-                if (input.checked) MapManager.refreshAssumedCablesPanel?.();
-            } catch (_) {}
-            // селект + кнопка в строке слоя: всегда видимы, но disabled если слой off
-            try {
-                const sel = document.getElementById('assumed-cables-variant');
-                const btn = document.getElementById('btn-assumed-cables-rebuild');
-                if (sel) sel.disabled = !input.checked;
-                if (btn) btn.disabled = !input.checked || !this.canWrite();
-            } catch (_) {}
-        }
 
         // Колодцы: кнопки подсказок (номера/координаты) всегда видимы, но disabled если слой off
         if (input.id === 'layer-wells') {
@@ -1317,37 +1314,24 @@ const App = {
         }
 
         // Инвентаризация: при включении автоматически выключаем все слои,
-        // оставляем "Колодцы" и "Инвентаризация". Слой инвентаризации ниже колодцев.
+        // оставляем "Колодцы" и "Инвентаризация" (или режим "Предполагаемые кабели" внутри инвентаризации).
         if (input.id === 'layer-inventory' && input.checked) {
-            // показать кнопку подсказок (по умолчанию включена)
-            try {
-                const btn = document.getElementById('btn-inventory-unacc-labels');
-                if (btn) {
-                    btn.disabled = false;
-                    btn.classList.toggle('active', !!MapManager.inventoryUnaccountedLabelsEnabled);
-                }
-            } catch (_) {}
             const set = (id, name, checked) => {
                 const cb = document.getElementById(id);
                 if (cb) cb.checked = checked;
                 MapManager.toggleLayer(name, checked);
             };
             set('layer-wells', 'wells', true);
-            set('layer-inventory', 'inventory', true);
             set('layer-channels', 'channels', false);
-            set('layer-assumed-cables', 'assumedCables', false);
             set('layer-markers', 'markers', false);
             set('layer-ground-cables', 'groundCables', false);
             set('layer-aerial-cables', 'aerialCables', false);
             set('layer-duct-cables', 'ductCables', false);
-            // синхронизируем UI контролов "предполагаемые кабели"
-            try {
-                MapManager.setAssumedCablesPanelVisible?.(false);
-                const sel = document.getElementById('assumed-cables-variant');
-                const btn = document.getElementById('btn-assumed-cables-rebuild');
-                if (sel) sel.disabled = true;
-                if (btn) btn.disabled = true;
-            } catch (_) {}
+
+            // режим внутри инвентаризации: показываем либо inventory, либо assumedCables
+            this.applyInventoryAssumedModeLayers_();
+            this.syncInventoryAssumedControls_();
+
             // синхронизируем кнопку длины направлений
             try {
                 const btn = document.getElementById('btn-toggle-direction-length-labels');
@@ -1360,13 +1344,6 @@ const App = {
             return;
         }
 
-        // если выключили слой предполагаемых кабелей — сбрасываем выделение и закрываем панель
-        if (input.id === 'layer-assumed-cables' && !input.checked) {
-            try { MapManager.clearSelectedObject?.(); } catch (_) {}
-            try { MapManager.clearHighlight?.(); } catch (_) {}
-            try { MapManager.setAssumedCablesPanelVisible?.(false); } catch (_) {}
-        }
-
         // если выключили слой инвентаризации — прячем кнопку подсказок
         if (input.id === 'layer-inventory' && !input.checked) {
             try {
@@ -1376,10 +1353,94 @@ const App = {
                     btn.classList.toggle('active', false);
                 }
             } catch (_) {}
+            // также выключаем режим предполагаемых кабелей и прячем панель
+            try {
+                this.assumedCablesModeEnabled = false;
+                this.applyInventoryAssumedModeLayers_();
+                this.syncInventoryAssumedControls_();
+            } catch (_) {}
         }
 
         MapManager.toggleLayer(layerName, input.checked);
         this.saveLayerPreferencesDebounced();
+    },
+
+    setAssumedCablesModeEnabled(enabled, opts = {}) {
+        const ensureInventoryOn = (opts?.ensureInventoryOn !== false);
+        this.assumedCablesModeEnabled = !!enabled;
+
+        // если включаем режим — убедимся, что включена "Инвентаризация" (это master-переключатель)
+        if (this.assumedCablesModeEnabled && ensureInventoryOn) {
+            try {
+                const invCb = document.getElementById('layer-inventory');
+                if (invCb && !invCb.checked) {
+                    invCb.checked = true;
+                    this.handleLayerToggle(invCb);
+                }
+            } catch (_) {}
+        }
+
+        // переключаем отображение слоёв в соответствии с режимом
+        this.applyInventoryAssumedModeLayers_();
+        // синхронизируем доступность кнопок/панели
+        this.syncInventoryAssumedControls_();
+    },
+
+    applyInventoryAssumedModeLayers_() {
+        const invOn = !!document.getElementById('layer-inventory')?.checked;
+        const assumedOn = invOn && !!this.assumedCablesModeEnabled;
+        try {
+            MapManager.toggleLayer('inventory', invOn && !assumedOn);
+        } catch (_) {}
+        try {
+            MapManager.toggleLayer('assumedCables', invOn && assumedOn);
+        } catch (_) {}
+        try {
+            MapManager.setAssumedCablesPanelVisible?.(invOn && assumedOn);
+            if (invOn && assumedOn) MapManager.refreshAssumedCablesPanel?.();
+        } catch (_) {}
+    },
+
+    syncInventoryAssumedControls_() {
+        const invOn = !!document.getElementById('layer-inventory')?.checked;
+        const assumedOn = invOn && !!this.assumedCablesModeEnabled;
+
+        try {
+            const btnMode = document.getElementById('btn-toggle-assumed-cables');
+            if (btnMode) btnMode.classList.toggle('active', assumedOn);
+        } catch (_) {}
+
+        // селект + пересчёт: активны только в режиме предполагаемых кабелей
+        try {
+            const sel = document.getElementById('assumed-cables-variant');
+            const btn = document.getElementById('btn-assumed-cables-rebuild');
+            if (sel) sel.disabled = !assumedOn;
+            if (btn) btn.disabled = !assumedOn || !this.canWrite();
+        } catch (_) {}
+
+        // кнопка подсказок инвентаризации: активна только в режиме инвентаризации
+        try {
+            const btn = document.getElementById('btn-inventory-unacc-labels');
+            if (btn) {
+                if (assumedOn) {
+                    btn.disabled = true;
+                    btn.classList.toggle('active', false);
+                    try { MapManager.setInventoryUnaccountedLabelsEnabled?.(false); } catch (_) {}
+                } else {
+                    // по требованию: при возврате из режима предполагаемых кабелей подсказки должны быть включены
+                    try { MapManager.setInventoryUnaccountedLabelsEnabled?.(true); } catch (_) {}
+                    btn.disabled = !invOn;
+                    btn.classList.toggle('active', invOn && !!MapManager.inventoryUnaccountedLabelsEnabled);
+                }
+            }
+        } catch (_) {}
+
+        // если выключили режим предполагаемых кабелей — чистим подсветку/выделение и прячем панель
+        if (!assumedOn) {
+            try { MapManager.clearSelectedObject?.(); } catch (_) {}
+            try { MapManager.clearHighlight?.(); } catch (_) {}
+            try { MapManager.setAssumedCablesPanelVisible?.(false); } catch (_) {}
+        }
     },
 
     /**
@@ -1464,16 +1525,10 @@ const App = {
             setLayer('layer-duct-cables', 'ductCables');
             unsetLayer('layer-inventory', 'inventory');
             unsetLayer('layer-channels', 'channels');
-            unsetLayer('layer-assumed-cables', 'assumedCables');
             unsetLayer('layer-markers', 'markers');
-            // синхронизируем UI контролов "предполагаемые кабели"
-            try {
-                MapManager.setAssumedCablesPanelVisible?.(false);
-                const sel = document.getElementById('assumed-cables-variant');
-                const btn = document.getElementById('btn-assumed-cables-rebuild');
-                if (sel) sel.disabled = true;
-                if (btn) btn.disabled = true;
-            } catch (_) {}
+            // выключаем режим предполагаемых кабелей и прячем панель
+            try { this.setAssumedCablesModeEnabled(false, { ensureInventoryOn: false }); } catch (_) {}
+            try { MapManager.toggleLayer('assumedCables', false); } catch (_) {}
             // синхронизируем кнопку длины направлений
             try {
                 const btn = document.getElementById('btn-toggle-direction-length-labels');
@@ -1516,20 +1571,14 @@ const App = {
         setLayer('layer-wells', 'wells', true);
         setLayer('layer-channels', 'channels', true);
         setLayer('layer-inventory', 'inventory', false);
-        setLayer('layer-assumed-cables', 'assumedCables', false);
         setLayer('layer-markers', 'markers', true);
         setLayer('layer-ground-cables', 'groundCables', false);
         setLayer('layer-aerial-cables', 'aerialCables', false);
         setLayer('layer-duct-cables', 'ductCables', false);
 
-        // синхронизируем UI контролов "предполагаемые кабели"
-        try {
-            MapManager.setAssumedCablesPanelVisible?.(false);
-            const sel = document.getElementById('assumed-cables-variant');
-            const btn = document.getElementById('btn-assumed-cables-rebuild');
-            if (sel) sel.disabled = true;
-            if (btn) btn.disabled = true;
-        } catch (_) {}
+        // выключаем режим предполагаемых кабелей и прячем панель
+        try { this.setAssumedCablesModeEnabled(false, { ensureInventoryOn: false }); } catch (_) {}
+        try { MapManager.toggleLayer('assumedCables', false); } catch (_) {}
         // синхронизируем UI контролов "колодцы"
         try {
             const b1 = document.getElementById('btn-toggle-well-labels');
@@ -2267,8 +2316,8 @@ const App = {
             }
             this.notify('Предполагаемые кабели пересчитаны', 'success');
             try {
-                const cb = document.getElementById('layer-assumed-cables');
-                if (cb?.checked) {
+                const invOn = !!document.getElementById('layer-inventory')?.checked;
+                if (invOn && this.assumedCablesModeEnabled) {
                     MapManager.loadAssumedCablesLayer?.();
                     MapManager.refreshAssumedCablesPanel?.();
                 }

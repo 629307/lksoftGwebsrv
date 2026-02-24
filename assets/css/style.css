@@ -569,6 +569,17 @@ body.sidebar-resizing {
     margin-left: 0;
 }
 
+.layer-inline-btn.layer-inline-btn-wide {
+    width: auto;
+    padding: 0 10px;
+    max-width: 220px;
+    font-size: 11px;
+    line-height: 26px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .layer-inline-select {
     height: 26px;
     border-radius: 6px;
