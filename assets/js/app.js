@@ -6831,40 +6831,71 @@ const App = {
         const margin = 28;
         const headerH = 64;
 
-        // Header background
-        try {
-            pdf.setFillColor(245, 245, 245);
-            pdf.rect(0, 0, pageW, headerH, 'F');
-        } catch (_) {}
+        // Шапку рисуем как картинку, чтобы кириллица отображалась корректно (jsPDF без встраивания шрифта ломает текст)
+        const dt = now.toLocaleString('ru-RU');
+        const buildHeaderPng = async () => {
+            const scale = 2;
+            const w = Math.max(1, Math.floor(pageW * scale));
+            const h = Math.max(1, Math.floor(headerH * scale));
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#f5f5f5';
+            ctx.fillRect(0, 0, w, h);
 
-        // Logo
-        const logoSize = 32;
-        if (logoPng) {
-            try {
-                pdf.addImage(logoPng, 'PNG', margin, (headerH - logoSize) / 2, logoSize, logoSize);
-            } catch (_) {}
+            const logoSize = Math.floor(32 * scale);
+            const pad = Math.floor(margin * scale);
+            const midY = Math.floor(h / 2);
+
+            // logo (png)
+            if (logoPng) {
+                try {
+                    const img = new Image();
+                    img.decoding = 'async';
+                    img.loading = 'eager';
+                    img.src = logoPng;
+                    await new Promise((resolve, reject) => {
+                        img.onload = () => resolve();
+                        img.onerror = () => reject(new Error('logo_png_load_failed'));
+                    });
+                    ctx.drawImage(img, pad, Math.floor((h - logoSize) / 2), logoSize, logoSize);
+                } catch (_) {}
+            }
+
+            const textX = pad + (logoPng ? (logoSize + Math.floor(12 * scale)) : 0);
+            ctx.fillStyle = '#141414';
+            ctx.textBaseline = 'alphabetic';
+
+            // title
+            ctx.font = `700 ${Math.floor(14 * scale)}px system-ui, -apple-system, Segoe UI, Arial, sans-serif`;
+            ctx.fillText('ИГС — экспорт карты', textX, Math.floor(26 * scale));
+
+            // user
+            ctx.font = `${Math.floor(11 * scale)}px system-ui, -apple-system, Segoe UI, Arial, sans-serif`;
+            ctx.fillText(`Пользователь: ${userName}`, textX, Math.floor(46 * scale));
+
+            // datetime right
+            ctx.font = `${Math.floor(10 * scale)}px system-ui, -apple-system, Segoe UI, Arial, sans-serif`;
+            const dtW = ctx.measureText(dt).width;
+            ctx.fillText(dt, Math.max(textX, w - pad - dtW), Math.floor(26 * scale));
+
+            // subtle bottom line
+            ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+            ctx.beginPath();
+            ctx.moveTo(0, h - 1);
+            ctx.lineTo(w, h - 1);
+            ctx.stroke();
+
+            return c.toDataURL('image/png');
+        };
+
+        try {
+            const headerPng = await buildHeaderPng();
+            pdf.addImage(headerPng, 'PNG', 0, 0, pageW, headerH, undefined, 'FAST');
+        } catch (_) {
+            // если шапка не получилась — не блокируем экспорт карты
         }
-
-        // Title + user
-        const titleX = margin + (logoPng ? (logoSize + 12) : 0);
-        try {
-            pdf.setTextColor(20, 20, 20);
-            pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(14);
-            pdf.text('ИГС — экспорт карты', titleX, 26);
-            pdf.setFont('helvetica', 'normal');
-            pdf.setFontSize(11);
-            pdf.text(`Пользователь: ${userName}`, titleX, 46);
-        } catch (_) {}
-
-        // Date/time (right)
-        try {
-            const dt = now.toLocaleString('ru-RU');
-            pdf.setFont('helvetica', 'normal');
-            pdf.setFontSize(10);
-            const txtW = pdf.getTextWidth(dt);
-            pdf.text(dt, pageW - margin - txtW, 26);
-        } catch (_) {}
 
         // Map image placement
         const availableW = pageW - margin * 2;
