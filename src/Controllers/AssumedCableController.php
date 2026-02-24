@@ -861,37 +861,56 @@ class AssumedCableController extends BaseController
             $visited = [];
             $compId = 0;
 
-            // Полные компоненты связности по полной топологии (fullAdj): нужны, чтобы
-            // для каждой точки присоединения оценить "максимальный путь в полной топологии".
-            $fullCompIdByWell = [];
-            $fullCompWells = []; // fullCompId => [wellId=>true]
-            $fullVisited = [];
-            $fullCompId = 0;
-            foreach (array_keys($fullAdj) as $w0) {
+            // ВЫБОР root (точки присоединения) по уточнению:
+            // оценка "максимальной длины достижимого пути" делается по топологии,
+            // ИСКЛЮЧАЯ рёбра (направления) с capacity>0.
+            //
+            // 1) строим adjacency для "полной топологии без capacity>0 рёбер"
+            $fullAdjNoPosCap = [];
+            foreach ($dirs as $dirId => $d) {
+                $dirId = (int) $dirId;
+                if ($dirId <= 0) continue;
+                if ((int) ($baseRem[$dirId] ?? 0) > 0) continue; // исключаем capacity>0
+                $a = (int) ($d['a'] ?? 0);
+                $b = (int) ($d['b'] ?? 0);
+                $len = (float) ($d['length_m'] ?? 0);
+                if ($a <= 0 || $b <= 0 || $len <= 0) continue;
+                if (!isset($fullAdjNoPosCap[$a])) $fullAdjNoPosCap[$a] = [];
+                if (!isset($fullAdjNoPosCap[$b])) $fullAdjNoPosCap[$b] = [];
+                $fullAdjNoPosCap[$a][] = ['to' => $b, 'len' => $len];
+                $fullAdjNoPosCap[$b][] = ['to' => $a, 'len' => $len];
+            }
+
+            // 2) компоненты связности по fullAdjNoPosCap
+            $noPosCompIdByWell = [];
+            $noPosCompWells = []; // compId => [wellId=>true]
+            $noPosVisited = [];
+            $noPosCompId = 0;
+            foreach (array_keys($fullAdjNoPosCap) as $w0) {
                 $w0 = (int) $w0;
-                if ($w0 <= 0 || isset($fullVisited[$w0])) continue;
-                $fullCompId++;
+                if ($w0 <= 0 || isset($noPosVisited[$w0])) continue;
+                $noPosCompId++;
                 $stack0 = [$w0];
-                $fullVisited[$w0] = true;
+                $noPosVisited[$w0] = true;
                 $set = [];
                 while ($stack0) {
                     $u = (int) array_pop($stack0);
                     $set[$u] = true;
-                    foreach (($fullAdj[$u] ?? []) as $e) {
+                    foreach (($fullAdjNoPosCap[$u] ?? []) as $e) {
                         $v = (int) ($e['to'] ?? 0);
-                        if ($v <= 0 || isset($fullVisited[$v])) continue;
-                        $fullVisited[$v] = true;
+                        if ($v <= 0 || isset($noPosVisited[$v])) continue;
+                        $noPosVisited[$v] = true;
                         $stack0[] = $v;
                     }
                 }
-                $fullCompWells[$fullCompId] = $set;
-                foreach ($set as $u => $_) $fullCompIdByWell[(int) $u] = $fullCompId;
+                $noPosCompWells[$noPosCompId] = $set;
+                foreach ($set as $u => $_) $noPosCompIdByWell[(int) $u] = $noPosCompId;
             }
 
-            // Dijkstra по полной топологии (fullAdj) внутри одной полной компоненты
-            // (shortest paths). Возвращаем dist[] и maxDist.
-            $dijkstraMaxDist = function(int $src, array $allowedSet) use ($fullAdj): array {
-                if ($src <= 0 || !isset($allowedSet[$src])) return [[], 0.0];
+            // 3) Dijkstra по topологии БЕЗ capacity>0 рёбер внутри одной её компоненты.
+            // Возвращаем maxDist (максимальная дистанция до любой вершины в компоненте).
+            $dijkstraMaxDistNoPos = function(int $src, array $allowedSet) use ($fullAdjNoPosCap): float {
+                if ($src <= 0 || !isset($allowedSet[$src])) return 0.0;
                 $dist = [$src => 0.0];
                 $pq = new \SplPriorityQueue();
                 $pq->setExtractFlags(\SplPriorityQueue::EXTR_BOTH);
@@ -904,7 +923,7 @@ class AssumedCableController extends BaseController
                     if ($u <= 0) continue;
                     if (!isset($dist[$u]) || $d > (float) $dist[$u] + 1e-9) continue;
                     if ($d > $max) $max = $d;
-                    foreach (($fullAdj[$u] ?? []) as $e) {
+                    foreach (($fullAdjNoPosCap[$u] ?? []) as $e) {
                         $v = (int) ($e['to'] ?? 0);
                         if ($v <= 0 || !isset($allowedSet[$v])) continue;
                         $w = (float) ($e['len'] ?? 0);
@@ -916,10 +935,10 @@ class AssumedCableController extends BaseController
                         }
                     }
                 }
-                return [$dist, $max];
+                return (float) $max;
             };
 
-            $eccCache = []; // [fullCompId][wellId] => float (maxDist in full topology)
+            $eccCache = []; // [noPosCompId][wellId] => float (maxDist in full topology w/o cap>0)
             foreach (array_keys($capAdj) as $start) {
                 $start = (int) $start;
                 if ($start <= 0 || isset($visited[$start])) continue;
@@ -956,25 +975,25 @@ class AssumedCableController extends BaseController
                 // Выбор root:
                 // - если точек присоединения нет — root=0
                 // - если точек присоединения >=1 — выбираем ту, у которой "максимальный путь
-                //   в полной топологии" максимален (farthest shortest-path distance внутри full component).
+                //   в топологии БЕЗ capacity>0 рёбер" максимален (farthest shortest-path distance).
                 $attachNodes = array_keys($attach);
                 if (!$attachNodes) {
                     $compRoot[$compId] = 0;
                 } else {
-                    $fid = (int) ($fullCompIdByWell[$start] ?? 0);
-                    $allowedSet = $fid > 0 ? ($fullCompWells[$fid] ?? []) : [];
                     $best = 0;
                     $bestEcc = -1.0;
                     sort($attachNodes, SORT_NUMERIC);
                     foreach ($attachNodes as $u) {
                         $u = (int) $u;
                         if ($u <= 0) continue;
+                        $fid = (int) ($noPosCompIdByWell[$u] ?? 0);
+                        $allowedSet = $fid > 0 ? ($noPosCompWells[$fid] ?? []) : [];
                         if ($fid <= 0 || !$allowedSet) {
                             $ecc = 0.0;
                         } else if (isset($eccCache[$fid]) && array_key_exists($u, $eccCache[$fid])) {
                             $ecc = (float) $eccCache[$fid][$u];
                         } else {
-                            [, $ecc] = $dijkstraMaxDist($u, $allowedSet);
+                            $ecc = $dijkstraMaxDistNoPos($u, $allowedSet);
                             if (!isset($eccCache[$fid])) $eccCache[$fid] = [];
                             $eccCache[$fid][$u] = (float) $ecc;
                         }
