@@ -1924,7 +1924,7 @@ body.ctrl-down #objects-table .obj-select-col {
 .igs-selected-shadow {
     /* яркая подсветка выбранного объекта (точка/линия) */
     filter:
-        drop-shadow(0 0 2px rgba(255, 255, 0, 0.95))
-        drop-shadow(0 0 8px rgba(255, 255, 0, 0.85))
-        drop-shadow(0 0 14px rgba(255, 60, 0, 0.65));
+        drop-shadow(0 0 2px var(--igs-selected-color, #ffff00))
+        drop-shadow(0 0 10px var(--igs-selected-color, #ffff00))
+        drop-shadow(0 0 16px rgba(0, 0, 0, 0.35));
 }

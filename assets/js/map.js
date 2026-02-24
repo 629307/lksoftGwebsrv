@@ -167,6 +167,23 @@ const MapManager = {
         }
     },
 
+    getSettingColor(code, fallback) {
+        try {
+            if (typeof App === 'undefined') return fallback;
+            const raw = (App?.settings?.[code] ?? '').toString().trim();
+            if (!raw) return fallback;
+            // expecting #RRGGBB
+            if (/^#[0-9a-f]{6}$/i.test(raw)) return raw;
+            return fallback;
+        } catch (_) {
+            return fallback;
+        }
+    },
+
+    getSelectedObjectHighlightColor() {
+        return this.getSettingColor('selected_object_highlight_color', '#ffff00');
+    },
+
     getDirectionLineWeight() {
         return Math.max(0.5, this.getSettingNumber('line_weight_direction', 3));
     },
@@ -318,6 +335,24 @@ const MapManager = {
 
         // Подсветка кабеля/маршрута — самый верхний слой среди объектов карты
         this.ensurePane('highlightPane', 995, { pointerEvents: 'none' });
+
+        // Подсказки (лейблы) всегда выше подсветки кабеля и выбранного объекта
+        try {
+            const labelKeys = ['wellLabels', 'directionLengthLabels', 'objectCoordinates', 'inventoryUnaccLabels'];
+            const labelTop = 1045; // ниже tooltip/popup, но выше highlight/selected
+            const labelStep = 3;
+            const sorted = labelKeys
+                .slice()
+                .filter(k => byKey.has(k))
+                .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+            sorted.forEach((k, i) => {
+                const it = byKey.get(k);
+                const z = labelTop - i * labelStep;
+                (it?.panes || []).forEach((paneName) => {
+                    this.ensurePane(paneName, z, { pointerEvents: 'none' });
+                });
+            });
+        } catch (_) {}
 
         // Popups/tooltip всегда выше подсветки
         try {
@@ -4148,6 +4183,7 @@ const MapManager = {
             if (!this.map || !layer) return null;
             const meta = layer?._igsMeta || {};
             const ot = (meta.objectType || '').toString();
+            const color = this.getSelectedObjectHighlightColor();
 
             // Point-like
             if (typeof layer.getLatLng === 'function') {
@@ -4158,7 +4194,7 @@ const MapManager = {
                 return L.circleMarker(ll, {
                     pane: 'selectedObjectPane',
                     radius: r,
-                    color: '#ffff00',
+                    color,
                     weight: 5,
                     opacity: 1,
                     fillOpacity: 0,
@@ -4176,7 +4212,7 @@ const MapManager = {
                 const w = Math.max(10, baseW * 4);
                 return L.polyline(latlngs, {
                     pane: 'selectedObjectPane',
-                    color: '#ffff00',
+                    color,
                     weight: w,
                     opacity: 0.55,
                     lineCap: 'round',

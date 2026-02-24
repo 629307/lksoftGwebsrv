@@ -319,6 +319,14 @@ const App = {
         if (Number.isFinite(z)) MapManager.defaultZoom = z;
         if (Number.isFinite(lat) && Number.isFinite(lng)) MapManager.defaultCenter = [lat, lng];
 
+        // Применяем цвет подсветки выбранного объекта (CSS var + обновление текущего выделения)
+        try {
+            const raw = (this.settings.selected_object_highlight_color ?? '').toString().trim();
+            const color = raw && /^#[0-9a-f]{6}$/i.test(raw) ? raw : '#ffff00';
+            document.documentElement.style.setProperty('--igs-selected-color', color);
+            try { MapManager?.setSelectedHaloLayer?.(MapManager?.selectedLayer); } catch (_) {}
+        } catch (_) {}
+
         // Применяем ссылки в сайдбаре
         const g = (this.settings.url_geoproj || '').toString().trim();
         const c = (this.settings.url_cadastre || '').toString().trim();
@@ -5459,6 +5467,7 @@ const App = {
         const iconSize = document.getElementById('settings-icon-size-well-marker');
         const fsWell = document.getElementById('settings-font-size-well-number');
         const fsDirLen = document.getElementById('settings-font-size-direction-length');
+        const selColor = document.getElementById('settings-selected-object-highlight-color');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
         const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template');
@@ -5496,6 +5505,7 @@ const App = {
         if (iconSize) iconSize.value = (this.settings.icon_size_well_marker ?? 24);
         if (fsWell) fsWell.value = (this.settings.font_size_well_number_label ?? 12);
         if (fsDirLen) fsDirLen.value = (this.settings.font_size_direction_length_label ?? 12);
+        if (selColor) selColor.value = (this.settings.selected_object_highlight_color ?? '#ffff00');
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
         if (wmtsUrlTmpl) wmtsUrlTmpl.value = (this.settings.wmts_url_template ?? '');
@@ -5782,6 +5792,7 @@ const App = {
         const iconSize = document.getElementById('settings-icon-size-well-marker')?.value;
         const fsWell = document.getElementById('settings-font-size-well-number')?.value;
         const fsDirLen = document.getElementById('settings-font-size-direction-length')?.value;
+        const selColor = document.getElementById('settings-selected-object-highlight-color')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
         const wmtsUrlTmpl = document.getElementById('settings-wmts-url-template')?.value;
@@ -5825,6 +5836,7 @@ const App = {
             icon_size_well_marker: iconSize,
             font_size_well_number_label: fsWell,
             font_size_direction_length_label: fsDirLen,
+            selected_object_highlight_color: (selColor ?? '').toString().trim(),
             url_geoproj: geo,
             url_cadastre: cad,
             wmts_url_template: wmtsUrlTmpl,

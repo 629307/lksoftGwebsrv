@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.3.7" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.3.8" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -683,6 +683,11 @@
                                 <input type="number" id="settings-font-size-direction-length" step="1" min="8" placeholder="Напр.: 12">
                             </div>
                             <div class="form-group">
+                                <label>Цвет подсветки выбранного объекта (точка/линия)</label>
+                                <input type="color" id="settings-selected-object-highlight-color">
+                                <p class="text-muted">Применяется к подсветке выбранного объекта на карте.</p>
+                            </div>
+                            <div class="form-group">
                                 <label>Код — точка ввода (Тип объекта колодца)</label>
                                 <select id="settings-well-entry-kind-code">
                                     <option value="">Не задано</option>
@@ -864,8 +869,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.3.7"></script>
-    <script src="assets/js/map.js?v=2.3.7"></script>
-    <script src="assets/js/app.js?v=2.3.7"></script>
+    <script src="assets/js/api.js?v=2.3.8"></script>
+    <script src="assets/js/map.js?v=2.3.8"></script>
+    <script src="assets/js/app.js?v=2.3.8"></script>
 </body>
 </html>
