@@ -6760,6 +6760,14 @@ const App = {
 
             // stop any running animations (pan/zoom inertia)
             try { map.stop?.(); } catch (_) {}
+            // force stable state (remove zoom-animation transforms)
+            try {
+                const c = map.getCenter?.();
+                const z = map.getZoom?.();
+                if (c && z !== undefined && z !== null) {
+                    map.setView(c, z, { animate: false });
+                }
+            } catch (_) {}
 
             const baseLayer = MapManager?.wmtsSatelliteEnabled ? MapManager?.wmtsSatelliteLayer : MapManager?.osmBaseLayer;
             const shouldWaitTiles = !!(baseLayer && map.hasLayer?.(baseLayer));
@@ -6814,6 +6822,8 @@ const App = {
             const rect = mapEl.getBoundingClientRect();
             const w = Math.max(1, Math.round(rect.width));
             const h = Math.max(1, Math.round(rect.height));
+            const x = Math.max(0, Math.round(rect.left + (window.scrollX || window.pageXOffset || 0)));
+            const y = Math.max(0, Math.round(rect.top + (window.scrollY || window.pageYOffset || 0)));
 
             const canvas = await h2c(mapEl, {
                 useCORS: true,
@@ -6821,8 +6831,14 @@ const App = {
                 backgroundColor: '#ffffff',
                 scale: Math.min(2, window.devicePixelRatio || 1),
                 logging: false,
+                x,
+                y,
                 width: w,
                 height: h,
+                scrollX: (window.scrollX || window.pageXOffset || 0),
+                scrollY: (window.scrollY || window.pageYOffset || 0),
+                windowWidth: document.documentElement?.clientWidth || window.innerWidth,
+                windowHeight: document.documentElement?.clientHeight || window.innerHeight,
             });
             // toDataURL может бросить SecurityError если подложка не даёт CORS
             const dataUrl = canvas.toDataURL('image/png');
