@@ -1844,6 +1844,21 @@ const App = {
         setLayer('layer-aerial-cables', 'aerialCables', false);
         setLayer('layer-duct-cables', 'ductCables', false);
 
+        // Синхронизация кнопок "Список" для кабельных слоёв
+        try {
+            const syncBtn = (cbId, btnId) => {
+                const cb = document.getElementById(cbId);
+                const btn = document.getElementById(btnId);
+                if (!btn) return;
+                const on = !!cb?.checked;
+                btn.disabled = !on;
+                if (!on) btn.classList.remove('active');
+            };
+            syncBtn('layer-ground-cables', 'btn-list-ground-cables');
+            syncBtn('layer-aerial-cables', 'btn-list-aerial-cables');
+            syncBtn('layer-duct-cables', 'btn-list-duct-cables');
+        } catch (_) {}
+
         // выключаем режим предполагаемых кабелей и прячем панель
         try { this.setAssumedCablesModeEnabled(false, { ensureInventoryOn: false }); } catch (_) {}
         try { MapManager.toggleLayer('assumedCables', false); } catch (_) {}
