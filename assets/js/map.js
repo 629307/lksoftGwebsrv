@@ -187,6 +187,133 @@ const MapManager = {
         return this.getWellLabelFontSizePx();
     },
 
+    // ========================
+    // Порядок отрисовки слоёв (panes/zIndex)
+    // 1 — верхний слой, поверх всех
+    // ========================
+    layerOrderItems: [
+        { key: 'wellLabels', title: 'Подсказки номера колодцев', panes: ['wellLabelsPane'] },
+        { key: 'directionLengthLabels', title: 'Подсказки длинна направления', panes: ['directionLengthLabelsPane'] },
+        { key: 'objectCoordinates', title: 'Показать координаты', panes: ['objectCoordinatesLabelsPane'] },
+        { key: 'inventoryUnaccLabels', title: 'Подсказки неучтенные кабели', panes: ['inventoryLabelPane'] },
+        { key: 'ductCables', title: 'Объект кабель — Кабель в канализации', panes: ['ductCablesPane'] },
+        { key: 'groundCables', title: 'Объект кабель — Кабель в грунте', panes: ['groundCablesPane'] },
+        { key: 'aerialCables', title: 'Объект кабель — Кабель воздухом (перетяжка)', panes: ['aerialCablesPane'] },
+        { key: 'wells', title: 'Объекты колодец', panes: ['wellsPane'] },
+        { key: 'markerPosts', title: 'Объекты столбик', panes: ['markerPostsPane'] },
+        { key: 'inventory', title: 'Слой Инвентаризация (градиент неучтенных)', panes: ['inventoryPane'] },
+        { key: 'assumedCables', title: 'Слой Предполагаемые кабели (градиент)', panes: ['assumedCablesPane', 'assumedCablesBasePane'] },
+        { key: 'channels', title: 'Объекты направления каналов', panes: ['channelsPane'] },
+        // Базовую подложку не даём поднять вверх — иначе она перекроет оверлеи.
+        { key: 'baseMap', title: 'Подложка (WMTS/OSM)', panes: ['baseMapPane'], fixedBottom: true },
+    ],
+
+    getLayerOrderDefaultKeys() {
+        return (this.layerOrderItems || []).map(x => x.key);
+    },
+
+    _getLayerOrderStorageKey() {
+        try {
+            const u = (typeof App !== 'undefined' ? (App?.user || null) : null);
+            const uid = (u?.id ?? u?.login ?? '');
+            return `igs_layer_order_${uid || 'anon'}`;
+        } catch (_) {
+            return 'igs_layer_order_anon';
+        }
+    },
+
+    loadLayerOrderKeysFromStorage() {
+        try {
+            const raw = localStorage.getItem(this._getLayerOrderStorageKey());
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed.map(x => String(x)) : null;
+        } catch (_) {
+            return null;
+        }
+    },
+
+    saveLayerOrderKeysToStorage(keys) {
+        try {
+            localStorage.setItem(this._getLayerOrderStorageKey(), JSON.stringify(keys || []));
+        } catch (_) {}
+    },
+
+    normalizeLayerOrderKeys(keys) {
+        const all = new Set(this.getLayerOrderDefaultKeys());
+        const fixed = (this.layerOrderItems || []).find(x => x.fixedBottom)?.key || 'baseMap';
+
+        const out = [];
+        for (const k of (Array.isArray(keys) ? keys : [])) {
+            const kk = String(k || '');
+            if (!kk || kk === fixed) continue;
+            if (all.has(kk) && !out.includes(kk)) out.push(kk);
+        }
+        for (const k of this.getLayerOrderDefaultKeys()) {
+            if (k === fixed) continue;
+            if (!out.includes(k)) out.push(k);
+        }
+        out.push(fixed);
+        return out;
+    },
+
+    ensurePane(name, zIndex, opts = {}) {
+        if (!this.map) return null;
+        try {
+            if (!this.map.getPane(name)) this.map.createPane(name);
+            const pane = this.map.getPane(name);
+            if (!pane) return null;
+            if (zIndex !== null && zIndex !== undefined) pane.style.zIndex = String(zIndex);
+            if (opts.pointerEvents) pane.style.pointerEvents = opts.pointerEvents;
+            return pane;
+        } catch (_) {
+            return null;
+        }
+    },
+
+    getCurrentLayerOrderKeys() {
+        return Array.isArray(this._layerOrderKeys) ? this._layerOrderKeys.slice() : this.getLayerOrderDefaultKeys();
+    },
+
+    setLayerOrderKeys(keys, { save = true } = {}) {
+        const norm = this.normalizeLayerOrderKeys(keys);
+        this._layerOrderKeys = norm;
+        if (save) this.saveLayerOrderKeysToStorage(norm);
+        this.applyLayerOrderToPanes(norm);
+    },
+
+    applyLayerOrderToPanes(keys = null) {
+        if (!this.map) return;
+        const order = this.normalizeLayerOrderKeys(keys || this.getCurrentLayerOrderKeys());
+        const topZ = 640; // ниже popupPane (700)
+        const step = 5;
+
+        const byKey = new Map((this.layerOrderItems || []).map(x => [x.key, x]));
+        order.forEach((key, idx) => {
+            const item = byKey.get(key);
+            if (!item) return;
+            const z = item.fixedBottom ? 200 : (topZ - idx * step);
+            (item.panes || []).forEach((paneName) => {
+                const pe =
+                    (paneName === 'assumedCablesPane') ? 'auto' :
+                    (paneName === 'assumedCablesBasePane') ? 'none' :
+                    null;
+                this.ensurePane(
+                    paneName,
+                    z + (paneName === 'assumedCablesBasePane' ? -1 : 0),
+                    pe ? { pointerEvents: pe } : {}
+                );
+            });
+        });
+
+        // panes фиксированных режимов/оверлеев (не зависят от порядка слоёв)
+        this.ensurePane('inventoryInputPane', 900);
+        this.ensurePane('rulerLinePane', 920, { pointerEvents: 'none' });
+        this.ensurePane('rulerLabelPane', 930, { pointerEvents: 'none' });
+        // Выше всех пользовательских слоёв, но ниже tooltip/popup panes Leaflet
+        this.ensurePane('highlightPane', 645, { pointerEvents: 'none' });
+    },
+
     getDirectionLengthLabelFontSizePx() {
         return Math.max(8, this.getSettingNumber('font_size_direction_length_label', 12));
     },
@@ -214,6 +341,7 @@ const MapManager = {
         const size = this.getWellMarkerSizePx(); // диаметр/размер в px
         if (this.isWellEntryPoint(props)) {
             return L.marker(latlng, {
+                pane: 'wellsPane',
                 icon: L.divIcon({
                     className: 'well-entry-point-icon',
                     html: `<div style="width:${size}px;height:${size}px;background:${color};border:2px solid #fff;box-sizing:border-box;opacity:0.85;"></div>`,
@@ -225,6 +353,7 @@ const MapManager = {
         if (this.isWellPole(props)) {
             // "Опора" (kind_code = pole): треугольник
             return L.marker(latlng, {
+                pane: 'wellsPane',
                 icon: L.divIcon({
                     className: 'well-pole-icon',
                     html: `
@@ -239,6 +368,7 @@ const MapManager = {
         }
         const radius = Math.max(3, size / 2);
         return L.circleMarker(latlng, {
+            pane: 'wellsPane',
             radius,
             fillColor: color,
             // Обводка колодца всегда белая (stroke = #fff), даже в режиме "Легенда по собственникам"
@@ -254,6 +384,7 @@ const MapManager = {
         const color = this.getPlannedOverrideColor(props, base);
         const size = this.getWellMarkerSizePx();
         return L.marker(latlng, {
+            pane: 'markerPostsPane',
             icon: L.divIcon({
                 html: `<i class="fas fa-map-marker-alt" style="color: ${color}; font-size: ${size}px;"></i>`,
                 className: 'marker-post-icon',
@@ -322,6 +453,7 @@ const MapManager = {
             const label = L.marker(latlng, {
                 interactive: false,
                 keyboard: false,
+                pane: 'wellLabelsPane',
                 icon: L.divIcon({
                     className: 'well-number-label',
                     html: `<div class="well-number-label-text" style="color:${color || labelColorDefault}; font-size:${fontSize}px;">${number}</div>`,
@@ -374,6 +506,7 @@ const MapManager = {
             const label = L.marker(latlng, {
                 interactive: false,
                 keyboard: false,
+                pane: 'objectCoordinatesLabelsPane',
                 icon: L.divIcon({
                     className: 'igs-coords-label',
                     html: `<div class="igs-coords-label-box" style="font-size:${fontSize}px;">${lat}<br>${lng}</div>`,
@@ -436,10 +569,14 @@ const MapManager = {
             zoomControl: true,
         });
 
+        // Базовая подложка карты — отдельный pane (всегда самый нижний)
+        this.ensurePane('baseMapPane', 200);
+
         // Базовый слой: OSM (по умолчанию)
         this.osmBaseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
             maxZoom: 19,
+            pane: 'baseMapPane',
         }).addTo(this.map);
 
         // Спутник: WMTS (настраивается в "Настройки -> Настройка слоя WMTS")
@@ -447,6 +584,7 @@ const MapManager = {
         this.wmtsSatelliteLayer = L.tileLayer(wmtsTemplate, {
             maxZoom: 22,
             attribution: '&copy; ЯНАО',
+            pane: 'baseMapPane',
         });
         this.wmtsSatelliteEnabled = false;
 
@@ -462,50 +600,13 @@ const MapManager = {
             ductCables: L.featureGroup().addTo(this.map),
         };
 
-        // Панели (панes) для порядка отрисовки:
-        // - inventory ниже колодцев
+        // Порядок отрисовки слоёв (по умолчанию + пользовательский)
         try {
-            if (!this.map.getPane('inventoryPane')) {
-                this.map.createPane('inventoryPane');
-                this.map.getPane('inventoryPane').style.zIndex = '380';
-            }
-            if (!this.map.getPane('inventoryLabelPane')) {
-                this.map.createPane('inventoryLabelPane');
-                this.map.getPane('inventoryLabelPane').style.zIndex = '395';
-            }
-            // Инпуты режима инвентаризации должны быть поверх всех слоёв (выше направлений/подсказок/попапов)
-            if (!this.map.getPane('inventoryInputPane')) {
-                this.map.createPane('inventoryInputPane');
-                this.map.getPane('inventoryInputPane').style.zIndex = '900';
-            }
-            if (!this.map.getPane('assumedCablesPane')) {
-                this.map.createPane('assumedCablesPane');
-                this.map.getPane('assumedCablesPane').style.zIndex = '410';
-                // нужен hover по предполагаемым кабелям
-                this.map.getPane('assumedCablesPane').style.pointerEvents = 'auto';
-            }
-            if (!this.map.getPane('assumedCablesBasePane')) {
-                this.map.createPane('assumedCablesBasePane');
-                this.map.getPane('assumedCablesBasePane').style.zIndex = '405';
-                this.map.getPane('assumedCablesBasePane').style.pointerEvents = 'none';
-            }
-            if (!this.map.getPane('rulerLinePane')) {
-                this.map.createPane('rulerLinePane');
-                this.map.getPane('rulerLinePane').style.zIndex = '920';
-                this.map.getPane('rulerLinePane').style.pointerEvents = 'none';
-            }
-            if (!this.map.getPane('rulerLabelPane')) {
-                this.map.createPane('rulerLabelPane');
-                this.map.getPane('rulerLabelPane').style.zIndex = '930';
-                this.map.getPane('rulerLabelPane').style.pointerEvents = 'none';
-            }
-            if (!this.map.getPane('highlightPane')) {
-                this.map.createPane('highlightPane');
-                // Подсветка должна быть выше линий, но ниже попапов/модальных окон
-                this.map.getPane('highlightPane').style.zIndex = '550';
-                this.map.getPane('highlightPane').style.pointerEvents = 'none';
-            }
-        } catch (_) {}
+            const saved = this.loadLayerOrderKeysFromStorage();
+            this.setLayerOrderKeys(saved || this.getLayerOrderDefaultKeys(), { save: false });
+        } catch (_) {
+            this.applyLayerOrderToPanes(this.getLayerOrderDefaultKeys());
+        }
 
         // Отдельный слой подписей колодцев (вкл/выкл через панель инструментов)
         this.wellLabelsLayer = L.featureGroup().addTo(this.map);
@@ -711,7 +812,8 @@ const MapManager = {
                     const u = p.inv_unaccounted;
                     const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
                     const color = hasInv ? colorForUnaccounted(u) : '#777777';
-                    const weight = hasInv ? (this.getDirectionLineWeight() * 2) : this.getDirectionLineWeight();
+                    // Важно: направления без значения "неучтенные" не должны быть тоньше прочих.
+                    const weight = this.getDirectionLineWeight() * 2;
                     return { color, weight, opacity: 0.85 };
                 },
                 onEachFeature: (feature, layer) => {
@@ -1395,6 +1497,7 @@ const MapManager = {
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
+                    pane: 'wellsPane',
                     pointToLayer: (feature, latlng) => {
                         // Цвет символа колодца — из справочника "Виды объектов" (object_types.well.color)
                         return this.createWellMarker(latlng, feature?.properties || {});
@@ -1551,7 +1654,7 @@ const MapManager = {
                 html: `<div style="transform: translate(-50%, -50%) rotate(${angle}deg); transform-origin: center; white-space: nowrap; font-size:${fontSize}px; color:#111; background: rgba(255,255,255,0.85); border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 2px 6px;">${text}</div>`,
                 iconAnchor: [0, 0],
             });
-            L.marker(pos, { icon, interactive: false, keyboard: false }).addTo(this.directionLengthLabelsLayer);
+            L.marker(pos, { icon, interactive: false, keyboard: false, pane: 'directionLengthLabelsPane' }).addTo(this.directionLengthLabelsLayer);
         };
 
         traverse(this.layers?.channels, addLabelForLine);
@@ -2650,6 +2753,7 @@ const MapManager = {
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
+                    pane: 'channelsPane',
                     style: (feature) => {
                         const props = feature?.properties || {};
                         const style = {
@@ -2717,6 +2821,7 @@ const MapManager = {
             
             if (validFeatures.length > 0) {
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
+                    pane: 'markerPostsPane',
                     pointToLayer: (feature, latlng) => {
                         return this.createMarkerPostMarker(latlng, feature?.properties || {});
                     },
@@ -2773,8 +2878,14 @@ const MapManager = {
                 .filter(f => !targetCode || f.properties?.object_type_code === targetCode);
             
             if (validFeatures.length > 0) {
+                const pane =
+                    (type === 'duct') ? 'ductCablesPane' :
+                    (type === 'aerial') ? 'aerialCablesPane' :
+                    'groundCablesPane';
                 L.geoJSON({ type: 'FeatureCollection', features: validFeatures }, {
+                    pane,
                     style: (feature) => ({
+                        pane,
                         color: this.getPlannedOverrideColor(
                             feature?.properties,
                             feature.properties.object_type_color || feature.properties.status_color || color
@@ -4913,6 +5024,16 @@ const MapManager = {
 
                 const addLine = (layerGroup, objectType, feature, latlngs, style) => {
                     const props = feature?.properties;
+                    const paneByType = {
+                        channel_direction: 'channelsPane',
+                        ground_cable: 'groundCablesPane',
+                        aerial_cable: 'aerialCablesPane',
+                        duct_cable: 'ductCablesPane',
+                    };
+                    const pane = paneByType[objectType] || null;
+                    if (pane && !(style || {}).pane) {
+                        style = { ...(style || {}), pane };
+                    }
                     if (this.ownersLegendEnabled && props?.owner_color) {
                         style = { ...(style || {}), color: props.owner_color };
                     } else if (props?.status_code === 'planned' && props?.status_color) {
