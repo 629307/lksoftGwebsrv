@@ -524,13 +524,10 @@ const App = {
 
         // Система координат: только WGS84
         document.getElementById('btn-wgs84').addEventListener('click', () => this.setCoordinateSystem('wgs84'));
-        // Экспорт карты в PDF (без интерфейса)
+        // Скрыть интерфейс управления (оставить только карту)
         document.getElementById('btn-save-pdf')?.addEventListener('click', (e) => {
             try { e.preventDefault(); } catch (_) {}
-            this.saveMapPdf().catch((err) => {
-                console.error('PDF export error:', err);
-                this.notify(err?.message || 'Не удалось сформировать PDF', 'error');
-            });
+            try { this.toggleUiHiddenMode(true); } catch (_) {}
         });
         // Внешний WMTS слой (кнопка в шапке)
         document.getElementById('btn-toggle-wmts')?.addEventListener('click', async (e) => {
@@ -6694,6 +6691,46 @@ const App = {
         setTimeout(() => {
             notification.remove();
         }, 5000);
+    },
+
+    toggleUiHiddenMode(enabled) {
+        const on = !!enabled;
+        try {
+            if (on) {
+                document.body.classList.add('igs-ui-hidden');
+                // убираем окна/панели, чтобы не оставлять “залипшие” состояния при возврате
+                try { this.hideModal(); } catch (_) {}
+                try { MapManager?.hideObjectInfo?.(); } catch (_) {}
+                try { MapManager?.setAssumedCablesPanelVisible?.(false); } catch (_) {}
+                try { MapManager?.setCablesListPanelVisible?.(false); } catch (_) {}
+                try { MapManager?.setHighlightBarVisible?.(false); } catch (_) {}
+            } else {
+                document.body.classList.remove('igs-ui-hidden');
+                try { MapManager?.setHighlightBarVisible?.(!!MapManager?.highlightLayer); } catch (_) {}
+            }
+        } catch (_) {}
+
+        // обновляем размер карты
+        try {
+            setTimeout(() => {
+                try { MapManager?.map?.invalidateSize?.({ pan: false, animate: false }); } catch (_) {}
+            }, 60);
+        } catch (_) {}
+
+        // Esc — вернуть интерфейс
+        try {
+            if (!this._boundUiHiddenEsc) {
+                this._boundUiHiddenEsc = true;
+                document.addEventListener('keydown', (e) => {
+                    try {
+                        if (e.key !== 'Escape') return;
+                        if (!document.body.classList.contains('igs-ui-hidden')) return;
+                        e.preventDefault();
+                        this.toggleUiHiddenMode(false);
+                    } catch (_) {}
+                });
+            }
+        } catch (_) {}
     },
 
     // ========================

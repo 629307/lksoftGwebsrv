@@ -92,6 +92,46 @@ a:hover {
     background: #ffffff !important;
 }
 
+/* Hide UI controls (full-screen map) */
+body.igs-ui-hidden .top-bar,
+body.igs-ui-hidden .sidebar,
+body.igs-ui-hidden #sidebar-overlay,
+body.igs-ui-hidden #notifications,
+body.igs-ui-hidden #modal {
+    display: none !important;
+}
+
+body.igs-ui-hidden .main-container,
+body.igs-ui-hidden .content,
+body.igs-ui-hidden #content-map {
+    height: 100vh !important;
+}
+
+body.igs-ui-hidden #content-map {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    z-index: 1 !important;
+}
+
+body.igs-ui-hidden #map {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+body.igs-ui-hidden #map-toolbar,
+body.igs-ui-hidden #cursor-coordinates,
+body.igs-ui-hidden #object-info-panel,
+body.igs-ui-hidden .assumed-cables-panel,
+body.igs-ui-hidden .inventory-reco-panel,
+body.igs-ui-hidden .cables-list-panel,
+body.igs-ui-hidden #highlight-bar,
+body.igs-ui-hidden .leaflet-control-container {
+    display: none !important;
+}
+
 /* Freeze Leaflet animations/transforms during export */
 .igs-pdf-export .leaflet-zoom-animated,
 .igs-pdf-export .leaflet-fade-anim .leaflet-tile,
