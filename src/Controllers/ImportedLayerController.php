@@ -242,6 +242,82 @@ class ImportedLayerController extends BaseController
     }
 
     /**
+     * GET /api/imported-layers/{code}/features
+     * Возвращает объекты слоя (постранично) в порядке:
+     * point -> line -> other (polygon etc).
+     *
+     * Query:
+     * - limit (default 500, max 5000)
+     * - offset (default 0)
+     */
+    public function features(string $code): void
+    {
+        $code = $this->ensureSafeIdent(strtolower(trim($code)));
+        try {
+            $layer = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
+        } catch (\PDOException $e) {
+            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+        }
+        if (!$layer) Response::error('Слой не найден', 404);
+
+        $table = $this->ensureSafeIdent((string) ($layer['table_name'] ?? ''));
+        $geomCol = $this->ensureSafeIdent((string) ($layer['geometry_column'] ?? 'geom'));
+
+        $limit = (int) ($this->request->query('limit', 500) ?? 500);
+        if ($limit <= 0) $limit = 500;
+        if ($limit > 5000) $limit = 5000;
+        $offset = (int) ($this->request->query('offset', 0) ?? 0);
+        if ($offset < 0) $offset = 0;
+
+        try {
+            $totalRow = $this->db->fetch("SELECT COUNT(*)::int AS cnt FROM {$table} WHERE {$geomCol} IS NOT NULL");
+            $total = (int) ($totalRow['cnt'] ?? 0);
+        } catch (\PDOException $e) {
+            Response::error('Ошибка чтения слоя из БД', 500);
+        }
+
+        // ordering by geometry type (point -> line -> other)
+        $orderCase = "CASE
+            WHEN ST_GeometryType({$geomCol}) IN ('ST_Point','ST_MultiPoint') THEN 1
+            WHEN ST_GeometryType({$geomCol}) IN ('ST_LineString','ST_MultiLineString') THEN 2
+            ELSE 3
+        END";
+
+        $sql = "SELECT *, ST_AsGeoJSON({$geomCol}) AS __geometry, ST_GeometryType({$geomCol}) AS __gtype
+                FROM {$table}
+                WHERE {$geomCol} IS NOT NULL
+                ORDER BY {$orderCase} ASC, gid ASC
+                LIMIT :lim OFFSET :off";
+        try {
+            $rows = $this->db->fetchAll($sql, ['lim' => $limit, 'off' => $offset]);
+        } catch (\PDOException $e) {
+            Response::error('Ошибка чтения слоя из БД', 500);
+        }
+
+        $features = [];
+        foreach ($rows as $r) {
+            $geomRaw = $r['__geometry'] ?? null;
+            $geom = is_string($geomRaw) ? json_decode($geomRaw, true) : null;
+            if (!$geom || !isset($geom['type'])) continue;
+            $gtype = (string) ($r['__gtype'] ?? '');
+            unset($r['__geometry'], $r['__gtype']);
+            unset($r[$geomCol]);
+            // добавим тип геометрии в properties (удобно для UI)
+            $r['_geometry_type'] = $gtype;
+            $features[] = ['type' => 'Feature', 'geometry' => $geom, 'properties' => $r];
+        }
+
+        Response::geojson($features, [
+            'layer_code' => $layer['code'],
+            'layer_name' => $layer['name'],
+            'version' => $layer['version'],
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+        ]);
+    }
+
+    /**
      * POST /api/imported-layers/import
      * multipart/form-data:
      * - name

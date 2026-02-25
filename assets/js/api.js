@@ -814,6 +814,9 @@ const API = {
         geojson(code, params = {}) {
             return API.get(`/imported-layers/${encodeURIComponent(code)}/geojson`, params);
         },
+        features(code, params = {}) {
+            return API.get(`/imported-layers/${encodeURIComponent(code)}/features`, params);
+        },
         importLayer(formData) {
             return API.upload('/imported-layers/import', formData);
         },
