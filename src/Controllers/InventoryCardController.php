@@ -10,11 +10,19 @@ use App\Core\Auth;
 
 class InventoryCardController extends BaseController
 {
+    private function requireNotReadonly(): void
+    {
+        if (Auth::hasRole('readonly')) {
+            Response::error('Инвентаризация недоступна для роли "Только чтение"', 403);
+        }
+    }
+
     /**
      * GET /api/inventory-cards?well_id=..
      */
     public function index(): void
     {
+        $this->requireNotReadonly();
         $pagination = $this->getPagination();
         $filters = $this->buildFilters([
             'well_id' => 'ic.well_id',
@@ -48,6 +56,7 @@ class InventoryCardController extends BaseController
      */
     public function byWell(string $id): void
     {
+        $this->requireNotReadonly();
         $wellId = (int) $id;
         $well = $this->db->fetch("SELECT id FROM wells WHERE id = :id", ['id' => $wellId]);
         if (!$well) Response::error('Колодец не найден', 404);
@@ -68,6 +77,7 @@ class InventoryCardController extends BaseController
      */
     public function wellDirections(string $id): void
     {
+        $this->requireNotReadonly();
         $wellId = (int) $id;
         $well = $this->db->fetch("SELECT id FROM wells WHERE id = :id", ['id' => $wellId]);
         if (!$well) Response::error('Колодец не найден', 404);
@@ -91,6 +101,7 @@ class InventoryCardController extends BaseController
      */
     public function show(string $id): void
     {
+        $this->requireNotReadonly();
         $cardId = (int) $id;
         $card = $this->db->fetch(
             "SELECT ic.id, ic.well_id, ic.seq, ic.number, ic.filled_date, ic.created_at, ic.updated_at,
@@ -152,6 +163,7 @@ class InventoryCardController extends BaseController
      */
     public function store(): void
     {
+        $this->requireNotReadonly();
         $this->checkWriteAccess();
 
         $user = Auth::user();
@@ -223,6 +235,7 @@ class InventoryCardController extends BaseController
      */
     public function update(string $id): void
     {
+        $this->requireNotReadonly();
         $this->checkWriteAccess();
         $cardId = (int) $id;
 
@@ -290,6 +303,7 @@ class InventoryCardController extends BaseController
      */
     public function destroy(string $id): void
     {
+        $this->requireNotReadonly();
         $this->checkDeleteAccess();
         $cardId = (int) $id;
 
@@ -325,6 +339,7 @@ class InventoryCardController extends BaseController
      */
     public function directionsGeojson(): void
     {
+        $this->requireNotReadonly();
         // берём все направления с геометрией и левым джойном на сводную таблицу
         $rows = $this->db->fetchAll(
             "SELECT cd.id, cd.number,
@@ -360,6 +375,7 @@ class InventoryCardController extends BaseController
      */
     public function recalculateUnaccounted(): void
     {
+        $this->requireNotReadonly();
         if (!(Auth::isAdmin() || Auth::canWrite())) {
             Response::error('Недостаточно прав', 403);
         }

@@ -45,7 +45,7 @@
 | Роль Пользователь | `database/schema.sql` | Строки 450-455: INSERT roles 'user' |
 | Роль Администратор | `database/schema.sql` | Строки 450-455: INSERT roles 'admin' |
 | Роль Только чтение | `database/schema.sql` | Строки 450-455: INSERT roles 'readonly' |
-| Админ root/Kolobaha00! | `database/schema.sql` | Строки 458-462: INSERT users 'root' |
+| Админ root (пароль задаётся при установке) | `database/schema.sql` | Строки 458-462: INSERT users 'root' |
 | Проверка авторизации | `src/Core/Auth.php` | Метод `validateToken()` (строки 80-110) |
 | Права по роли | `src/Core/Auth.php` | Методы `can()`, `isAdmin()`, `canWrite()` |
 | API с учётом прав | `src/Controllers/BaseController.php` | Методы `checkWriteAccess()`, `checkDeleteAccess()` |

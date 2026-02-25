@@ -183,8 +183,12 @@ abstract class BaseController
             Response::error('Недопустимый тип файла', 400);
         }
 
-        // Генерируем уникальное имя
-        $filename = uniqid() . '_' . time() . '.' . $ext;
+        // Генерируем уникальное имя (не используем исходное имя пользователя)
+        try {
+            $filename = bin2hex(random_bytes(16)) . '.' . $ext;
+        } catch (\Throwable $e) {
+            $filename = uniqid('', true) . '.' . $ext;
+        }
         $uploadPath = $this->config['upload_path'];
         
         if ($subDir) {
@@ -207,12 +211,28 @@ abstract class BaseController
             Response::error('Ошибка сохранения файла. Проверьте права на папку uploads и свободное место.', 500);
         }
 
+        // MIME тип определяем на сервере (Content-Type от клиента может быть неверным)
+        $mime = 'application/octet-stream';
+        try {
+            if (function_exists('finfo_open')) {
+                $fi = @finfo_open(FILEINFO_MIME_TYPE);
+                if ($fi) {
+                    $m = @finfo_file($fi, $filePath);
+                    @finfo_close($fi);
+                    if (is_string($m) && $m !== '') $mime = $m;
+                }
+            } elseif (function_exists('mime_content_type')) {
+                $m = @mime_content_type($filePath);
+                if (is_string($m) && $m !== '') $mime = $m;
+            }
+        } catch (\Throwable $e) {}
+
         return [
             'filename' => $filename,
             'original_filename' => $file['name'],
             'file_path' => $filePath,
             'file_size' => $file['size'],
-            'mime_type' => $file['type'],
+            'mime_type' => $mime,
         ];
     }
 

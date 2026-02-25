@@ -78,12 +78,31 @@ class IncidentDocumentController extends BaseController
             Response::error('Директория загрузки недоступна для записи', 500);
         }
 
-        $filename = uniqid() . '_' . time() . '.' . $ext;
+        try {
+            $filename = bin2hex(random_bytes(16)) . '.' . $ext;
+        } catch (\Throwable $e) {
+            $filename = uniqid('', true) . '.' . $ext;
+        }
         $filePath = $uploadPath . '/' . $filename;
 
         if (!move_uploaded_file($file['tmp_name'], $filePath)) {
             Response::error('Ошибка сохранения файла', 500);
         }
+
+        $mime = 'application/octet-stream';
+        try {
+            if (function_exists('finfo_open')) {
+                $fi = @finfo_open(FILEINFO_MIME_TYPE);
+                if ($fi) {
+                    $m = @finfo_file($fi, $filePath);
+                    @finfo_close($fi);
+                    if (is_string($m) && $m !== '') $mime = $m;
+                }
+            } elseif (function_exists('mime_content_type')) {
+                $m = @mime_content_type($filePath);
+                if (is_string($m) && $m !== '') $mime = $m;
+            }
+        } catch (\Throwable $e) {}
 
         $user = Auth::user();
         $docId = $this->db->insert('incident_documents', [
@@ -92,7 +111,7 @@ class IncidentDocumentController extends BaseController
             'original_filename' => $file['name'],
             'file_path' => $filePath,
             'file_size' => $file['size'],
-            'mime_type' => $file['type'],
+            'mime_type' => $mime,
             'description' => $this->request->input('description'),
             'uploaded_by' => $user['id'],
         ]);

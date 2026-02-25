@@ -1,14 +1,16 @@
 import os
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'lksoftgwebsrv-secret-key-2024'
+    # Legacy (bk) app config. Do not ship to production.
+    # Do not hardcode secrets in repository.
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'CHANGE_ME'
     
     # Database
-    DB_HOST = os.environ.get('DB_HOST', '10.16.10.150')
+    DB_HOST = os.environ.get('DB_HOST', 'localhost')
     DB_PORT = os.environ.get('DB_PORT', '5432')
     DB_NAME = os.environ.get('DB_NAME', 'lksoftgwebsrv')
     DB_USER = os.environ.get('DB_USER', 'lksoftgwebsrv')
-    DB_PASSWORD = os.environ.get('DB_PASSWORD', 'lksoftGwebsrv')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', '')
     
     DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     
@@ -23,4 +25,4 @@ class Config:
     
     # Default admin credentials
     DEFAULT_ADMIN_LOGIN = 'root'
-    DEFAULT_ADMIN_PASSWORD = 'Kolobaha00!'
+    DEFAULT_ADMIN_PASSWORD = os.environ.get('DEFAULT_ADMIN_PASSWORD', 'CHANGE_ME')

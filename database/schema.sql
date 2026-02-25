@@ -844,8 +844,7 @@ INSERT INTO roles (code, name, description, permissions) VALUES
 ('readonly', 'Только чтение', 'Только просмотр объектов', '{"read": true, "write": false, "delete": false}')
 ON CONFLICT (code) DO NOTHING;
 
--- Администратор по умолчанию (пароль: Kolobaha00!)
--- bcrypt hash для 'Kolobaha00!': $2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi
+-- Администратор по умолчанию (пароль задайте при установке и смените сразу после развёртывания)
 INSERT INTO users (login, password_hash, email, full_name, role_id) 
 SELECT 'root', '$2y$10$MZzcEloBq.ehczL4./cRU.8XYt.NEVPmJBopVITkRZYjmHoB/19DG', 'admin@lksoftg.local', 'Системный администратор', r.id
 FROM roles r WHERE r.code = 'admin'

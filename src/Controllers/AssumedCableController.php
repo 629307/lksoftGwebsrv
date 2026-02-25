@@ -10,12 +10,20 @@ use App\Core\Response;
 
 class AssumedCableController extends BaseController
 {
+    private function requireNotReadonly(): void
+    {
+        if (Auth::hasRole('readonly')) {
+            Response::error('Инвентаризация недоступна для роли "Только чтение"', 403);
+        }
+    }
+
     /**
      * POST /api/assumed-cables/rebuild
      * Пересчитать и сохранить 3 сценария (variant_no=1..3).
      */
     public function rebuild(): void
     {
+        $this->requireNotReadonly();
         $this->checkWriteAccess();
 
         // Если таблиц нет (миграция не применена) — не падать 500.
@@ -1482,6 +1490,7 @@ class AssumedCableController extends BaseController
      */
     public function geojson(): void
     {
+        $this->requireNotReadonly();
         $variantNo = (int) $this->request->query('variant', 1);
         if (!in_array($variantNo, [1, 2, 3], true)) $variantNo = 1;
 
@@ -1566,6 +1575,7 @@ class AssumedCableController extends BaseController
      */
     public function list(): void
     {
+        $this->requireNotReadonly();
         $variantNo = (int) $this->request->query('variant', 1);
         if (!in_array($variantNo, [1, 2, 3], true)) $variantNo = 1;
 
@@ -1697,6 +1707,7 @@ class AssumedCableController extends BaseController
      */
     public function export(): void
     {
+        $this->requireNotReadonly();
         $variantNo = (int) $this->request->query('variant', 1);
         if (!in_array($variantNo, [1, 2, 3], true)) $variantNo = 1;
         $delimiter = (string) $this->request->query('delimiter', ';');
