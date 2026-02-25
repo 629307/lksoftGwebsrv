@@ -63,6 +63,22 @@ class ImportedLayerController extends BaseController
         return $id;
     }
 
+    private function normalizeSrsString(string $raw): string
+    {
+        $s = trim((string) $raw);
+        if ($s === '') return '';
+        // ограничим длину и набор символов (admin-only, но защитимся от мусора)
+        if (strlen($s) > 80) Response::error('Некорректная система координат', 422);
+        if (!preg_match('/^[A-Za-z0-9:_ .+\\-]{3,80}$/', $s)) {
+            Response::error('Некорректная система координат', 422);
+        }
+        // нормализуем EPSG:xxxx
+        if (preg_match('/^epsg\\s*:\\s*(\\d{3,6})$/i', $s, $m)) {
+            return 'EPSG:' . $m[1];
+        }
+        return $s;
+    }
+
     private function rrmdir(string $dir): void
     {
         if (!is_dir($dir)) return;
@@ -299,6 +315,14 @@ class ImportedLayerController extends BaseController
         $styleJson = json_encode($style, JSON_UNESCAPED_UNICODE);
         if (!is_string($styleJson)) $styleJson = '{}';
 
+        // Исходная СК: авто / s_srs / a_srs
+        $sourceMode = strtolower(trim((string) $this->request->input('source_srs_mode', 'auto')));
+        if (!in_array($sourceMode, ['auto', 's_srs', 'a_srs'], true)) $sourceMode = 'auto';
+        $sourceSrs = $this->normalizeSrsString((string) $this->request->input('source_srs', ''));
+        if ($sourceMode !== 'auto' && $sourceSrs === '') {
+            Response::error('Укажите исходную систему координат (например EPSG:3857)', 422);
+        }
+
         // Проверим наличие ogr2ogr
         $ogrPath = @shell_exec('command -v ogr2ogr 2>/dev/null');
         $ogrPath = is_string($ogrPath) ? trim($ogrPath) : '';
@@ -320,6 +344,12 @@ class ImportedLayerController extends BaseController
         $pg = trim($pg);
 
         // Импорт: перезаписываем таблицу при повторной загрузке
+        $srsOpt = '';
+        if ($sourceMode === 's_srs') {
+            $srsOpt = ' -s_srs ' . escapeshellarg($sourceSrs);
+        } elseif ($sourceMode === 'a_srs') {
+            $srsOpt = ' -a_srs ' . escapeshellarg($sourceSrs);
+        }
         $cmd =
             'ogr2ogr -f PostgreSQL ' . escapeshellarg($pg) . ' ' . escapeshellarg($tabPath) .
             ' -nln ' . escapeshellarg($tableName) .
@@ -327,6 +357,7 @@ class ImportedLayerController extends BaseController
             ' -lco FID=gid' .
             ' -lco SPATIAL_INDEX=GIST' .
             ' -nlt PROMOTE_TO_MULTI' .
+            $srsOpt .
             ' -t_srs EPSG:4326' .
             ' -overwrite' .
             ' -skipfailures';

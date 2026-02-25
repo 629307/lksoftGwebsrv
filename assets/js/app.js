@@ -1804,6 +1804,24 @@ const App = {
                     <input type="file" id="imported-layer-id" accept=".id">
                 </div>
                 <p class="text-muted">Все 4 файла обязательны и должны иметь одинаковое базовое имя.</p>
+                <div class="text-muted" id="imported-tab-coordsys-detected" style="margin-top:6px;"></div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>Исходная система координат</label>
+                    <select id="imported-source-srs-mode">
+                        <option value="auto">Авто (из TAB)</option>
+                        <option value="s_srs">Задать (s_srs)</option>
+                        <option value="a_srs">Назначить (a_srs)</option>
+                    </select>
+                    <p class="text-muted">Если TAB содержит неверный/отсутствующий CoordSys — используйте “Задать” или “Назначить”.</p>
+                </div>
+                <div class="form-group">
+                    <label>Исходная СК (например EPSG:3857)</label>
+                    <input type="text" id="imported-source-srs" placeholder="EPSG:XXXX">
+                    <p class="text-muted">После импорта слой будет переведён в WGS84 (EPSG:4326).</p>
+                </div>
             </div>
 
             <hr style="margin: 14px 0;">
@@ -1871,6 +1889,34 @@ const App = {
                 if (selL) selL.value = String(l.style ?? 'solid');
             } catch (_) {}
 
+            // autodetect CoordSys from TAB
+            try {
+                const tabInput = document.getElementById('imported-layer-tab');
+                const out = document.getElementById('imported-tab-coordsys-detected');
+                if (out) out.textContent = '';
+                const detect = async (file) => {
+                    if (!file || !out) return;
+                    try {
+                        const text = await file.text();
+                        const lines = text.split(/\r?\n/);
+                        const cs = lines.find(x => /^\s*CoordSys\b/i.test(x)) || '';
+                        if (cs) {
+                            out.textContent = `Обнаружено в TAB: ${cs.trim().slice(0, 220)}`;
+                        } else {
+                            out.textContent = 'CoordSys в TAB не найден (может быть бинарный TAB или иной формат).';
+                        }
+                    } catch (_) {
+                        if (out) out.textContent = '';
+                    }
+                };
+                if (tabInput) {
+                    tabInput.addEventListener('change', async () => {
+                        const f = tabInput?.files?.[0];
+                        await detect(f);
+                    });
+                }
+            } catch (_) {}
+
             const btn = document.getElementById('btn-imported-layer-start');
             if (!btn) return;
             btn.addEventListener('click', async (e) => {
@@ -1898,6 +1944,8 @@ const App = {
                 formData.append('dat_file', fDat);
                 formData.append('map_file', fMap);
                 formData.append('id_file', fId);
+                formData.append('source_srs_mode', (document.getElementById('imported-source-srs-mode')?.value || 'auto'));
+                formData.append('source_srs', (document.getElementById('imported-source-srs')?.value || ''));
                 formData.append('point_symbol', (document.getElementById('imported-point-symbol')?.value || 'circle'));
                 formData.append('point_size', (document.getElementById('imported-point-size')?.value || '10'));
                 formData.append('point_color', (document.getElementById('imported-point-color')?.value || '#ff0000'));
