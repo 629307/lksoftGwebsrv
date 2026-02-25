@@ -1993,6 +1993,7 @@ const App = {
                         </div>
                         <div style="display:flex; gap:8px; flex: 0 0 auto; align-items:center;">
                             <button class="btn btn-secondary btn-sm btn-imported-layer-reimport" data-code="${esc(code)}"><i class="fas fa-file-import"></i> Переимпорт</button>
+                            <button class="btn btn-danger btn-sm btn-imported-layer-delete" data-code="${esc(code)}"><i class="fas fa-trash"></i> Удалить</button>
                             <button class="btn btn-primary btn-sm btn-imported-layer-save-style" data-code="${esc(code)}"><i class="fas fa-save"></i> Сохранить стиль</button>
                         </div>
                     </div>
@@ -2065,6 +2066,36 @@ const App = {
                 const code = (e.currentTarget?.dataset?.code ?? '').toString();
                 const meta = rows.find(x => String(x?.code ?? '') === code) || null;
                 this.showImportedLayerImportModal({ code, name: meta?.name ?? '', style: meta?.style ?? {} });
+            });
+        });
+        document.querySelectorAll('.btn-imported-layer-delete').forEach((b) => {
+            b.addEventListener('click', async (e) => {
+                const code = (e.currentTarget?.dataset?.code ?? '').toString();
+                if (!code) return;
+                const meta = rows.find(x => String(x?.code ?? '') === code) || null;
+                const name = (meta?.name ?? code).toString();
+                if (!confirm(`Удалить импортированный слой "${name}" (code: ${code})?\n\nБудет удалена таблица PostGIS и метаданные слоя.`)) {
+                    return;
+                }
+                try {
+                    const resp = await API.importedLayers.delete(code);
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                    this.notify(resp?.message || 'Слой удалён', 'success');
+
+                    // Снимем активацию для текущего пользователя (если была)
+                    try {
+                        const set = this._parseCsvSet_(this.settings?.imported_layers_enabled ?? '');
+                        set.delete(code);
+                        const csv = this._setToCsv_(set);
+                        const r2 = await API.settings.update({ imported_layers_enabled: csv });
+                        if (!(r2?.success === false)) this.settings.imported_layers_enabled = csv;
+                    } catch (_) {}
+
+                    await this.refreshImportedLayersMeta({ applyToMap: true });
+                    await this.renderImportedLayersSettingsBlock_();
+                } catch (err) {
+                    this.notify(err?.message || 'Не удалось удалить слой', 'error');
+                }
             });
         });
         document.querySelectorAll('.btn-imported-layer-save-style').forEach((b) => {

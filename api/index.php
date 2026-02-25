@@ -357,6 +357,7 @@ $router->get('/api/imported-layers', [ImportedLayerController::class, 'index'], 
 $router->get('/api/imported-layers/{code}/geojson', [ImportedLayerController::class, 'geojson'], ['auth']);
 $router->post('/api/imported-layers/import', [ImportedLayerController::class, 'import'], ['auth']);
 $router->put('/api/imported-layers/{code}/style', [ImportedLayerController::class, 'updateStyle'], ['auth']);
+$router->delete('/api/imported-layers/{code}', [ImportedLayerController::class, 'destroy'], ['auth']);
 
 // Фотографии
 $router->post('/api/photos', [PhotoController::class, 'upload'], ['auth']);

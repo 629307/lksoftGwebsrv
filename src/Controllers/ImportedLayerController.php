@@ -435,5 +435,41 @@ class ImportedLayerController extends BaseController
         try { $this->log('update_imported_layer_style', 'imported_layers', (int) ($layer['id'] ?? 0), ['style_json' => $layer['style_json'] ?? null], ['style_json' => $styleJson]); } catch (\Throwable $e) {}
         Response::success(['code' => $code, 'style' => $style], 'Настройки слоя сохранены');
     }
+
+    /**
+     * DELETE /api/imported-layers/{code}
+     * Удаление слоя: метаданные + таблица PostGIS
+     */
+    public function destroy(string $code): void
+    {
+        $this->requireAdminLike();
+        $code = $this->ensureSafeIdent(strtolower(trim($code)));
+
+        try {
+            $layer = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
+        } catch (\PDOException $e) {
+            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+        }
+        if (!$layer) Response::error('Слой не найден', 404);
+
+        $table = $this->ensureSafeIdent((string) ($layer['table_name'] ?? ''));
+        $layerId = (int) ($layer['id'] ?? 0);
+
+        $this->db->beginTransaction();
+        try {
+            // 1) удаляем запись
+            $this->db->delete('imported_layers', 'id = :id', ['id' => $layerId]);
+            // 2) удаляем таблицу (CASCADE на случай зависимостей индексов/вьюх)
+            $this->db->query("DROP TABLE IF EXISTS {$table} CASCADE");
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            Response::error('Ошибка удаления импортированного слоя', 500);
+        }
+
+        try { $this->log('delete_imported_layer', 'imported_layers', $layerId, $layer, null); } catch (\Throwable $e) {}
+        Response::success(['code' => $code], 'Слой удалён');
+    }
 }
 
