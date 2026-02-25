@@ -67,16 +67,25 @@ class ImportedLayerController extends BaseController
     {
         $s = trim((string) $raw);
         if ($s === '') return '';
-        // ограничим длину и набор символов (admin-only, но защитимся от мусора)
-        if (strlen($s) > 80) Response::error('Некорректная система координат', 422);
-        if (!preg_match('/^[A-Za-z0-9:_ .+\\-]{3,80}$/', $s)) {
-            Response::error('Некорректная система координат', 422);
-        }
-        // нормализуем EPSG:xxxx
+        // EPSG:xxxx
         if (preg_match('/^epsg\\s*:\\s*(\\d{3,6})$/i', $s, $m)) {
             return 'EPSG:' . $m[1];
         }
-        return $s;
+
+        // PROJ строка в двойных кавычках (обязательно, по ТЗ)
+        // Пример: "+proj=tmerc +lat_0=0 +lon_0=78 ..."
+        // Кавычки нужны для ввода/копипаста; для ogr2ogr передадим строку без внешних кавычек.
+        if (preg_match('/^"([^"\\r\\n]{3,480})"$/', $s, $m)) {
+            $inner = (string) $m[1];
+            // базовая защита от управляющих символов
+            if (preg_match('/[\\x00-\\x1F\\x7F]/', $inner)) {
+                Response::error('Некорректная система координат', 422);
+            }
+            return $inner;
+        }
+
+        Response::error('Некорректная система координат. Используйте EPSG:XXXX или PROJ-строку в двойных кавычках.', 422);
+        return '';
     }
 
     private function rrmdir(string $dir): void
