@@ -45,6 +45,10 @@ const MapManager = {
     // Подписи длины направлений: глобальный режим (для всех видимых слоёв, где есть направления)
     directionLengthLabelsGlobalEnabled: false,
     directionLengthLabelsLayer: null,
+    // Импортированные слои (MapInfo -> PostGIS)
+    importedLayersMeta: [],
+    importedLayers: new Map(), // code => { group: L.FeatureGroup, version: string, lastBbox: string }
+    _importedLayersMoveTimer: null,
     // Легенда по собственникам (раскраска по owners.color)
     ownersLegendEnabled: false,
     ownersLegendEl: null,
@@ -409,6 +413,290 @@ const MapManager = {
             this.ensurePane('popupPane', 1100);
             this.ensurePane('tooltipPane', 1110);
         } catch (_) {}
+    },
+
+    // ========================
+    // Импортированные слои (MapInfo -> PostGIS)
+    // ========================
+    _importedLayerKey(code) {
+        return `imported_${String(code || '').toLowerCase()}`;
+    },
+
+    _importedLayerPane(code) {
+        return `imported_${String(code || '').toLowerCase()}Pane`;
+    },
+
+    setImportedLayersMeta(layers) {
+        const rows = Array.isArray(layers) ? layers : [];
+        this.importedLayersMeta = rows;
+
+        // Удаляем старые items для импортированных слоёв
+        try {
+            this.layerOrderItems = (this.layerOrderItems || []).filter(x => !(x?.key || '').toString().startsWith('imported_'));
+        } catch (_) {}
+
+        // Добавляем items перед baseMap
+        const baseIdx = (this.layerOrderItems || []).findIndex(x => x?.key === 'baseMap');
+        const insertAt = baseIdx >= 0 ? baseIdx : (this.layerOrderItems || []).length;
+
+        const newItems = [];
+        rows.forEach((l) => {
+            const code = (l?.code ?? '').toString().trim().toLowerCase();
+            if (!code) return;
+            if (!/^[a-z0-9_]{1,63}$/.test(code)) return;
+            const key = this._importedLayerKey(code);
+            const pane = this._importedLayerPane(code);
+            const title = `Импортированный слой — ${String(l?.name ?? code)}`;
+            newItems.push({ key, title, panes: [pane] });
+
+            // ensure group exists
+            if (!this.importedLayers.has(code)) {
+                try { this.importedLayers.set(code, { group: L.featureGroup(), version: '', lastBbox: '' }); } catch (_) {}
+            }
+        });
+
+        try {
+            (this.layerOrderItems || []).splice(insertAt, 0, ...newItems);
+        } catch (_) {
+            this.layerOrderItems = (this.layerOrderItems || []).concat(newItems);
+        }
+
+        // Применяем порядок (без сохранения) и пересоздаём panes для новых слоёв
+        try { this.setLayerOrderKeys(this.getCurrentLayerOrderKeys(), { save: false }); } catch (_) {}
+
+        // Если слои уже активированы — подгрузим/обновим
+        try { this.applyImportedLayersEnabledFromSettings(); } catch (_) {}
+    },
+
+    _getImportedLayerMeta(code) {
+        const c = String(code || '').toLowerCase();
+        return (this.importedLayersMeta || []).find(x => String(x?.code ?? '').toLowerCase() === c) || null;
+    },
+
+    _getImportedLayersEnabledSetFromSettings() {
+        try {
+            const raw = (typeof App !== 'undefined' ? (App?.settings?.imported_layers_enabled ?? '') : '');
+            const s = (raw ?? '').toString().trim();
+            if (!s) return new Set();
+            return new Set(s.split(',').map(x => (x ?? '').toString().trim().toLowerCase()).filter(Boolean));
+        } catch (_) {
+            return new Set();
+        }
+    },
+
+    applyImportedLayersEnabledFromSettings() {
+        const enabled = this._getImportedLayersEnabledSetFromSettings();
+        (this.importedLayersMeta || []).forEach((l) => {
+            const code = (l?.code ?? '').toString().trim().toLowerCase();
+            if (!code) return;
+            this.setImportedLayerEnabled(code, enabled.has(code));
+        });
+
+        // подписываемся на moveend для динамической подгрузки bbox
+        try {
+            if (this.map && !this._importedLayersMoveBound) {
+                this._importedLayersMoveBound = true;
+                this.map.on('moveend', () => {
+                    try { this._scheduleRefreshImportedLayersInView(); } catch (_) {}
+                });
+            }
+        } catch (_) {}
+    },
+
+    setImportedLayerEnabled(code, enabled) {
+        const c = String(code || '').toLowerCase();
+        if (!c) return;
+        const meta = this._getImportedLayerMeta(c);
+        if (!meta) return;
+        const pane = this._importedLayerPane(c);
+
+        let st = this.importedLayers.get(c);
+        if (!st) {
+            st = { group: L.featureGroup(), version: '', lastBbox: '' };
+            this.importedLayers.set(c, st);
+        }
+        const grp = st.group;
+        if (!grp || !this.map) return;
+
+        const has = this.map.hasLayer(grp);
+        if (enabled && !has) {
+            try { grp.addTo(this.map); } catch (_) {}
+            // загрузим в пределах текущего bbox
+            try { this.refreshImportedLayer(c, { force: false, pane }); } catch (_) {}
+        }
+        if (!enabled && has) {
+            try { this.map.removeLayer(grp); } catch (_) {}
+        }
+    },
+
+    _currentBboxString() {
+        try {
+            if (!this.map) return '';
+            const b = this.map.getBounds?.();
+            if (!b) return '';
+            const w = b.getWest();
+            const s = b.getSouth();
+            const e = b.getEast();
+            const n = b.getNorth();
+            if (![w, s, e, n].every(Number.isFinite)) return '';
+            const f = (x) => (Math.round(Number(x) * 1000000) / 1000000).toFixed(6);
+            return `${f(w)},${f(s)},${f(e)},${f(n)}`;
+        } catch (_) {
+            return '';
+        }
+    },
+
+    _scheduleRefreshImportedLayersInView() {
+        try {
+            if (this._importedLayersMoveTimer) clearTimeout(this._importedLayersMoveTimer);
+            this._importedLayersMoveTimer = setTimeout(() => {
+                try { this.refreshEnabledImportedLayersInView(); } catch (_) {}
+            }, 250);
+        } catch (_) {}
+    },
+
+    refreshEnabledImportedLayersInView() {
+        const bbox = this._currentBboxString();
+        if (!bbox) return;
+        (this.importedLayersMeta || []).forEach((l) => {
+            const code = (l?.code ?? '').toString().trim().toLowerCase();
+            if (!code) return;
+            const st = this.importedLayers.get(code);
+            if (!st || !st.group || !this.map || !this.map.hasLayer(st.group)) return;
+            // обновляем только если bbox изменился
+            if ((st.lastBbox || '') === bbox) return;
+            try { this.refreshImportedLayer(code, { force: false }); } catch (_) {}
+        });
+    },
+
+    _dashArrayForLineStyle(style) {
+        const s = (style ?? '').toString().toLowerCase().trim();
+        if (s === 'dash') return '8, 6';
+        if (s === 'dot') return '2, 6';
+        if (s === 'dashdot') return '8, 6, 2, 6';
+        return null; // solid
+    },
+
+    _buildImportedPointDivIcon(symbol, size, color) {
+        const s = (symbol ?? 'circle').toString().toLowerCase().trim();
+        const sz0 = Number(size);
+        const sz = (Number.isFinite(sz0) ? sz0 : 10);
+        const px = Math.max(2, Math.min(200, Math.round(sz)));
+        const col = (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) ? color : '#ff0000';
+
+        let html = '';
+        let anchor = [px / 2, px / 2];
+        if (s === 'triangle') {
+            // треугольник вверх
+            const half = Math.round(px / 2);
+            html = `<div style="width:0;height:0;border-left:${half}px solid transparent;border-right:${half}px solid transparent;border-bottom:${px}px solid ${col};filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));"></div>`;
+            anchor = [half, px * 0.75];
+        } else if (s === 'square') {
+            html = `<div style="width:${px}px;height:${px}px;background:${col};border-radius:3px;border:2px solid rgba(0,0,0,0.35);box-sizing:border-box;"></div>`;
+        } else {
+            // circle / marker fallback
+            html = `<div style="width:${px}px;height:${px}px;background:${col};border-radius:50%;border:2px solid rgba(0,0,0,0.35);box-sizing:border-box;"></div>`;
+        }
+
+        return L.divIcon({
+            className: 'imported-point-icon',
+            html,
+            iconSize: [px, px],
+            iconAnchor: anchor,
+        });
+    },
+
+    _bindImportedLayerPopup(layer, props) {
+        try {
+            const p = props || {};
+            const keys = Object.keys(p || {}).slice(0, 50);
+            const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const html = keys.map((k) => `<div style="display:flex; gap:8px;"><div style="min-width:120px; color:#666;">${esc(k)}</div><div style="flex:1 1 auto;">${esc(p[k])}</div></div>`).join('');
+            layer.bindPopup(`<div style="max-height:260px; overflow:auto;">${html || '<div class="text-muted">Нет данных</div>'}</div>`, { maxWidth: 420 });
+        } catch (_) {}
+    },
+
+    async refreshImportedLayer(code, opts = {}) {
+        const c = String(code || '').toLowerCase();
+        const meta = this._getImportedLayerMeta(c);
+        if (!meta) return;
+
+        let st = this.importedLayers.get(c);
+        if (!st) {
+            st = { group: L.featureGroup(), version: '', lastBbox: '' };
+            this.importedLayers.set(c, st);
+        }
+        if (!this.map || !st.group || !this.map.hasLayer(st.group)) return;
+
+        const bbox = this._currentBboxString();
+        const force = !!opts.force;
+        const version = (meta?.version ?? '').toString();
+        if (!force && st.version === version && st.lastBbox === bbox && bbox) return;
+
+        const style = meta?.style || {};
+        const p = style.point || {};
+        const ln = style.line || {};
+        const pointSymbol = p.symbol ?? 'circle';
+        const pointSize = p.size ?? 10;
+        const pointColor = p.color ?? '#ff0000';
+        const lineStyle = ln.style ?? 'solid';
+        const lineWeight = ln.weight ?? 2;
+        const lineColor = ln.color ?? '#0066ff';
+
+        try {
+            const resp = await API.importedLayers.geojson(c, bbox ? { bbox } : {});
+            if (resp?.success === false) return;
+            if (!resp?.type || resp.type !== 'FeatureCollection' || !Array.isArray(resp.features)) return;
+
+            // если сервер вернул обновлённый стиль — используем его
+            try {
+                const st0 = resp?.properties?.style;
+                if (st0 && typeof st0 === 'object') {
+                    const pp = st0.point || {};
+                    const ll = st0.line || {};
+                    if (pp.symbol) meta.style.point.symbol = pp.symbol;
+                    if (pp.size) meta.style.point.size = pp.size;
+                    if (pp.color) meta.style.point.color = pp.color;
+                    if (ll.style) meta.style.line.style = ll.style;
+                    if (ll.weight) meta.style.line.weight = ll.weight;
+                    if (ll.color) meta.style.line.color = ll.color;
+                }
+            } catch (_) {}
+
+            st.group.clearLayers();
+            const pane = this._importedLayerPane(c);
+            const dashArray = this._dashArrayForLineStyle(lineStyle);
+
+            const layer = L.geoJSON(resp, {
+                pane,
+                style: (feature) => {
+                    const t = feature?.geometry?.type || '';
+                    const base = {
+                        color: lineColor,
+                        weight: Math.max(0.5, Math.min(50, Number(lineWeight) || 2)),
+                        opacity: 0.85,
+                    };
+                    if (dashArray) base.dashArray = dashArray;
+                    if (t === 'Polygon' || t === 'MultiPolygon') {
+                        return { ...base, fillColor: lineColor, fillOpacity: 0.15 };
+                    }
+                    return base;
+                },
+                pointToLayer: (feature, latlng) => {
+                    const icon = this._buildImportedPointDivIcon(pointSymbol, pointSize, pointColor);
+                    return L.marker(latlng, { icon, pane });
+                },
+                onEachFeature: (feature, lyr) => {
+                    try { this._bindImportedLayerPopup(lyr, feature?.properties || {}); } catch (_) {}
+                },
+            });
+            layer.addTo(st.group);
+
+            st.version = version;
+            st.lastBbox = bbox || st.lastBbox;
+        } catch (_) {
+            // ignore
+        }
     },
 
     getDirectionLengthLabelFontSizePx() {

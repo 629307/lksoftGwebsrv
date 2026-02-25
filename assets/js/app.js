@@ -207,6 +207,9 @@ const App = {
         // Инициализируем карту
         MapManager.init();
 
+        // Импортированные слои: загрузим метаданные и применим активацию из настроек
+        try { this.refreshImportedLayersMeta({ applyToMap: true }).catch(() => {}); } catch (_) {}
+
         // Админ: периодическая проверка расписания бэкапов (создаст бэкап только если "пора")
         if (this.isAdmin()) {
             try {
@@ -423,6 +426,9 @@ const App = {
         const linkCad = document.getElementById('link-cadastre');
         if (linkGeo && g) linkGeo.href = g;
         if (linkCad && c) linkCad.href = c;
+
+        // Импортированные слои: применяем активацию из настроек (персонально)
+        try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
     },
 
     /**
@@ -565,6 +571,18 @@ const App = {
         document.getElementById('btn-layer-order')?.addEventListener('click', (e) => {
             try { e.preventDefault(); } catch (_) {}
             try { this.showLayerOrderModal(); } catch (_) {}
+        });
+
+        // Импортированные слои: активация (для всех ролей)
+        document.getElementById('btn-imported-layers-activate')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            try { this.showImportedLayersActivateModal(); } catch (_) {}
+        });
+
+        // Импорт MapInfo слоя (только админ; кнопка находится в панели настроек)
+        document.getElementById('btn-imported-layer-import')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            try { this.showImportedLayerImportModal(); } catch (_) {}
         });
 
         // Линейка (измерение расстояний)
@@ -1640,6 +1658,444 @@ const App = {
                 }
             });
         }, 0);
+    },
+
+    // ========================
+    // Импортированные слои (MapInfo -> PostGIS)
+    // ========================
+    _parseCsvSet_(raw) {
+        const s = (raw ?? '').toString().trim();
+        if (!s) return new Set();
+        return new Set(
+            s.split(',')
+                .map(x => (x ?? '').toString().trim())
+                .filter(Boolean)
+        );
+    },
+
+    _setToCsv_(set) {
+        try {
+            return Array.from(set || []).map(x => (x ?? '').toString().trim()).filter(Boolean).join(',');
+        } catch (_) {
+            return '';
+        }
+    },
+
+    async refreshImportedLayersMeta(opts = {}) {
+        const applyToMap = (opts?.applyToMap !== false);
+        try {
+            const resp = await API.importedLayers.list();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const rows = resp?.data || resp || [];
+            this.importedLayersMeta = Array.isArray(rows) ? rows : [];
+            if (applyToMap) {
+                try { MapManager?.setImportedLayersMeta?.(this.importedLayersMeta); } catch (_) {}
+                try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
+            }
+            return this.importedLayersMeta;
+        } catch (e) {
+            this.importedLayersMeta = [];
+            return [];
+        }
+    },
+
+    showImportedLayersActivateModal() {
+        const isReadonly = ((this.user?.role?.code || '') === 'readonly');
+        if (isReadonly) {
+            this.notify('Роль "Только чтение": доступно', 'info');
+        }
+
+        const render = (layers) => {
+            const enabled = this._parseCsvSet_(this.settings?.imported_layers_enabled ?? '');
+            const rows = (Array.isArray(layers) ? layers : []).map((l) => {
+                const code = (l?.code ?? '').toString();
+                const name = (l?.name ?? l?.code ?? '').toString();
+                const checked = enabled.has(code);
+                return `
+                    <label style="display:flex; align-items:center; gap:10px; padding:8px 6px; border-radius:8px;">
+                        <input type="checkbox" class="imported-layer-enable-cb" data-code="${this.escapeHtml(code)}" ${checked ? 'checked' : ''}>
+                        <span style="flex:1 1 auto; min-width:0;">
+                            <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.escapeHtml(name)}</div>
+                            <div class="text-muted" style="font-size:12px;">code: ${this.escapeHtml(code)} • версия: ${this.escapeHtml((l?.version ?? '').toString().slice(0, 12) || '-')}</div>
+                        </span>
+                    </label>
+                `;
+            }).join('');
+            const empty = `<div class="text-muted">Импортированные слои не найдены.</div>`;
+            return `
+                <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                    <button class="btn btn-secondary btn-sm" id="btn-imported-layers-refresh"><i class="fas fa-rotate"></i> Обновить</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px; max-height: 55vh; overflow:auto;">
+                    ${rows || empty}
+                </div>
+                <div class="text-muted" style="margin-top:10px;">Выбранные слои будут отображаться на карте. Порядок задаётся через кнопку "Порядок отображения слоёв".</div>
+            `;
+        };
+
+        const content = render(this.importedLayersMeta || []);
+        const footer = `
+            <button class="btn btn-secondary" onclick="App.hideModal()">Закрыть</button>
+        `;
+        this.showModal('Активировать импортированный слой', content, footer);
+
+        setTimeout(() => {
+            document.getElementById('btn-imported-layers-refresh')?.addEventListener('click', async (e) => {
+                try { e.preventDefault(); } catch (_) {}
+                await this.refreshImportedLayersMeta({ applyToMap: true });
+                try { this.showImportedLayersActivateModal(); } catch (_) {}
+            });
+
+            const cbs = document.querySelectorAll('.imported-layer-enable-cb');
+            cbs.forEach((cb) => {
+                cb.addEventListener('change', async (e) => {
+                    const el = e.currentTarget;
+                    const code = (el?.dataset?.code ?? '').toString();
+                    if (!code) return;
+                    const enabled = this._parseCsvSet_(this.settings?.imported_layers_enabled ?? '');
+                    if (el.checked) enabled.add(code);
+                    else enabled.delete(code);
+                    const csv = this._setToCsv_(enabled);
+                    try {
+                        const resp = await API.settings.update({ imported_layers_enabled: csv });
+                        if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                        this.settings.imported_layers_enabled = csv;
+                        try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
+                    } catch (err) {
+                        // rollback UI
+                        el.checked = !el.checked;
+                        this.notify(err?.message || 'Не удалось сохранить настройку', 'error');
+                    }
+                });
+            });
+        }, 0);
+    },
+
+    showImportedLayerImportModal(prefill = {}) {
+        if (!(this.isAdmin() || this.isRoot())) {
+            this.notify('Доступно только администратору', 'warning');
+            return;
+        }
+
+        const pfName = (prefill?.name ?? '').toString();
+        const pfCode = (prefill?.code ?? '').toString();
+        const st = (prefill?.style ?? {}) || {};
+        const p = st.point || {};
+        const l = st.line || {};
+
+        const content = `
+            <div class="form-group">
+                <label>Имя слоя</label>
+                <input type="text" id="imported-layer-name" placeholder="Напр.: Дома / Опоры / Трассы" value="${this.escapeHtml(pfName)}">
+                <p class="text-muted">Если слой с таким code уже существует — таблица PostGIS будет перезаписана.</p>
+            </div>
+            <div class="form-group">
+                <label>Code (необязательно)</label>
+                <input type="text" id="imported-layer-code" placeholder="латиница/цифры/_ (опционально)" value="${this.escapeHtml(pfCode)}">
+                <p class="text-muted">Если не задан — будет сгенерирован из имени (для кириллицы может быть сформирован как layer_YYYYMMDD_HHMMSS).</p>
+            </div>
+
+            <div class="form-group">
+                <label>Файлы MapInfo слоя</label>
+                <div style="display:grid; grid-template-columns: 1fr; gap:8px;">
+                    <input type="file" id="imported-layer-tab" accept=".tab">
+                    <input type="file" id="imported-layer-dat" accept=".dat">
+                    <input type="file" id="imported-layer-map" accept=".map">
+                    <input type="file" id="imported-layer-id" accept=".id">
+                </div>
+                <p class="text-muted">Все 4 файла обязательны и должны иметь одинаковое базовое имя.</p>
+            </div>
+
+            <hr style="margin: 14px 0;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div>
+                    <div style="font-weight:700; margin-bottom:6px;">Точечные объекты</div>
+                    <div class="form-group">
+                        <label>Символ/обозначение</label>
+                        <select id="imported-point-symbol">
+                            <option value="circle">Круг</option>
+                            <option value="square">Квадрат</option>
+                            <option value="triangle">Треугольник</option>
+                            <option value="marker">Маркер</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Размер (px)</label>
+                        <input type="number" id="imported-point-size" min="2" max="200" step="1" value="${this.escapeHtml(String(p.size ?? 10))}">
+                    </div>
+                    <div class="form-group">
+                        <label>Цвет</label>
+                        <input type="color" id="imported-point-color" value="${this.escapeHtml(String(p.color ?? '#ff0000'))}">
+                    </div>
+                </div>
+                <div>
+                    <div style="font-weight:700; margin-bottom:6px;">Линейные объекты</div>
+                    <div class="form-group">
+                        <label>Стиль линии</label>
+                        <select id="imported-line-style">
+                            <option value="solid">Сплошная</option>
+                            <option value="dash">Пунктир</option>
+                            <option value="dot">Точки</option>
+                            <option value="dashdot">Пунктир-точка</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Толщина</label>
+                        <input type="number" id="imported-line-weight" min="0.5" max="50" step="0.1" value="${this.escapeHtml(String(l.weight ?? 2))}">
+                    </div>
+                    <div class="form-group">
+                        <label>Цвет</label>
+                        <input type="color" id="imported-line-color" value="${this.escapeHtml(String(l.color ?? '#0066ff'))}">
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top:12px;">
+                <div class="progress hidden" id="imported-layer-progress" style="height:10px; background: var(--bg-tertiary); border-radius:999px; overflow:hidden;">
+                    <div id="imported-layer-progress-bar" style="height:10px; width:0%; background: var(--primary);"></div>
+                </div>
+                <div class="text-muted" id="imported-layer-progress-text" style="margin-top:6px;"></div>
+            </div>
+        `;
+        const footer = `
+            <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+            <button class="btn btn-primary" id="btn-imported-layer-start"><i class="fas fa-upload"></i> Импортировать</button>
+        `;
+        this.showModal('Импорт MapInfo слоя', content, footer);
+
+        setTimeout(() => {
+            try {
+                const selP = document.getElementById('imported-point-symbol');
+                if (selP) selP.value = String(p.symbol ?? 'circle');
+                const selL = document.getElementById('imported-line-style');
+                if (selL) selL.value = String(l.style ?? 'solid');
+            } catch (_) {}
+
+            const btn = document.getElementById('btn-imported-layer-start');
+            if (!btn) return;
+            btn.addEventListener('click', async (e) => {
+                try { e.preventDefault(); } catch (_) {}
+
+                const name = document.getElementById('imported-layer-name')?.value;
+                const code = document.getElementById('imported-layer-code')?.value;
+                const fTab = document.getElementById('imported-layer-tab')?.files?.[0];
+                const fDat = document.getElementById('imported-layer-dat')?.files?.[0];
+                const fMap = document.getElementById('imported-layer-map')?.files?.[0];
+                const fId = document.getElementById('imported-layer-id')?.files?.[0];
+                if (!name || !String(name).trim()) {
+                    this.notify('Укажите имя слоя', 'error');
+                    return;
+                }
+                if (!fTab || !fDat || !fMap || !fId) {
+                    this.notify('Загрузите все 4 файла (.TAB/.DAT/.MAP/.ID)', 'error');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('name', String(name).trim());
+                if (code && String(code).trim()) formData.append('code', String(code).trim());
+                formData.append('tab_file', fTab);
+                formData.append('dat_file', fDat);
+                formData.append('map_file', fMap);
+                formData.append('id_file', fId);
+                formData.append('point_symbol', (document.getElementById('imported-point-symbol')?.value || 'circle'));
+                formData.append('point_size', (document.getElementById('imported-point-size')?.value || '10'));
+                formData.append('point_color', (document.getElementById('imported-point-color')?.value || '#ff0000'));
+                formData.append('line_style', (document.getElementById('imported-line-style')?.value || 'solid'));
+                formData.append('line_weight', (document.getElementById('imported-line-weight')?.value || '2'));
+                formData.append('line_color', (document.getElementById('imported-line-color')?.value || '#0066ff'));
+
+                const prog = document.getElementById('imported-layer-progress');
+                const bar = document.getElementById('imported-layer-progress-bar');
+                const ptxt = document.getElementById('imported-layer-progress-text');
+                try { prog?.classList?.remove('hidden'); } catch (_) {}
+                try { if (ptxt) ptxt.textContent = 'Загрузка файлов...'; } catch (_) {}
+                try { btn.disabled = true; } catch (_) {}
+
+                const uploadWithProgress = () => new Promise((resolve, reject) => {
+                    try {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/api/imported-layers/import', true);
+                        const token = API.getToken?.();
+                        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                        xhr.upload.onprogress = (ev) => {
+                            if (!ev.lengthComputable) return;
+                            const pct = Math.max(0, Math.min(100, Math.round((ev.loaded / ev.total) * 100)));
+                            try { if (bar) bar.style.width = `${pct}%`; } catch (_) {}
+                            try { if (ptxt) ptxt.textContent = `Загрузка файлов: ${pct}%`; } catch (_) {}
+                        };
+                        xhr.onerror = () => reject(new Error('network_error'));
+                        xhr.onload = () => {
+                            try {
+                                const text = xhr.responseText || '';
+                                const data = JSON.parse(text);
+                                resolve(data);
+                            } catch (err) {
+                                reject(new Error('bad_response'));
+                            }
+                        };
+                        xhr.send(formData);
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+
+                try {
+                    const resp = await uploadWithProgress();
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка импорта');
+                    this.notify(resp?.message || 'Слой импортирован', 'success');
+                    this.hideModal();
+                    await this.refreshImportedLayersMeta({ applyToMap: true });
+                    try { await this.loadSettingsPanel?.(); } catch (_) {}
+                } catch (err) {
+                    this.notify(err?.message || 'Ошибка импорта слоя', 'error');
+                } finally {
+                    try { btn.disabled = false; } catch (_) {}
+                }
+            });
+        }, 0);
+    },
+
+    async renderImportedLayersSettingsBlock_() {
+        const block = document.getElementById('settings-imported-layers-block');
+        const listEl = document.getElementById('imported-layers-settings-list');
+        const importBtn = document.getElementById('btn-imported-layer-import');
+        const isAdminLike = (this.isAdmin() || this.isRoot());
+
+        try { if (importBtn) importBtn.classList.toggle('hidden', !isAdminLike); } catch (_) {}
+        try { if (block) block.classList.toggle('hidden', !isAdminLike); } catch (_) {}
+        if (!isAdminLike) return;
+        if (!listEl) return;
+
+        listEl.textContent = 'Загрузка списка...';
+        const layers = await this.refreshImportedLayersMeta({ applyToMap: true });
+        const rows = Array.isArray(layers) ? layers : [];
+        if (!rows.length) {
+            listEl.innerHTML = '<div class="text-muted">Импортированные слои не найдены.</div>';
+            return;
+        }
+
+        const renderRow = (l) => {
+            const code = (l?.code ?? '').toString();
+            const name = (l?.name ?? '').toString();
+            const st = l?.style || {};
+            const p = st.point || {};
+            const ln = st.line || {};
+            const esc = (x) => this.escapeHtml((x ?? '').toString());
+            const v = esc(((l?.version ?? '') || '').toString().slice(0, 12) || '-');
+            const uploaded = esc((l?.uploaded_at ?? '').toString() || '-');
+            return `
+                <div style="border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:10px;">
+                    <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+                        <div style="flex:1 1 280px; min-width:240px;">
+                            <div style="font-weight:800;">${esc(name)}</div>
+                            <div class="text-muted" style="font-size:12px;">code: ${esc(code)} • версия: ${v} • загружено: ${uploaded}</div>
+                        </div>
+                        <div style="display:flex; gap:8px; flex: 0 0 auto; align-items:center;">
+                            <button class="btn btn-secondary btn-sm btn-imported-layer-reimport" data-code="${esc(code)}"><i class="fas fa-file-import"></i> Переимпорт</button>
+                            <button class="btn btn-primary btn-sm btn-imported-layer-save-style" data-code="${esc(code)}"><i class="fas fa-save"></i> Сохранить стиль</button>
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:10px;">
+                        <div>
+                            <div style="font-weight:700; margin-bottom:6px;">Точечные объекты</div>
+                            <div class="form-group">
+                                <label>Символ</label>
+                                <select class="imported-style-point-symbol" data-code="${esc(code)}">
+                                    <option value="circle">Круг</option>
+                                    <option value="square">Квадрат</option>
+                                    <option value="triangle">Треугольник</option>
+                                    <option value="marker">Маркер</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Размер (px)</label>
+                                <input type="number" class="imported-style-point-size" data-code="${esc(code)}" min="2" max="200" step="1" value="${esc(String(p.size ?? 10))}">
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет</label>
+                                <input type="color" class="imported-style-point-color" data-code="${esc(code)}" value="${esc(String(p.color ?? '#ff0000'))}">
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-weight:700; margin-bottom:6px;">Линейные объекты</div>
+                            <div class="form-group">
+                                <label>Стиль линии</label>
+                                <select class="imported-style-line-style" data-code="${esc(code)}">
+                                    <option value="solid">Сплошная</option>
+                                    <option value="dash">Пунктир</option>
+                                    <option value="dot">Точки</option>
+                                    <option value="dashdot">Пунктир-точка</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Толщина</label>
+                                <input type="number" class="imported-style-line-weight" data-code="${esc(code)}" min="0.5" max="50" step="0.1" value="${esc(String(ln.weight ?? 2))}">
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет</label>
+                                <input type="color" class="imported-style-line-color" data-code="${esc(code)}" value="${esc(String(ln.color ?? '#0066ff'))}">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
+
+        listEl.innerHTML = rows.map(renderRow).join('');
+
+        // выставим select значения
+        try {
+            rows.forEach((l) => {
+                const code = (l?.code ?? '').toString();
+                const st = l?.style || {};
+                const p = st.point || {};
+                const ln = st.line || {};
+                const selP = document.querySelector(`.imported-style-point-symbol[data-code="${CSS.escape(code)}"]`);
+                if (selP) selP.value = String(p.symbol ?? 'circle');
+                const selL = document.querySelector(`.imported-style-line-style[data-code="${CSS.escape(code)}"]`);
+                if (selL) selL.value = String(ln.style ?? 'solid');
+            });
+        } catch (_) {}
+
+        // bind actions
+        document.querySelectorAll('.btn-imported-layer-reimport').forEach((b) => {
+            b.addEventListener('click', (e) => {
+                const code = (e.currentTarget?.dataset?.code ?? '').toString();
+                const meta = rows.find(x => String(x?.code ?? '') === code) || null;
+                this.showImportedLayerImportModal({ code, name: meta?.name ?? '', style: meta?.style ?? {} });
+            });
+        });
+        document.querySelectorAll('.btn-imported-layer-save-style').forEach((b) => {
+            b.addEventListener('click', async (e) => {
+                const code = (e.currentTarget?.dataset?.code ?? '').toString();
+                if (!code) return;
+
+                const get = (sel) => document.querySelector(`${sel}[data-code="${CSS.escape(code)}"]`);
+                const style = {
+                    point: {
+                        symbol: (get('.imported-style-point-symbol')?.value || 'circle'),
+                        size: Number(get('.imported-style-point-size')?.value || 10),
+                        color: (get('.imported-style-point-color')?.value || '#ff0000'),
+                    },
+                    line: {
+                        style: (get('.imported-style-line-style')?.value || 'solid'),
+                        weight: Number(get('.imported-style-line-weight')?.value || 2),
+                        color: (get('.imported-style-line-color')?.value || '#0066ff'),
+                    },
+                };
+                try {
+                    const resp = await API.importedLayers.updateStyle(code, style);
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                    this.notify(resp?.message || 'Настройки сохранены', 'success');
+                    await this.refreshImportedLayersMeta({ applyToMap: true });
+                    try { MapManager?.refreshImportedLayer?.(code, { force: true }); } catch (_) {}
+                } catch (err) {
+                    this.notify(err?.message || 'Не удалось сохранить стиль', 'error');
+                }
+            });
+        });
     },
 
     setAssumedCablesModeEnabled(enabled, opts = {}) {
@@ -5799,6 +6255,9 @@ const App = {
             hideSection('settings-section-wmts', true);
             hideSection('settings-section-hotkeys', true);
         }
+
+        // Админ-блок: импортированные слои (стили + переимпорт)
+        try { await this.renderImportedLayersSettingsBlock_(); } catch (_) {}
 
         const z = document.getElementById('settings-map-zoom');
         const lat = document.getElementById('settings-map-lat');

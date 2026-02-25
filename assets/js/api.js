@@ -805,6 +805,24 @@ const API = {
     },
 
     // ========================
+    // Импортированные слои (MapInfo -> PostGIS)
+    // ========================
+    importedLayers: {
+        list() {
+            return API.get('/imported-layers');
+        },
+        geojson(code, params = {}) {
+            return API.get(`/imported-layers/${encodeURIComponent(code)}/geojson`, params);
+        },
+        importLayer(formData) {
+            return API.upload('/imported-layers/import', formData);
+        },
+        updateStyle(code, style) {
+            return API.put(`/imported-layers/${encodeURIComponent(code)}/style`, style);
+        },
+    },
+
+    // ========================
     // Администрирование: журнал действий
     // ========================
     auditLog: {
