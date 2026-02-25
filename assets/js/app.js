@@ -55,6 +55,22 @@ const App = {
         this.bindEvents();
     },
 
+    syncDirectionLengthLabelsButtons_() {
+        try {
+            const channelsCb = document.getElementById('layer-channels');
+            const channelsOn = !!channelsCb?.checked;
+            const btnLayer = document.getElementById('btn-toggle-direction-length-labels');
+            const btnToolbar = document.getElementById('btn-toggle-direction-length-labels-toolbar');
+            if (btnLayer) {
+                btnLayer.disabled = !channelsOn;
+                btnLayer.classList.toggle('active', channelsOn && !!MapManager.directionLengthLabelsEnabled);
+            }
+            if (btnToolbar) {
+                btnToolbar.classList.toggle('active', !!MapManager.directionLengthLabelsGlobalEnabled);
+            }
+        } catch (_) {}
+    },
+
     /**
      * Показ экрана авторизации
      */
@@ -153,6 +169,7 @@ const App = {
                     'btn-toggle-well-labels',
                     'btn-toggle-object-coordinates',
                     'btn-toggle-direction-length-labels',
+                    'btn-toggle-direction-length-labels-toolbar',
                     'btn-toggle-owner-legend',
                     // безопасная операция (не меняет данные) — разрешаем всем
                     'btn-refresh-map',
@@ -272,6 +289,11 @@ const App = {
                 btn.disabled = !checked;
                 btn.classList.toggle('active', checked && !!MapManager.directionLengthLabelsEnabled);
             }
+        } catch (_) {}
+        // при старте: направления (глобальная кнопка в тулбаре)
+        try {
+            const btn = document.getElementById('btn-toggle-direction-length-labels-toolbar');
+            if (btn) btn.classList.toggle('active', !!MapManager.directionLengthLabelsGlobalEnabled);
         } catch (_) {}
 
         // Применяем начальную видимость слоёв (с учётом персональных настроек пользователя)
@@ -1081,7 +1103,12 @@ const App = {
         document.getElementById('btn-toggle-direction-length-labels')?.addEventListener('click', (e) => {
             try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
             MapManager.toggleDirectionLengthLabels();
-            e.currentTarget.classList.toggle('active', MapManager.directionLengthLabelsEnabled);
+            this.syncDirectionLengthLabelsButtons_();
+        });
+        document.getElementById('btn-toggle-direction-length-labels-toolbar')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+            MapManager.toggleDirectionLengthLabelsGlobal?.();
+            this.syncDirectionLengthLabelsButtons_();
         });
         document.getElementById('btn-toggle-owner-legend')?.addEventListener('click', (e) => {
             MapManager.toggleOwnersLegend();
@@ -1422,6 +1449,8 @@ const App = {
                     btn.disabled = !input.checked;
                     btn.classList.toggle('active', input.checked && !!MapManager.directionLengthLabelsEnabled);
                 }
+                // глобальная кнопка в тулбаре не зависит от слоя channels, но синхронизируем её состояние
+                this.syncDirectionLengthLabelsButtons_();
             } catch (_) {}
         }
 
@@ -1452,6 +1481,7 @@ const App = {
                     btn.classList.toggle('active', false);
                 }
             } catch (_) {}
+            try { this.syncDirectionLengthLabelsButtons_(); } catch (_) {}
             this.saveLayerPreferencesDebounced();
             return;
         }
