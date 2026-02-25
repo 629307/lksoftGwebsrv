@@ -1819,8 +1819,8 @@ const App = {
                 </div>
                 <div class="form-group">
                     <label>Исходная СК (например EPSG:3857)</label>
-                    <input type="text" id="imported-source-srs" placeholder="EPSG:XXXX">
-                    <p class="text-muted">После импорта слой будет переведён в WGS84 (EPSG:4326).</p>
+                    <input type="text" id="imported-source-srs" placeholder="EPSG:XXXX или \"+proj=... +no_defs\"">
+                    <p class="text-muted">Для s_srs/a_srs можно указать EPSG:XXXX или PROJ-строку <strong>в двойных кавычках</strong>. После импорта слой будет переведён в WGS84 (EPSG:4326).</p>
                 </div>
             </div>
 
