@@ -21,6 +21,9 @@ class InventoryAttachmentController extends BaseController
      */
     public function byCard(string $id): void
     {
+        if (Auth::hasRole('readonly')) {
+            Response::error('Инвентаризация недоступна для роли "Только чтение"', 403);
+        }
         $cardId = (int) $id;
         $card = $this->db->fetch("SELECT id FROM inventory_cards WHERE id = :id", ['id' => $cardId]);
         if (!$card) Response::error('Инвентарная карточка не найдена', 404);
