@@ -102,6 +102,22 @@ class ImportedLayerController extends BaseController
         @rmdir($dir);
     }
 
+    private function tableHasColumn(string $table, string $column): bool
+    {
+        try {
+            $row = $this->db->fetch(
+                "SELECT 1
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = :t AND column_name = :c
+                 LIMIT 1",
+                ['t' => $table, 'c' => $column]
+            );
+            return !!$row;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     private function readStyleFromRequest(array $data): array
     {
         $p = $data['point'] ?? [];
@@ -291,11 +307,12 @@ class ImportedLayerController extends BaseController
             WHEN ST_GeometryType({$geomCol}) IN ('ST_LineString','ST_MultiLineString') THEN 2
             ELSE 3
         END";
+        $orderId = $this->tableHasColumn($table, 'gid') ? 'gid' : ($this->tableHasColumn($table, 'id') ? 'id' : null);
 
         $sql = "SELECT *, ST_AsGeoJSON({$geomCol}) AS __geometry, ST_GeometryType({$geomCol}) AS __gtype
                 FROM {$table}
                 WHERE {$geomCol} IS NOT NULL
-                ORDER BY {$orderCase} ASC, gid ASC
+                ORDER BY {$orderCase} ASC" . ($orderId ? (", {$orderId} ASC") : "") . "
                 LIMIT :lim OFFSET :off";
         try {
             $rows = $this->db->fetchAll($sql, ['lim' => $limit, 'off' => $offset]);
@@ -459,6 +476,33 @@ class ImportedLayerController extends BaseController
             Response::error('Ошибка импорта MapInfo слоя: ' . ($tail ?: 'ogr2ogr завершился с ошибкой'), 500);
         }
 
+        // Счётчик импортированных объектов + bbox (WGS84) для удобства проверки
+        $importedCount = null;
+        $extent = null;
+        try {
+            $cntRow = $this->db->fetch("SELECT COUNT(*)::int AS cnt FROM {$tableName} WHERE geom IS NOT NULL");
+            $importedCount = (int) ($cntRow['cnt'] ?? 0);
+        } catch (\Throwable $e) {
+            $importedCount = null;
+        }
+        try {
+            $extRow = $this->db->fetch(
+                "SELECT
+                    ST_XMin(e) AS minx, ST_YMin(e) AS miny, ST_XMax(e) AS maxx, ST_YMax(e) AS maxy
+                 FROM (SELECT ST_Extent(geom) AS e FROM {$tableName} WHERE geom IS NOT NULL) t"
+            );
+            if ($extRow && is_numeric($extRow['minx'] ?? null) && is_numeric($extRow['miny'] ?? null) && is_numeric($extRow['maxx'] ?? null) && is_numeric($extRow['maxy'] ?? null)) {
+                $extent = [
+                    'minx' => (float) $extRow['minx'],
+                    'miny' => (float) $extRow['miny'],
+                    'maxx' => (float) $extRow['maxx'],
+                    'maxy' => (float) $extRow['maxy'],
+                ];
+            }
+        } catch (\Throwable $e) {
+            $extent = null;
+        }
+
         $user = Auth::user();
         $uid = (int) ($user['id'] ?? 0);
 
@@ -509,6 +553,8 @@ class ImportedLayerController extends BaseController
         }
         $saved['style'] = json_decode((string) ($saved['style_json'] ?? '{}'), true) ?: [];
         unset($saved['style_json']);
+        $saved['imported_count'] = $importedCount;
+        if ($extent) $saved['extent_wgs84'] = $extent;
 
         Response::success($saved, 'Слой импортирован');
     }
