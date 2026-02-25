@@ -78,6 +78,11 @@ class Response
         }
 
         $filename = $filename ?? basename($path);
+        // Защита от header injection через имя файла
+        $filename = preg_replace('/[\r\n"]+/', '', (string) $filename);
+        if ($filename === '') {
+            $filename = 'download';
+        }
         $contentType = $contentType ?? mime_content_type($path);
 
         header('Content-Type: ' . $contentType);
