@@ -42,6 +42,8 @@ const MapManager = {
     objectCoordinatesLabelsMinZoom: 14,
     // Подписи длины направлений
     directionLengthLabelsEnabled: false,
+    // Подписи длины направлений: глобальный режим (для всех видимых слоёв, где есть направления)
+    directionLengthLabelsGlobalEnabled: false,
     directionLengthLabelsLayer: null,
     // Легенда по собственникам (раскраска по owners.color)
     ownersLegendEnabled: false,
@@ -847,7 +849,9 @@ const MapManager = {
         this.map.on('zoomend', () => {
             this.updateWellLabelsVisibility();
             this.updateObjectCoordinatesLabelsVisibility();
-            if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+            if (this.directionLengthLabelsEnabled || this.directionLengthLabelsGlobalEnabled) {
+                this.updateDirectionLengthLabelsVisibility();
+            }
         });
         this.updateWellLabelsVisibility();
         this.updateObjectCoordinatesLabelsVisibility();
@@ -962,6 +966,7 @@ const MapManager = {
                     } catch (_) {}
                 },
             }).addTo(this.layers.inventory);
+            if (this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility();
         } catch (_) {
             // ignore
         }
@@ -1700,10 +1705,17 @@ const MapManager = {
     },
 
     rebuildDirectionLengthLabelsFromDirectionsLayer() {
+        // Backward-compatible: "локальный" режим (только слой направлений)
+        this.rebuildDirectionLengthLabelsFromLayerGroup(this.layers?.channels);
+    },
+
+    rebuildDirectionLengthLabelsFromLayerGroup(rootLayerGroup, opts = {}) {
         if (!this.map || !this.directionLengthLabelsLayer) return;
         this.directionLengthLabelsLayer.clearLayers();
 
         const fontSize = this.getDirectionLengthLabelFontSizePx();
+        const dedupe = !!opts.dedupe;
+        const seenIds = new Set();
 
         const traverse = (layer, cb) => {
             if (!layer) return;
@@ -1718,13 +1730,31 @@ const MapManager = {
             const meta = lineLayer?._igsMeta;
             if (!meta || meta.objectType !== 'channel_direction') return;
             const props = meta.properties || {};
-            const lenM = props.length_m;
-            if (lenM === null || lenM === undefined || lenM === '') return;
+
+            const idRaw = (props.id ?? props.direction_id ?? props.object_id ?? null);
+            const id = (idRaw === null || idRaw === undefined) ? null : parseInt(idRaw, 10);
+            if (dedupe && id && seenIds.has(id)) return;
 
             const latlngsRaw = lineLayer.getLatLngs?.();
             if (!latlngsRaw) return;
             const latlngs = Array.isArray(latlngsRaw[0]) ? latlngsRaw[0] : latlngsRaw;
             if (!Array.isArray(latlngs) || latlngs.length < 2) return;
+
+            // length (meters): prefer props.length_m, otherwise compute by geometry
+            let lenM = props.length_m;
+            if (lenM === null || lenM === undefined || lenM === '') {
+                try {
+                    let sum = 0;
+                    for (let i = 1; i < latlngs.length; i++) {
+                        sum += this.map.distance(latlngs[i - 1], latlngs[i]);
+                    }
+                    lenM = sum;
+                } catch (_) {
+                    lenM = null;
+                }
+            }
+            const lenNum = Number(lenM);
+            if (!Number.isFinite(lenNum) || lenNum <= 0) return;
 
             const pts = latlngs.map(ll => this.map.latLngToLayerPoint(ll));
             let total = 0;
@@ -1760,32 +1790,98 @@ const MapManager = {
             // Точка привязки подписи — строго в центре линии
             const pos = this.map.layerPointToLatLng(L.point(mx, my));
 
-            const text = `${Number(lenM).toFixed(2)} м`;
+            const text = `${lenNum.toFixed(2)} м`;
             const icon = L.divIcon({
                 className: 'direction-length-label',
-                // Центрируем текст по точке, и уже затем поворачиваем вдоль линии
                 html: `<div style="transform: translate(-50%, -50%) rotate(${angle}deg); transform-origin: center; white-space: nowrap; font-size:${fontSize}px; color:#111; background: rgba(255,255,255,0.85); border: 1px solid rgba(0,0,0,0.15); border-radius: 6px; padding: 2px 6px;">${text}</div>`,
                 iconAnchor: [0, 0],
             });
             L.marker(pos, { icon, interactive: false, keyboard: false, pane: 'directionLengthLabelsPane' }).addTo(this.directionLengthLabelsLayer);
+
+            if (dedupe && id) seenIds.add(id);
         };
 
-        traverse(this.layers?.channels, addLabelForLine);
+        traverse(rootLayerGroup, addLabelForLine);
+    },
+
+    _anyDirectionLayersVisible() {
+        try {
+            if (!this.map) return false;
+            const has = (name) => !!(this.layers?.[name] && this.map.hasLayer(this.layers[name]));
+            return has('channels') || has('inventory') || has('assumedCables');
+        } catch (_) {
+            return false;
+        }
+    },
+
+    rebuildDirectionLengthLabelsFromVisibleDirectionLayers() {
+        if (!this.map || !this.directionLengthLabelsLayer) return;
+        this.directionLengthLabelsLayer.clearLayers();
+
+        // В глобальном режиме собираем направления из всех ВИДИМЫХ слоёв,
+        // где есть objectType='channel_direction' (channels / inventory / assumedCables base).
+        const groups = [];
+        try {
+            const pushIfVisible = (name) => {
+                const g = this.layers?.[name];
+                if (g && this.map.hasLayer(g)) groups.push(g);
+            };
+            pushIfVisible('channels');
+            pushIfVisible('inventory');
+            pushIfVisible('assumedCables');
+        } catch (_) {}
+
+        // Дедуп по direction id, чтобы не рисовать подпись дважды, если направление видно в нескольких слоях.
+        const wrapper = L.featureGroup();
+        groups.forEach(g => { try { wrapper.addLayer(g); } catch (_) {} });
+        this.rebuildDirectionLengthLabelsFromLayerGroup(wrapper, { dedupe: true });
+    },
+
+    updateDirectionLengthLabelsVisibility() {
+        if (!this.map || !this.directionLengthLabelsLayer) return;
+        const channelsVisible = !!(this.layers?.channels && this.map.hasLayer(this.layers.channels));
+        const anyDirectionsVisible = this._anyDirectionLayersVisible();
+
+        const shouldShow =
+            (this.directionLengthLabelsGlobalEnabled && anyDirectionsVisible) ||
+            (this.directionLengthLabelsEnabled && channelsVisible);
+
+        const has = this.map.hasLayer(this.directionLengthLabelsLayer);
+        if (shouldShow && !has) this.map.addLayer(this.directionLengthLabelsLayer);
+        if (!shouldShow && has) this.map.removeLayer(this.directionLengthLabelsLayer);
+
+        if (!shouldShow) {
+            this.directionLengthLabelsLayer.clearLayers();
+            return;
+        }
+
+        if (this.directionLengthLabelsGlobalEnabled) {
+            this.rebuildDirectionLengthLabelsFromVisibleDirectionLayers();
+        } else {
+            this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+        }
     },
 
     setDirectionLengthLabelsEnabled(enabled) {
         this.directionLengthLabelsEnabled = !!enabled;
-        if (!this.map || !this.directionLengthLabelsLayer) return;
-        const channelsVisible = !!(this.layers?.channels && this.map.hasLayer(this.layers.channels));
-        const has = this.map.hasLayer(this.directionLengthLabelsLayer);
-        if (this.directionLengthLabelsEnabled && channelsVisible && !has) this.map.addLayer(this.directionLengthLabelsLayer);
-        if ((!this.directionLengthLabelsEnabled || !channelsVisible) && has) this.map.removeLayer(this.directionLengthLabelsLayer);
-        if (this.directionLengthLabelsEnabled && channelsVisible) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
-        else this.directionLengthLabelsLayer.clearLayers();
+        // Локальный режим и глобальный режим взаимоисключающие
+        if (this.directionLengthLabelsEnabled) this.directionLengthLabelsGlobalEnabled = false;
+        this.updateDirectionLengthLabelsVisibility();
+    },
+
+    setDirectionLengthLabelsGlobalEnabled(enabled) {
+        this.directionLengthLabelsGlobalEnabled = !!enabled;
+        // Локальный режим и глобальный режим взаимоисключающие
+        if (this.directionLengthLabelsGlobalEnabled) this.directionLengthLabelsEnabled = false;
+        this.updateDirectionLengthLabelsVisibility();
     },
 
     toggleDirectionLengthLabels() {
         this.setDirectionLengthLabelsEnabled(!this.directionLengthLabelsEnabled);
+    },
+
+    toggleDirectionLengthLabelsGlobal() {
+        this.setDirectionLengthLabelsGlobalEnabled(!this.directionLengthLabelsGlobalEnabled);
     },
 
     async fetchOwnersLegendData() {
@@ -2220,6 +2316,8 @@ const MapManager = {
                         onEachFeature: (feature, layer) => {
                             try {
                                 const p = feature?.properties || {};
+                                // Для глобальных подсказок длины направления — помечаем как channel_direction
+                                layer._igsMeta = { objectType: 'channel_direction', properties: p };
                                 const id = parseInt(p.id || p.direction_id || p.object_id || 0, 10);
                                 if (!id) return;
                                 const raw = layer.getLatLngs?.();
@@ -2235,6 +2333,7 @@ const MapManager = {
             } catch (_) {}
 
             if (!features.length) return;
+            if (this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility();
 
             const routeColor = '#8300ff';
             const routeOpacity = 0.1;
@@ -3110,7 +3209,7 @@ const MapManager = {
                     },
                 }).addTo(this.layers.channels);
             }
-            if (this.directionLengthLabelsEnabled) this.rebuildDirectionLengthLabelsFromDirectionsLayer();
+            if (this.directionLengthLabelsEnabled || this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility();
         } catch (error) {
             console.error('Ошибка загрузки направлений:', error);
         }
@@ -4243,13 +4342,8 @@ const MapManager = {
                     } catch (_) {}
                 }
                 if (layerName === 'channels') {
-                    // подписи длины зависят от видимости слоя направлений
-                    try {
-                        if (this.directionLengthLabelsEnabled) {
-                            this.rebuildDirectionLengthLabelsFromDirectionsLayer();
-                            this.setDirectionLengthLabelsEnabled(true);
-                        }
-                    } catch (_) {}
+                    // подписи длины зависят от видимости слоёв направлений
+                    try { this.updateDirectionLengthLabelsVisibility(); } catch (_) {}
                 }
                 if (layerName === 'inventory') {
                     try {
@@ -4259,10 +4353,12 @@ const MapManager = {
                     } catch (_) {}
                     // при включении слоя инвентаризации — загружаем его содержимое
                     this.loadInventoryLayer?.();
+                    try { if (this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility(); } catch (_) {}
                 }
                 if (layerName === 'assumedCables') {
                     // при включении слоя предполагаемых кабелей — загружаем его содержимое
                     this.loadAssumedCablesLayer?.();
+                    try { if (this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility(); } catch (_) {}
                 }
             } else {
                 this.map.removeLayer(layer);
@@ -4274,7 +4370,7 @@ const MapManager = {
                 }
                 if (layerName === 'channels') {
                     try { this.directionLengthLabelsLayer?.clearLayers?.(); } catch (_) {}
-                    try { this.setDirectionLengthLabelsEnabled(this.directionLengthLabelsEnabled); } catch (_) {}
+                    try { this.updateDirectionLengthLabelsVisibility(); } catch (_) {}
                 }
                 if (layerName === 'groundCables' || layerName === 'aerialCables' || layerName === 'ductCables') {
                     try {
