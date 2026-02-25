@@ -17,6 +17,8 @@ class SettingsController extends BaseController
             'map_default_zoom' => '14',
             'map_default_lat' => '66.10231',
             'map_default_lng' => '76.68617',
+            // Импортированные слои: персональная активация (CSV codes)
+            'imported_layers_enabled' => '',
             'cable_in_well_length_m' => '2', // глобально для всех, меняет только root
             'input_well_number_start' => '1', // глобально: начало нумерации для "вводных" колодцев
             'well_pole_number_start' => '100000', // глобально: начало нумерации для "опора-мачта"
@@ -268,6 +270,7 @@ class SettingsController extends BaseController
             'url_geoproj',
             'url_cadastre',
             'map_layers',
+            'imported_layers_enabled',
             'sidebar_width',
             // WMTS (спутник)
             'wmts_url_template',
@@ -311,6 +314,7 @@ class SettingsController extends BaseController
         ] : [
             // Разрешаем только персональные настройки
             'map_layers',
+            'imported_layers_enabled',
             'sidebar_width',
             // Персональные значения по умолчанию (панель карты)
             'default_type_id_direction',

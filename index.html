@@ -78,6 +78,9 @@
                     <button id="btn-layer-order" class="btn btn-sm" title="Порядок отображения слоёв">
                         <i class="fas fa-sort"></i>
                     </button>
+                    <button id="btn-imported-layers-activate" class="btn btn-sm" title="Активировать импортированный слой">
+                        <i class="fas fa-layer-group"></i>
+                    </button>
                 </div>
                 <div class="theme-toggle">
                     <button id="btn-theme-dark" class="btn btn-sm active" title="Тёмная тема">
@@ -656,6 +659,9 @@
                     <div class="panel-header">
                         <h2>Настройки</h2>
                         <div class="panel-actions">
+                            <button class="btn btn-secondary hidden" id="btn-imported-layer-import" title="Импорт MapInfo слоя (.TAB/.DAT/.MAP/.ID)">
+                                <i class="fas fa-file-import"></i> Добавить импортированный слой
+                            </button>
                             <button class="btn btn-primary" id="btn-save-settings">
                                 <i class="fas fa-save"></i> Сохранить
                             </button>
@@ -866,6 +872,13 @@
                                 <label>Лимит — максимум маршрутов</label>
                                 <input type="number" id="settings-assumed-max-routes" step="1" min="0" max="500000" placeholder="20000">
                                 <p class="text-muted">Ограничивает количество генерируемых маршрутов (защита от перегрузки).</p>
+                            </div>
+
+                            <hr style="margin: 18px 0;">
+                            <div id="settings-imported-layers-block" class="hidden">
+                                <h3 style="margin: 0 0 10px 0;">Настройки импортированных слоёв</h3>
+                                <div id="imported-layers-settings-list" class="text-muted">Загрузка списка...</div>
+                                <p class="text-muted" style="margin-top:10px;">Загрузка/управление импортированными слоями доступно только для роли "Администратор".</p>
                             </div>
                             </div>
 
@@ -1089,8 +1102,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.5.4"></script>
-    <script src="assets/js/map.js?v=2.5.4"></script>
-    <script src="assets/js/app.js?v=2.5.4"></script>
+    <script src="assets/js/api.js?v=2.5.5"></script>
+    <script src="assets/js/map.js?v=2.5.5"></script>
+    <script src="assets/js/app.js?v=2.5.5"></script>
 </body>
 </html>
