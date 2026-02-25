@@ -97,15 +97,17 @@ psql -h 10.16.10.150 -U lksoftgwebsrv -d lksoftgwebsrv -f database/schema.sql
 
 ### 3. Настройка конфигурации
 
-Отредактируйте файл `config/database.php`:
+Конфигурация БД и часть параметров приложения берутся из переменных окружения (см. `.env.example`).
+
+Файл `config/database.php` **не должен содержать секретов** — он читает `IGS_DB_*` из окружения.
 
 ```php
 return [
-    'host' => '10.16.10.150',
-    'port' => '5432',
-    'dbname' => 'lksoftgwebsrv',
-    'user' => 'lksoftgwebsrv',
-    'password' => 'lksoftGwebsrv',
+    'host' => getenv('IGS_DB_HOST') ?: 'localhost',
+    'port' => getenv('IGS_DB_PORT') ?: '5432',
+    'dbname' => getenv('IGS_DB_NAME') ?: 'lksoftgwebsrv',
+    'user' => getenv('IGS_DB_USER') ?: 'lksoftgwebsrv',
+    'password' => getenv('IGS_DB_PASSWORD') ?: '',
 ];
 ```
 
@@ -130,9 +132,12 @@ chmod -R 777 /var/www/html/lksoftGwebsrv/uploads
 
 Откройте в браузере: `http://your-server/lksoftGwebsrv/`
 
-Данные для входа:
-- **Логин**: `root`
-- **Пароль**: `Kolobaha00!`
+При первичной установке создайте администратора и задайте пароль (см. `database/schema.sql`).
+
+В production обязательно:
+- сменить пароль администратора сразу после развёртывания,
+- ограничить доступ к админ‑функциям (VPN / allowlist),
+- отключить debug и настроить CORS/заголовки безопасности.
 
 ---
 
@@ -214,8 +219,8 @@ Authorization: Bearer <token>
 **Запрос:**
 ```json
 {
-    "login": "root",
-    "password": "Kolobaha00!"
+    "login": "admin",
+    "password": "CHANGE_ME"
 }
 ```
 

@@ -30,7 +30,7 @@ if __name__ == '__main__':
     print()
     print("Starting development server...")
     print("Access the portal at: http://localhost:5000")
-    print("Default admin: root / Kolobaha00!")
+    print("Default admin credentials: set during installation (do not hardcode in repo).")
     print()
     print("Press Ctrl+C to stop")
     print("=" * 50)
