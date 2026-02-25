@@ -147,6 +147,7 @@ use App\Controllers\ImportController;
 use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
 use App\Controllers\SettingsController;
+use App\Controllers\ImportedLayerController;
 use App\Controllers\DbBackupController;
 use App\Controllers\AuditLogController;
 use App\Controllers\InventoryCardController;
@@ -348,6 +349,14 @@ $router->post('/api/import/csv', [ImportController::class, 'importCsv'], ['auth'
 $router->post('/api/import/preview', [ImportController::class, 'previewCsv'], ['auth']);
 $router->post('/api/import/mapinfo', [ImportController::class, 'importMapInfo'], ['auth']);
 $router->post('/api/import/mapinfo/confirm', [ImportController::class, 'confirmMapInfoImport'], ['auth']);
+
+// ========================
+// Импортированные слои (MapInfo -> PostGIS)
+// ========================
+$router->get('/api/imported-layers', [ImportedLayerController::class, 'index'], ['auth']);
+$router->get('/api/imported-layers/{code}/geojson', [ImportedLayerController::class, 'geojson'], ['auth']);
+$router->post('/api/imported-layers/import', [ImportedLayerController::class, 'import'], ['auth']);
+$router->put('/api/imported-layers/{code}/style', [ImportedLayerController::class, 'updateStyle'], ['auth']);
 
 // Фотографии
 $router->post('/api/photos', [PhotoController::class, 'upload'], ['auth']);
