@@ -4,6 +4,8 @@
  * ИГС lksoftGwebsrv
  */
 
+require_once __DIR__ . '/bootstrap.php';
+
 $env = function (string $key, $default = null) {
     $v = getenv($key);
     if ($v === false || $v === null) {
