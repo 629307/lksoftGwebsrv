@@ -820,6 +820,9 @@ const API = {
         updateStyle(code, style) {
             return API.put(`/imported-layers/${encodeURIComponent(code)}/style`, style);
         },
+        delete(code) {
+            return API.delete(`/imported-layers/${encodeURIComponent(code)}`);
+        },
     },
 
     // ========================

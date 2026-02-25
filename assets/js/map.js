@@ -428,7 +428,24 @@ const MapManager = {
 
     setImportedLayersMeta(layers) {
         const rows = Array.isArray(layers) ? layers : [];
+        const prevCodes = new Set((this.importedLayersMeta || []).map(x => String(x?.code ?? '').toLowerCase()).filter(Boolean));
+        const nextCodes = new Set(rows.map(x => String(x?.code ?? '').toLowerCase()).filter(Boolean));
         this.importedLayersMeta = rows;
+
+        // Удаляем слои, которые исчезли из метаданных (например, после удаления)
+        try {
+            for (const [code, st] of (this.importedLayers || new Map()).entries()) {
+                const c = String(code || '').toLowerCase();
+                if (!c || nextCodes.has(c)) continue;
+                try {
+                    if (this.map && st?.group && this.map.hasLayer(st.group)) {
+                        this.map.removeLayer(st.group);
+                    }
+                } catch (_) {}
+                try { st?.group?.clearLayers?.(); } catch (_) {}
+                try { this.importedLayers.delete(c); } catch (_) {}
+            }
+        } catch (_) {}
 
         // Удаляем старые items для импортированных слоёв
         try {
