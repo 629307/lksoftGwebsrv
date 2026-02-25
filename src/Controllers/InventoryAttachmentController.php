@@ -10,11 +10,31 @@ use App\Core\Auth;
 
 class InventoryAttachmentController extends BaseController
 {
-    private array $allowedExtensions = [
-        'jpg', 'jpeg', 'png', 'gif', 'webp',
-        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv',
-        'zip', 'rar',
-    ];
+    private function allowedExtensions(): array
+    {
+        $raw = (string) $this->getAppSetting(
+            'inventory_attachments_allowed_extensions',
+            'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv,zip,rar'
+        );
+        $parts = preg_split('/[,\s]+/', strtolower($raw)) ?: [];
+        $out = [];
+        foreach ($parts as $p) {
+            $e = trim((string) $p);
+            if ($e === '') continue;
+            if (!preg_match('/^[a-z0-9]{1,10}$/', $e)) continue;
+            $out[] = $e;
+        }
+        return array_values(array_unique($out));
+    }
+
+    private function maxUploadBytes(): int
+    {
+        $raw = (string) $this->getAppSetting('inventory_attachments_max_upload_bytes', (string) (50 * 1024 * 1024));
+        $n = (int) $raw;
+        if ($n < 0) $n = 0;
+        if ($n > (1024 * 1024 * 1024)) $n = 1024 * 1024 * 1024;
+        return $n;
+    }
 
     /**
      * GET /api/inventory-cards/{id}/attachments
@@ -58,10 +78,10 @@ class InventoryAttachmentController extends BaseController
         }
 
         $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if (!in_array($ext, $this->allowedExtensions, true)) {
+        if (!in_array($ext, $this->allowedExtensions(), true)) {
             Response::error('Недопустимый тип файла', 400);
         }
-        if ($file['size'] > ($this->config['max_upload_size'] ?? 50 * 1024 * 1024)) {
+        if ($file['size'] > $this->maxUploadBytes()) {
             Response::error('Файл слишком большой', 400);
         }
 

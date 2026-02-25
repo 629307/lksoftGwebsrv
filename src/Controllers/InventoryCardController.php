@@ -17,6 +17,16 @@ class InventoryCardController extends BaseController
         }
     }
 
+    private function getMaxCableCountPerDirection(): int
+    {
+        $raw = (string) $this->getAppSetting('inventory_max_cable_count_per_direction', '100');
+        $n = (int) $raw;
+        // sanity limits
+        if ($n < 0) $n = 0;
+        if ($n > 100000) $n = 100000;
+        return $n;
+    }
+
     /**
      * GET /api/inventory-cards?well_id=..
      */
@@ -193,13 +203,14 @@ class InventoryCardController extends BaseController
             ]);
 
             // направления: сохраняем даже если cable_count пустой/0
+            $maxCnt = $this->getMaxCableCountPerDirection();
             foreach ($dirCables as $row) {
                 if (!is_array($row)) continue;
                 $did = (int) ($row['direction_id'] ?? 0);
                 $cnt = (int) ($row['cable_count'] ?? 0);
                 if ($did <= 0) continue;
                 if ($cnt < 0) $cnt = 0;
-                if ($cnt > 100) $cnt = 100;
+                if ($cnt > $maxCnt) $cnt = $maxCnt;
 
                 $this->db->insert('inventory_direction_cables', [
                     'card_id' => $cardId,
@@ -262,6 +273,7 @@ class InventoryCardController extends BaseController
             ], 'id = :id', ['id' => $cardId]);
 
             // пересоберём связи целиком
+            $maxCnt = $this->getMaxCableCountPerDirection();
             $this->db->delete('inventory_direction_cables', 'card_id = :id', ['id' => $cardId]);
             foreach ($dirCables as $row) {
                 if (!is_array($row)) continue;
@@ -269,7 +281,7 @@ class InventoryCardController extends BaseController
                 $cnt = (int) ($row['cable_count'] ?? 0);
                 if ($did <= 0) continue;
                 if ($cnt < 0) $cnt = 0;
-                if ($cnt > 100) $cnt = 100;
+                if ($cnt > $maxCnt) $cnt = $maxCnt;
                 $this->db->insert('inventory_direction_cables', [
                     'card_id' => $cardId,
                     'direction_id' => $did,

@@ -10,7 +10,31 @@ use App\Core\Auth;
 
 class IncidentDocumentController extends BaseController
 {
-    private array $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'zip', 'rar'];
+    private function allowedExtensions(): array
+    {
+        $raw = (string) $this->getAppSetting(
+            'incident_documents_allowed_extensions',
+            'pdf,doc,docx,xls,xlsx,txt,csv,zip,rar'
+        );
+        $parts = preg_split('/[,\s]+/', strtolower($raw)) ?: [];
+        $out = [];
+        foreach ($parts as $p) {
+            $e = trim((string) $p);
+            if ($e === '') continue;
+            if (!preg_match('/^[a-z0-9]{1,10}$/', $e)) continue;
+            $out[] = $e;
+        }
+        return array_values(array_unique($out));
+    }
+
+    private function maxUploadBytes(): int
+    {
+        $raw = (string) $this->getAppSetting('incident_documents_max_upload_bytes', (string) (10 * 1024 * 1024));
+        $n = (int) $raw;
+        if ($n < 0) $n = 0;
+        if ($n > (1024 * 1024 * 1024)) $n = 1024 * 1024 * 1024;
+        return $n;
+    }
 
     /**
      * GET /api/incidents/{id}/documents
@@ -58,12 +82,12 @@ class IncidentDocumentController extends BaseController
         }
 
         $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if (!in_array($ext, $this->allowedExtensions, true)) {
+        if (!in_array($ext, $this->allowedExtensions(), true)) {
             Response::error('Недопустимый тип файла', 400);
         }
 
-        // Лимит размера берём из конфигурации приложения
-        if ($file['size'] > ($this->config['max_upload_size'] ?? 10 * 1024 * 1024)) {
+        // Лимит размера берём из настроек данных ГИС
+        if ($file['size'] > $this->maxUploadBytes()) {
             Response::error('Файл слишком большой', 400);
         }
 

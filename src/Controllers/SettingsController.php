@@ -60,6 +60,48 @@ class SettingsController extends BaseController
             'well_pole_kind_code' => 'pole',
             // Направления: код статуса "по зданию" (для спец-правил и отображения)
             'direction_inbuilding_status_code' => 'inbuilding',
+            // ========================
+            // Настройка данных ГИС: параметры отображения/алгоритмов (глобальные)
+            // (дефолты соответствуют ранее "зашитым" значениям)
+            // ========================
+            // Подсказки: минимальный зум
+            'min_zoom_well_labels' => '14',
+            'min_zoom_object_coordinates' => '14',
+            // Инвентаризация: цвета/толщина
+            'inventory_color_negative' => '#0098ff',
+            'inventory_color_zero' => '#01b73f',
+            'inventory_color_one' => '#f9adad',
+            'inventory_color_max' => '#ff0000',
+            'inventory_color_no_data' => '#777777',
+            'inventory_weight_multiplier_has_value' => '2',
+            'inventory_weight_multiplier_no_value' => '0.5',
+            // Предполагаемые кабели: стиль
+            'assumed_routes_color' => '#8300ff',
+            'assumed_routes_opacity' => '0.1',
+            'assumed_base_grid_color' => '#777777',
+            'assumed_base_grid_opacity' => '0.75',
+            'assumed_base_grid_weight_multiplier' => '0.5',
+            // Подсветка кабеля
+            'cable_highlight_color' => '#ff0000',
+            'cable_highlight_weight' => '5',
+            'cable_highlight_opacity' => '0.95',
+            // Линии: пунктир
+            'inbuilding_dash_array' => '6, 6',
+            'aerial_cable_dash_array' => '5, 5',
+            // Лимиты
+            'inventory_max_cable_count_per_direction' => '100',
+            'photos_max_per_object' => '10',
+            // Вложения: расширения/лимиты размера (байт)
+            'group_attachments_allowed_extensions' => 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv',
+            'group_attachments_max_upload_bytes' => (string) (10 * 1024 * 1024),
+            'incident_documents_allowed_extensions' => 'pdf,doc,docx,xls,xlsx,txt,csv,zip,rar',
+            'incident_documents_max_upload_bytes' => (string) (10 * 1024 * 1024),
+            'inventory_attachments_allowed_extensions' => 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv,zip,rar',
+            'inventory_attachments_max_upload_bytes' => (string) (50 * 1024 * 1024),
+            // Предполагаемые кабели: коэффициенты/лимиты алгоритма
+            'assumed_lambda_tag_m' => '25',
+            'assumed_mu_bottleneck_m' => '50',
+            'assumed_max_routes' => '20000',
             // hotkeys
             'hotkey_add_direction' => 'a',
             'hotkey_add_well' => 's',
@@ -109,6 +151,36 @@ class SettingsController extends BaseController
                         'well_entry_point_kind_code',
                         'well_pole_kind_code',
                         'direction_inbuilding_status_code',
+                        'min_zoom_well_labels',
+                        'min_zoom_object_coordinates',
+                        'inventory_color_negative',
+                        'inventory_color_zero',
+                        'inventory_color_one',
+                        'inventory_color_max',
+                        'inventory_color_no_data',
+                        'inventory_weight_multiplier_has_value',
+                        'inventory_weight_multiplier_no_value',
+                        'assumed_routes_color',
+                        'assumed_routes_opacity',
+                        'assumed_base_grid_color',
+                        'assumed_base_grid_opacity',
+                        'assumed_base_grid_weight_multiplier',
+                        'cable_highlight_color',
+                        'cable_highlight_weight',
+                        'cable_highlight_opacity',
+                        'inbuilding_dash_array',
+                        'aerial_cable_dash_array',
+                        'inventory_max_cable_count_per_direction',
+                        'photos_max_per_object',
+                        'group_attachments_allowed_extensions',
+                        'group_attachments_max_upload_bytes',
+                        'incident_documents_allowed_extensions',
+                        'incident_documents_max_upload_bytes',
+                        'inventory_attachments_allowed_extensions',
+                        'inventory_attachments_max_upload_bytes',
+                        'assumed_lambda_tag_m',
+                        'assumed_mu_bottleneck_m',
+                        'assumed_max_routes',
                     ], true)) {
                         continue;
                     }
@@ -149,11 +221,12 @@ class SettingsController extends BaseController
 
         $isAdmin = Auth::isAdmin();
         $isUser = Auth::hasRole('user');
+        $isAdminLike = $isAdmin || Auth::isRoot();
 
         // По ТЗ:
         // - администратор: все настройки
         // - пользователь: только персональные настройки (интерфейс карты + ссылки меню + hotkeys) + персональные "настройки по умолчанию" (панель карты)
-        $allowed = $isAdmin ? [
+        $allowed = $isAdminLike ? [
             'map_default_zoom',
             'map_default_lat',
             'map_default_lng',
@@ -161,6 +234,37 @@ class SettingsController extends BaseController
             'input_well_number_start',
             'well_pole_number_start',
             'direction_inbuilding_status_code',
+            // Настройка данных ГИС: параметры отображения/алгоритмов (глобальные)
+            'min_zoom_well_labels',
+            'min_zoom_object_coordinates',
+            'inventory_color_negative',
+            'inventory_color_zero',
+            'inventory_color_one',
+            'inventory_color_max',
+            'inventory_color_no_data',
+            'inventory_weight_multiplier_has_value',
+            'inventory_weight_multiplier_no_value',
+            'assumed_routes_color',
+            'assumed_routes_opacity',
+            'assumed_base_grid_color',
+            'assumed_base_grid_opacity',
+            'assumed_base_grid_weight_multiplier',
+            'cable_highlight_color',
+            'cable_highlight_weight',
+            'cable_highlight_opacity',
+            'inbuilding_dash_array',
+            'aerial_cable_dash_array',
+            'inventory_max_cable_count_per_direction',
+            'photos_max_per_object',
+            'group_attachments_allowed_extensions',
+            'group_attachments_max_upload_bytes',
+            'incident_documents_allowed_extensions',
+            'incident_documents_max_upload_bytes',
+            'inventory_attachments_allowed_extensions',
+            'inventory_attachments_max_upload_bytes',
+            'assumed_lambda_tag_m',
+            'assumed_mu_bottleneck_m',
+            'assumed_max_routes',
             'url_geoproj',
             'url_cadastre',
             'map_layers',
@@ -267,12 +371,62 @@ class SettingsController extends BaseController
         try {
             $this->db->beginTransaction();
 
+            $requireAdminLikeFor = function(string $code) use ($isAdminLike) {
+                if (!$isAdminLike) {
+                    Response::error('Доступ запрещён: изменить глобальные настройки может только администратор', 403);
+                }
+            };
+
+            $validateColor = function(string $code, $value): string {
+                $v = trim((string) ($value ?? ''));
+                if (!preg_match('/^#[0-9a-f]{6}$/i', $v)) {
+                    Response::error('Некорректное значение настройки: ' . $code, 422);
+                }
+                return strtolower($v);
+            };
+
+            $validateNumber = function(string $code, $value, float $min, float $max, bool $allowFloat = true): string {
+                $raw = trim((string) ($value ?? ''));
+                if ($raw === '') Response::error('Некорректное значение настройки: ' . $code, 422);
+                if (!is_numeric($raw)) Response::error('Некорректное значение настройки: ' . $code, 422);
+                $n = $allowFloat ? (float) $raw : (int) $raw;
+                if (!is_finite($n) || $n < $min || $n > $max) {
+                    Response::error('Некорректное значение настройки: ' . $code, 422);
+                }
+                return (string) $n;
+            };
+
+            $validateDashArray = function(string $code, $value): string {
+                $v = trim((string) ($value ?? ''));
+                if ($v === '') Response::error('Некорректное значение настройки: ' . $code, 422);
+                // Ожидаем формат "6, 6" (число, запятая, число), допускаем пробелы/десятичные.
+                if (!preg_match('/^\d+(\.\d+)?\s*,\s*\d+(\.\d+)?$/', $v)) {
+                    Response::error('Некорректное значение настройки: ' . $code, 422);
+                }
+                return $v;
+            };
+
+            $validateExtList = function(string $code, $value): string {
+                $raw = trim((string) ($value ?? ''));
+                if ($raw === '') Response::error('Некорректное значение настройки: ' . $code, 422);
+                $parts = preg_split('/[,\s]+/', $raw) ?: [];
+                $out = [];
+                foreach ($parts as $p) {
+                    $e = strtolower(trim((string) $p));
+                    if ($e === '') continue;
+                    if (!preg_match('/^[a-z0-9]{1,10}$/', $e)) {
+                        Response::error('Некорректное значение настройки: ' . $code, 422);
+                    }
+                    $out[$e] = true;
+                }
+                if (!$out) Response::error('Некорректное значение настройки: ' . $code, 422);
+                return implode(',', array_keys($out));
+            };
+
             foreach ($toSave as $code => $value) {
                 // Глобальные настройки
                 if (in_array($code, ['well_entry_point_kind_code', 'well_pole_kind_code', 'direction_inbuilding_status_code'], true)) {
-                    if (!Auth::isAdmin() && !Auth::isRoot()) {
-                        Response::error('Доступ запрещён: изменить глобальные настройки может только администратор', 403);
-                    }
+                    $requireAdminLikeFor($code);
                     if ($code === 'direction_inbuilding_status_code') {
                         $v = strtolower(trim((string) $value));
                         if ($v === '') {
@@ -291,6 +445,109 @@ class SettingsController extends BaseController
                         ['code' => $code, 'value' => $value]
                     );
                     $saved[$code] = $value;
+                    continue;
+                }
+
+                // Настройка данных ГИС: глобальные параметры отображения/алгоритмов
+                if (in_array($code, [
+                    'min_zoom_well_labels',
+                    'min_zoom_object_coordinates',
+                    'inventory_color_negative',
+                    'inventory_color_zero',
+                    'inventory_color_one',
+                    'inventory_color_max',
+                    'inventory_color_no_data',
+                    'inventory_weight_multiplier_has_value',
+                    'inventory_weight_multiplier_no_value',
+                    'assumed_routes_color',
+                    'assumed_routes_opacity',
+                    'assumed_base_grid_color',
+                    'assumed_base_grid_opacity',
+                    'assumed_base_grid_weight_multiplier',
+                    'cable_highlight_color',
+                    'cable_highlight_weight',
+                    'cable_highlight_opacity',
+                    'inbuilding_dash_array',
+                    'aerial_cable_dash_array',
+                    'inventory_max_cable_count_per_direction',
+                    'photos_max_per_object',
+                    'group_attachments_allowed_extensions',
+                    'group_attachments_max_upload_bytes',
+                    'incident_documents_allowed_extensions',
+                    'incident_documents_max_upload_bytes',
+                    'inventory_attachments_allowed_extensions',
+                    'inventory_attachments_max_upload_bytes',
+                    'assumed_lambda_tag_m',
+                    'assumed_mu_bottleneck_m',
+                    'assumed_max_routes',
+                ], true)) {
+                    $requireAdminLikeFor($code);
+
+                    // Валидация по типу
+                    if (in_array($code, [
+                        'inventory_color_negative',
+                        'inventory_color_zero',
+                        'inventory_color_one',
+                        'inventory_color_max',
+                        'inventory_color_no_data',
+                        'assumed_routes_color',
+                        'assumed_base_grid_color',
+                        'cable_highlight_color',
+                    ], true)) {
+                        $value = $validateColor($code, $value);
+                    } elseif (in_array($code, ['inbuilding_dash_array', 'aerial_cable_dash_array'], true)) {
+                        $value = $validateDashArray($code, $value);
+                    } elseif (in_array($code, [
+                        'group_attachments_allowed_extensions',
+                        'incident_documents_allowed_extensions',
+                        'inventory_attachments_allowed_extensions',
+                    ], true)) {
+                        $value = $validateExtList($code, $value);
+                    } elseif (in_array($code, [
+                        'min_zoom_well_labels',
+                        'min_zoom_object_coordinates',
+                    ], true)) {
+                        $value = $validateNumber($code, $value, 0, 30, false);
+                    } elseif (in_array($code, [
+                        'inventory_max_cable_count_per_direction',
+                        'photos_max_per_object',
+                        'assumed_max_routes',
+                    ], true)) {
+                        $value = $validateNumber($code, $value, 0, 1000000, false);
+                    } elseif (in_array($code, [
+                        'group_attachments_max_upload_bytes',
+                        'incident_documents_max_upload_bytes',
+                        'inventory_attachments_max_upload_bytes',
+                    ], true)) {
+                        $value = $validateNumber($code, $value, 0, 1024 * 1024 * 1024, false);
+                    } elseif (in_array($code, [
+                        'inventory_weight_multiplier_has_value',
+                        'inventory_weight_multiplier_no_value',
+                        'assumed_routes_opacity',
+                        'assumed_base_grid_opacity',
+                        'assumed_base_grid_weight_multiplier',
+                        'cable_highlight_opacity',
+                        'assumed_lambda_tag_m',
+                        'assumed_mu_bottleneck_m',
+                    ], true)) {
+                        // float ranges
+                        $max = 1000000;
+                        $min = 0;
+                        if ($code === 'assumed_routes_opacity' || $code === 'assumed_base_grid_opacity' || $code === 'cable_highlight_opacity') {
+                            $min = 0; $max = 1;
+                        }
+                        $value = $validateNumber($code, $value, $min, $max, true);
+                    } elseif ($code === 'cable_highlight_weight') {
+                        $value = $validateNumber($code, $value, 0.5, 50, true);
+                    }
+
+                    $this->db->query(
+                        "INSERT INTO app_settings(code, value, updated_at)
+                         VALUES (:code, :value, NOW())
+                         ON CONFLICT (code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                        ['code' => $code, 'value' => (string) $value]
+                    );
+                    $saved[$code] = (string) $value;
                     continue;
                 }
 

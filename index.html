@@ -712,6 +712,161 @@
                                 </select>
                                 <p class="text-muted">Выбор из справочника "Состояния". Для выбранного состояния действуют спец‑правила направления: отображение пунктиром на карте, собственник принудительно “Не указан”, количество каналов всегда 1.</p>
                             </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Подсказки и подписи</h4>
+                            <div class="form-group">
+                                <label>Минимальный зум — Подсказки номера колодцев</label>
+                                <input type="number" id="settings-min-zoom-well-labels" min="0" max="30" step="1" placeholder="14">
+                                <p class="text-muted">Подписи номеров колодцев отображаются начиная с указанного зума.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Минимальный зум — Показать координаты</label>
+                                <input type="number" id="settings-min-zoom-object-coordinates" min="0" max="30" step="1" placeholder="14">
+                                <p class="text-muted">Подписи координат (колодцы + столбики) отображаются начиная с указанного зума.</p>
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Инвентаризация — цвета и толщина линий</h4>
+                            <div class="form-group">
+                                <label>Цвет — inv_unaccounted &lt; 0</label>
+                                <input type="color" id="settings-inventory-color-negative">
+                                <p class="text-muted">Используется для значений меньше 0 (служебное состояние).</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет — inv_unaccounted = 0</label>
+                                <input type="color" id="settings-inventory-color-zero">
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет — inv_unaccounted = 1 (старт градиента)</label>
+                                <input type="color" id="settings-inventory-color-one">
+                                <p class="text-muted">Градиент строится от этого цвета (1) до "Цвет — inv_unaccounted = max".</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет — inv_unaccounted = max (конец градиента)</label>
+                                <input type="color" id="settings-inventory-color-max">
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет — нет данных inv_unaccounted</label>
+                                <input type="color" id="settings-inventory-color-no-data">
+                                <p class="text-muted">Используется, если inv_unaccounted отсутствует/не задан.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Множитель толщины — inv_unaccounted задан</label>
+                                <input type="number" id="settings-inventory-weight-mult-has" step="0.01" min="0.1" max="10" placeholder="2">
+                                <p class="text-muted">Толщина линии = ("Толщина линий — Направление") × множитель.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Множитель толщины — inv_unaccounted не задан</label>
+                                <input type="number" id="settings-inventory-weight-mult-no" step="0.01" min="0.05" max="10" placeholder="0.5">
+                                <p class="text-muted">Для направлений без значения inv_unaccounted (по умолчанию 0.5 = в 2 раза тоньше).</p>
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Предполагаемые кабели — стиль</h4>
+                            <div class="form-group">
+                                <label>Цвет — предполагаемые маршруты</label>
+                                <input type="color" id="settings-assumed-routes-color">
+                            </div>
+                            <div class="form-group">
+                                <label>Прозрачность — предполагаемые маршруты</label>
+                                <input type="number" id="settings-assumed-routes-opacity" step="0.01" min="0" max="1" placeholder="0.1">
+                                <p class="text-muted">0 — полностью прозрачно, 1 — полностью непрозрачно.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Цвет — базовая сетка направлений</label>
+                                <input type="color" id="settings-assumed-base-grid-color">
+                            </div>
+                            <div class="form-group">
+                                <label>Прозрачность — базовая сетка направлений</label>
+                                <input type="number" id="settings-assumed-base-grid-opacity" step="0.01" min="0" max="1" placeholder="0.75">
+                            </div>
+                            <div class="form-group">
+                                <label>Множитель толщины — базовая сетка направлений</label>
+                                <input type="number" id="settings-assumed-base-grid-weight-mult" step="0.01" min="0.05" max="10" placeholder="0.5">
+                                <p class="text-muted">Толщина линии = ("Толщина линий — Направление") × множитель.</p>
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Подсветка кабеля</h4>
+                            <div class="form-group">
+                                <label>Цвет подсветки кабеля</label>
+                                <input type="color" id="settings-cable-highlight-color">
+                                <p class="text-muted">Используется при подсветке кабеля из списка/по клику на карте.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Толщина подсветки кабеля</label>
+                                <input type="number" id="settings-cable-highlight-weight" step="0.1" min="0.5" max="50" placeholder="5">
+                            </div>
+                            <div class="form-group">
+                                <label>Прозрачность подсветки кабеля</label>
+                                <input type="number" id="settings-cable-highlight-opacity" step="0.01" min="0" max="1" placeholder="0.95">
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Линии — пунктир</h4>
+                            <div class="form-group">
+                                <label>Пунктир — Направление “по зданию” (dashArray)</label>
+                                <input type="text" id="settings-inbuilding-dash-array" placeholder="6, 6">
+                                <p class="text-muted">Формат: "длина штриха, длина пробела" (например: 6, 6).</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Пунктир — Кабель воздухом (перетяжка) (dashArray)</label>
+                                <input type="text" id="settings-aerial-cable-dash-array" placeholder="5, 5">
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Лимиты</h4>
+                            <div class="form-group">
+                                <label>Лимит — максимум кабелей на направление (Инвентаризация)</label>
+                                <input type="number" id="settings-inventory-max-cable-count-per-direction" step="1" min="0" max="1000000" placeholder="100">
+                                <p class="text-muted">Используется для ограничения значения cable_count при сохранении инвентарной карточки.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Лимит — максимум фотографий на объект</label>
+                                <input type="number" id="settings-photos-max-per-object" step="1" min="0" max="200" placeholder="10">
+                                <p class="text-muted">Используется в модуле фотографий (object_photos).</p>
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Вложения — расширения и лимиты размера</h4>
+                            <div class="form-group">
+                                <label>Разрешённые расширения — вложения групп</label>
+                                <input type="text" id="settings-group-attachments-ext" placeholder="jpg,jpeg,png,pdf,...">
+                                <p class="text-muted">Список расширений через запятую (без точек). Пример: jpg,jpeg,png,pdf.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Макс. размер файла — вложения групп (байт)</label>
+                                <input type="number" id="settings-group-attachments-max-bytes" step="1" min="0" max="1073741824" placeholder="10485760">
+                                <p class="text-muted">По умолчанию 10MB = 10485760.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Разрешённые расширения — документы инцидентов</label>
+                                <input type="text" id="settings-incident-documents-ext" placeholder="pdf,doc,docx,...">
+                            </div>
+                            <div class="form-group">
+                                <label>Макс. размер файла — документы инцидентов (байт)</label>
+                                <input type="number" id="settings-incident-documents-max-bytes" step="1" min="0" max="1073741824" placeholder="10485760">
+                            </div>
+                            <div class="form-group">
+                                <label>Разрешённые расширения — вложения инвентаризации</label>
+                                <input type="text" id="settings-inventory-attachments-ext" placeholder="jpg,jpeg,png,pdf,zip,...">
+                            </div>
+                            <div class="form-group">
+                                <label>Макс. размер файла — вложения инвентаризации (байт)</label>
+                                <input type="number" id="settings-inventory-attachments-max-bytes" step="1" min="0" max="1073741824" placeholder="52428800">
+                                <p class="text-muted">По умолчанию 50MB = 52428800.</p>
+                            </div>
+
+                            <h4 style="margin: 16px 0 8px 0;">Предполагаемые кабели — параметры алгоритма</h4>
+                            <div class="form-group">
+                                <label>Коэффициент — LAMBDA_TAG (м)</label>
+                                <input type="number" id="settings-assumed-lambda-tag-m" step="0.01" min="0" max="1000000" placeholder="25">
+                                <p class="text-muted">Вклад одной "бирочной" вершины в score(path) в метрах.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Коэффициент — MU_BOTTLENECK (м)</label>
+                                <input type="number" id="settings-assumed-mu-bottleneck-m" step="0.01" min="0" max="1000000" placeholder="50">
+                                <p class="text-muted">Вклад bottleneck capacity в score(path) в метрах.</p>
+                            </div>
+                            <div class="form-group">
+                                <label>Лимит — максимум маршрутов</label>
+                                <input type="number" id="settings-assumed-max-routes" step="1" min="0" max="500000" placeholder="20000">
+                                <p class="text-muted">Ограничивает количество генерируемых маршрутов (защита от перегрузки).</p>
+                            </div>
                             </div>
 
                             <hr style="margin: 18px 0;">
@@ -934,8 +1089,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.5.3"></script>
-    <script src="assets/js/map.js?v=2.5.3"></script>
-    <script src="assets/js/app.js?v=2.5.3"></script>
+    <script src="assets/js/api.js?v=2.5.4"></script>
+    <script src="assets/js/map.js?v=2.5.4"></script>
+    <script src="assets/js/app.js?v=2.5.4"></script>
 </body>
 </html>
