@@ -17,16 +17,26 @@ class ImportedLayerController extends BaseController
         }
     }
 
+    private function safeLower(string $s): string
+    {
+        try {
+            if (function_exists('mb_strtolower')) {
+                return (string) @mb_strtolower($s, 'UTF-8');
+            }
+        } catch (\Throwable $e) {}
+        return strtolower($s);
+    }
+
     private function slugifyCode(string $name): string
     {
         $s0 = trim($name);
-        $s = mb_strtolower($s0);
+        $s = $this->safeLower($s0);
         // пробуем транслитерацию (для кириллицы и др.)
         try {
             if (function_exists('iconv')) {
                 $tr = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s0);
                 if (is_string($tr) && trim($tr) !== '') {
-                    $s = mb_strtolower($tr);
+                    $s = $this->safeLower($tr);
                 }
             }
         } catch (\Throwable $e) {}
