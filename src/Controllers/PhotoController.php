@@ -45,8 +45,12 @@ class PhotoController extends BaseController
             "SELECT COUNT(*) as cnt FROM object_photos WHERE object_table = :table AND object_id = :id",
             ['table' => $objectTable, 'id' => (int) $objectId]
         );
-        if ($count['cnt'] >= 10) {
-            Response::error('Достигнут лимит фотографий (максимум 10)', 400);
+        $limitRaw = (string) $this->getAppSetting('photos_max_per_object', (string) (($this->config['photos']['max_per_object'] ?? 10)));
+        $limit = (int) $limitRaw;
+        if ($limit < 0) $limit = 0;
+        if ($limit > 200) $limit = 200;
+        if ((int) ($count['cnt'] ?? 0) >= $limit) {
+            Response::error('Достигнут лимит фотографий (максимум ' . $limit . ')', 400);
         }
 
         $fileInfo = $this->handleFileUpload('file', $objectTable);

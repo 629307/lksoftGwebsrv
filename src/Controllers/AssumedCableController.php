@@ -383,8 +383,13 @@ class AssumedCableController extends BaseController
         // но расходный ресурс — только inventory_summary.unaccounted_cables (capacity>0).
         //
         // Условные коэффициенты для score(path):
-        $LAMBDA_TAG = 25.0; // вклад одной "бирочной" вершины (в метрах)
-        $MU_BOTTLENECK = 50.0; // вклад bottleneck capacity (в метрах)
+        $LAMBDA_TAG = (float) $this->getAppSetting('assumed_lambda_tag_m', '25'); // вклад одной "бирочной" вершины (в метрах)
+        $MU_BOTTLENECK = (float) $this->getAppSetting('assumed_mu_bottleneck_m', '50'); // вклад bottleneck capacity (в метрах)
+        if (!is_finite($LAMBDA_TAG) || $LAMBDA_TAG < 0) $LAMBDA_TAG = 25.0;
+        if (!is_finite($MU_BOTTLENECK) || $MU_BOTTLENECK < 0) $MU_BOTTLENECK = 50.0;
+        $maxRoutesLimit = (int) $this->getAppSetting('assumed_max_routes', '20000');
+        if ($maxRoutesLimit < 0) $maxRoutesLimit = 0;
+        if ($maxRoutesLimit > 500000) $maxRoutesLimit = 500000;
 
         $tagPresence = []; // wellId => int (сколько "свободных" бирок суммарно)
         foreach ($supply0 as $w => $byOwner) {
@@ -836,10 +841,10 @@ class AssumedCableController extends BaseController
 
         // METHOD 1: Full Graph Segmented Longest Paths
         // Основной метод: выбираем самый длинный capacity-сегмент (по всей топологии) и вырабатываем его minCap.
-        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap): array {
+        $buildRoutesMethod1 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $fullAdj, $buildFullComponents, $mstDiameterPath, $scoreRoute, $anyCapacityLeft, $routeConsumesAny, $consumeRoute, $segmentCapacityRunsInPath, $consumeCapacitySegment, $segmentMinCap, $maxRoutesLimit): array {
             $rem = $baseRem;
             $routes = [];
-            $maxRoutes = 20000;
+            $maxRoutes = $maxRoutesLimit;
 
             // 1) подграф capacity>0 (на основе исходного ресурса): перечисляем ВСЕ пути без исключения
             $capAdj = [];
@@ -1089,10 +1094,10 @@ class AssumedCableController extends BaseController
 
         // METHOD 2: Inventory Subgraph Segmented Paths
         // "Чистый" метод только по инвентаризированным рёбрам: E' = { e | capacity(e) > 0 }.
-        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $consumeCapacitySegment, $segmentMinCap): array {
+        $buildRoutesMethod2 = function(array $baseRem, array $supply0) use ($dirs, $enumerateAllSimplePaths, $consumeCapacitySegment, $segmentMinCap, $maxRoutesLimit): array {
             $rem = $baseRem;
             $routes = [];
-            $maxRoutes = 20000;
+            $maxRoutes = $maxRoutesLimit;
 
             // Подграф E' = { e | capacity(e)>0 } на основе исходного baseRem.
             $capAdj = [];
@@ -1144,10 +1149,10 @@ class AssumedCableController extends BaseController
 
         // METHOD 3: Max-flow style decomposition into long continuous paths (full graph transit)
         // Ресурс: capacity на рёбрах (rem>0). Топология: ВСЕ направления (в т.ч. rem=0).
-        $buildRoutesMethod3 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $anyCapacityLeft, $consumeRoute, $routeConsumesAny, $consumeCapacitySegment): array {
+        $buildRoutesMethod3 = function(array $baseRem, array $supply0) use ($dirs, $fullAdj, $anyCapacityLeft, $consumeRoute, $routeConsumesAny, $consumeCapacitySegment, $maxRoutesLimit): array {
             $rem = $baseRem;
             $routes = [];
-            $maxRoutes = 20000;
+            $maxRoutes = $maxRoutesLimit;
 
             // Dijkstra (shortest connector) on full graph by length
             $shortestPathDirs = function(int $from, array $targets) use ($fullAdj): array {

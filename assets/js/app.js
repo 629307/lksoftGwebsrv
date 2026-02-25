@@ -5830,6 +5830,36 @@ const App = {
         const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable');
         const inputStart = document.getElementById('settings-input-well-number-start');
         const poleStart = document.getElementById('settings-pole-well-number-start');
+        const minZoomWellLabels = document.getElementById('settings-min-zoom-well-labels');
+        const minZoomObjCoords = document.getElementById('settings-min-zoom-object-coordinates');
+        const invColNeg = document.getElementById('settings-inventory-color-negative');
+        const invColZero = document.getElementById('settings-inventory-color-zero');
+        const invColOne = document.getElementById('settings-inventory-color-one');
+        const invColMax = document.getElementById('settings-inventory-color-max');
+        const invColNoData = document.getElementById('settings-inventory-color-no-data');
+        const invMultHas = document.getElementById('settings-inventory-weight-mult-has');
+        const invMultNo = document.getElementById('settings-inventory-weight-mult-no');
+        const assumedRoutesColor = document.getElementById('settings-assumed-routes-color');
+        const assumedRoutesOpacity = document.getElementById('settings-assumed-routes-opacity');
+        const assumedBaseColor = document.getElementById('settings-assumed-base-grid-color');
+        const assumedBaseOpacity = document.getElementById('settings-assumed-base-grid-opacity');
+        const assumedBaseMult = document.getElementById('settings-assumed-base-grid-weight-mult');
+        const cableHlColor = document.getElementById('settings-cable-highlight-color');
+        const cableHlWeight = document.getElementById('settings-cable-highlight-weight');
+        const cableHlOpacity = document.getElementById('settings-cable-highlight-opacity');
+        const dashInbuilding = document.getElementById('settings-inbuilding-dash-array');
+        const dashAerial = document.getElementById('settings-aerial-cable-dash-array');
+        const invMaxCnt = document.getElementById('settings-inventory-max-cable-count-per-direction');
+        const photosMax = document.getElementById('settings-photos-max-per-object');
+        const grpExt = document.getElementById('settings-group-attachments-ext');
+        const grpMax = document.getElementById('settings-group-attachments-max-bytes');
+        const incExt = document.getElementById('settings-incident-documents-ext');
+        const incMax = document.getElementById('settings-incident-documents-max-bytes');
+        const invExt = document.getElementById('settings-inventory-attachments-ext');
+        const invMax = document.getElementById('settings-inventory-attachments-max-bytes');
+        const algLambda = document.getElementById('settings-assumed-lambda-tag-m');
+        const algMu = document.getElementById('settings-assumed-mu-bottleneck-m');
+        const algMaxRoutes = document.getElementById('settings-assumed-max-routes');
 
         if (z) z.value = (this.settings.map_default_zoom ?? MapManager.defaultZoom ?? 14);
         if (lat) lat.value = (this.settings.map_default_lat ?? (MapManager.defaultCenter?.[0] ?? 66.10231));
@@ -5874,6 +5904,55 @@ const App = {
         if (hkGround) hkGround.value = (this.settings.hotkey_add_ground_cable ?? '');
         if (hkAerial) hkAerial.value = (this.settings.hotkey_add_aerial_cable ?? '');
         if (inbuildingStatus) inbuildingStatus.value = (this.settings.direction_inbuilding_status_code ?? 'inbuilding');
+        if (minZoomWellLabels) minZoomWellLabels.value = (this.settings.min_zoom_well_labels ?? 14);
+        if (minZoomObjCoords) minZoomObjCoords.value = (this.settings.min_zoom_object_coordinates ?? 14);
+        if (invColNeg) invColNeg.value = (this.settings.inventory_color_negative ?? '#0098ff');
+        if (invColZero) invColZero.value = (this.settings.inventory_color_zero ?? '#01b73f');
+        if (invColOne) invColOne.value = (this.settings.inventory_color_one ?? '#f9adad');
+        if (invColMax) invColMax.value = (this.settings.inventory_color_max ?? '#ff0000');
+        if (invColNoData) invColNoData.value = (this.settings.inventory_color_no_data ?? '#777777');
+        if (invMultHas) invMultHas.value = (this.settings.inventory_weight_multiplier_has_value ?? 2);
+        if (invMultNo) invMultNo.value = (this.settings.inventory_weight_multiplier_no_value ?? 0.5);
+        if (assumedRoutesColor) assumedRoutesColor.value = (this.settings.assumed_routes_color ?? '#8300ff');
+        if (assumedRoutesOpacity) assumedRoutesOpacity.value = (this.settings.assumed_routes_opacity ?? 0.1);
+        if (assumedBaseColor) assumedBaseColor.value = (this.settings.assumed_base_grid_color ?? '#777777');
+        if (assumedBaseOpacity) assumedBaseOpacity.value = (this.settings.assumed_base_grid_opacity ?? 0.75);
+        if (assumedBaseMult) assumedBaseMult.value = (this.settings.assumed_base_grid_weight_multiplier ?? 0.5);
+        if (cableHlColor) cableHlColor.value = (this.settings.cable_highlight_color ?? '#ff0000');
+        if (cableHlWeight) cableHlWeight.value = (this.settings.cable_highlight_weight ?? 5);
+        if (cableHlOpacity) cableHlOpacity.value = (this.settings.cable_highlight_opacity ?? 0.95);
+        if (dashInbuilding) dashInbuilding.value = (this.settings.inbuilding_dash_array ?? '6, 6');
+        if (dashAerial) dashAerial.value = (this.settings.aerial_cable_dash_array ?? '5, 5');
+        if (invMaxCnt) invMaxCnt.value = (this.settings.inventory_max_cable_count_per_direction ?? 100);
+        if (photosMax) photosMax.value = (this.settings.photos_max_per_object ?? 10);
+        if (grpExt) grpExt.value = (this.settings.group_attachments_allowed_extensions ?? 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv');
+        if (grpMax) grpMax.value = (this.settings.group_attachments_max_upload_bytes ?? 10485760);
+        if (incExt) incExt.value = (this.settings.incident_documents_allowed_extensions ?? 'pdf,doc,docx,xls,xlsx,txt,csv,zip,rar');
+        if (incMax) incMax.value = (this.settings.incident_documents_max_upload_bytes ?? 10485760);
+        if (invExt) invExt.value = (this.settings.inventory_attachments_allowed_extensions ?? 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt,csv,zip,rar');
+        if (invMax) invMax.value = (this.settings.inventory_attachments_max_upload_bytes ?? 52428800);
+        if (algLambda) algLambda.value = (this.settings.assumed_lambda_tag_m ?? 25);
+        if (algMu) algMu.value = (this.settings.assumed_mu_bottleneck_m ?? 50);
+        if (algMaxRoutes) algMaxRoutes.value = (this.settings.assumed_max_routes ?? 20000);
+
+        // Глобальные настройки раздела "Настройка данных ГИС": менять может только admin/root
+        const setAdminLikeDisabled = (el) => {
+            if (!el) return;
+            el.disabled = !isAdminLike;
+            if (!isAdminLike) el.style.background = 'var(--bg-tertiary)';
+        };
+        [
+            minZoomWellLabels, minZoomObjCoords,
+            invColNeg, invColZero, invColOne, invColMax, invColNoData,
+            invMultHas, invMultNo,
+            assumedRoutesColor, assumedRoutesOpacity,
+            assumedBaseColor, assumedBaseOpacity, assumedBaseMult,
+            cableHlColor, cableHlWeight, cableHlOpacity,
+            dashInbuilding, dashAerial,
+            invMaxCnt, photosMax,
+            grpExt, grpMax, incExt, incMax, invExt, invMax,
+            algLambda, algMu, algMaxRoutes,
+        ].forEach(setAdminLikeDisabled);
 
         // Заполняем список "Код — точка ввода" (object_kinds.code) только для вида объекта "Колодец"
         // Доступно только для admin/root (секция "Настройка данных ГИС")
@@ -6179,6 +6258,36 @@ const App = {
         const hkAerial = document.getElementById('settings-hotkey-add-aerial-cable')?.value;
         const inputStart = document.getElementById('settings-input-well-number-start')?.value;
         const poleStart = document.getElementById('settings-pole-well-number-start')?.value;
+        const minZoomWellLabels = document.getElementById('settings-min-zoom-well-labels')?.value;
+        const minZoomObjCoords = document.getElementById('settings-min-zoom-object-coordinates')?.value;
+        const invColNeg = document.getElementById('settings-inventory-color-negative')?.value;
+        const invColZero = document.getElementById('settings-inventory-color-zero')?.value;
+        const invColOne = document.getElementById('settings-inventory-color-one')?.value;
+        const invColMax = document.getElementById('settings-inventory-color-max')?.value;
+        const invColNoData = document.getElementById('settings-inventory-color-no-data')?.value;
+        const invMultHas = document.getElementById('settings-inventory-weight-mult-has')?.value;
+        const invMultNo = document.getElementById('settings-inventory-weight-mult-no')?.value;
+        const assumedRoutesColor = document.getElementById('settings-assumed-routes-color')?.value;
+        const assumedRoutesOpacity = document.getElementById('settings-assumed-routes-opacity')?.value;
+        const assumedBaseColor = document.getElementById('settings-assumed-base-grid-color')?.value;
+        const assumedBaseOpacity = document.getElementById('settings-assumed-base-grid-opacity')?.value;
+        const assumedBaseMult = document.getElementById('settings-assumed-base-grid-weight-mult')?.value;
+        const cableHlColor = document.getElementById('settings-cable-highlight-color')?.value;
+        const cableHlWeight = document.getElementById('settings-cable-highlight-weight')?.value;
+        const cableHlOpacity = document.getElementById('settings-cable-highlight-opacity')?.value;
+        const dashInbuilding = document.getElementById('settings-inbuilding-dash-array')?.value;
+        const dashAerial = document.getElementById('settings-aerial-cable-dash-array')?.value;
+        const invMaxCnt = document.getElementById('settings-inventory-max-cable-count-per-direction')?.value;
+        const photosMax = document.getElementById('settings-photos-max-per-object')?.value;
+        const grpExt = document.getElementById('settings-group-attachments-ext')?.value;
+        const grpMax = document.getElementById('settings-group-attachments-max-bytes')?.value;
+        const incExt = document.getElementById('settings-incident-documents-ext')?.value;
+        const incMax = document.getElementById('settings-incident-documents-max-bytes')?.value;
+        const invExt = document.getElementById('settings-inventory-attachments-ext')?.value;
+        const invMax = document.getElementById('settings-inventory-attachments-max-bytes')?.value;
+        const algLambda = document.getElementById('settings-assumed-lambda-tag-m')?.value;
+        const algMu = document.getElementById('settings-assumed-mu-bottleneck-m')?.value;
+        const algMaxRoutes = document.getElementById('settings-assumed-max-routes')?.value;
 
         const normalizeHotkey = (v) => {
             const s = (v ?? '').toString().trim();
@@ -6220,6 +6329,37 @@ const App = {
                 well_entry_point_kind_code: (entryKind ?? '').toString(),
                 well_pole_kind_code: (poleKind ?? '').toString(),
                 direction_inbuilding_status_code: (inbuildingStatus ?? '').toString().trim(),
+                // Настройка данных ГИС: глобальные параметры отображения/алгоритмов
+                min_zoom_well_labels: minZoomWellLabels,
+                min_zoom_object_coordinates: minZoomObjCoords,
+                inventory_color_negative: (invColNeg ?? '').toString().trim(),
+                inventory_color_zero: (invColZero ?? '').toString().trim(),
+                inventory_color_one: (invColOne ?? '').toString().trim(),
+                inventory_color_max: (invColMax ?? '').toString().trim(),
+                inventory_color_no_data: (invColNoData ?? '').toString().trim(),
+                inventory_weight_multiplier_has_value: invMultHas,
+                inventory_weight_multiplier_no_value: invMultNo,
+                assumed_routes_color: (assumedRoutesColor ?? '').toString().trim(),
+                assumed_routes_opacity: assumedRoutesOpacity,
+                assumed_base_grid_color: (assumedBaseColor ?? '').toString().trim(),
+                assumed_base_grid_opacity: assumedBaseOpacity,
+                assumed_base_grid_weight_multiplier: assumedBaseMult,
+                cable_highlight_color: (cableHlColor ?? '').toString().trim(),
+                cable_highlight_weight: cableHlWeight,
+                cable_highlight_opacity: cableHlOpacity,
+                inbuilding_dash_array: (dashInbuilding ?? '').toString().trim(),
+                aerial_cable_dash_array: (dashAerial ?? '').toString().trim(),
+                inventory_max_cable_count_per_direction: invMaxCnt,
+                photos_max_per_object: photosMax,
+                group_attachments_allowed_extensions: (grpExt ?? '').toString().trim(),
+                group_attachments_max_upload_bytes: grpMax,
+                incident_documents_allowed_extensions: (incExt ?? '').toString().trim(),
+                incident_documents_max_upload_bytes: incMax,
+                inventory_attachments_allowed_extensions: (invExt ?? '').toString().trim(),
+                inventory_attachments_max_upload_bytes: invMax,
+                assumed_lambda_tag_m: algLambda,
+                assumed_mu_bottleneck_m: algMu,
+                assumed_max_routes: algMaxRoutes,
             } : {}),
         };
         try {

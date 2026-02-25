@@ -189,6 +189,33 @@ const MapManager = {
         return this.getSettingColor('selected_object_highlight_color', '#ffff00');
     },
 
+    getWellLabelsMinZoom() {
+        const v = this.getSettingNumber('min_zoom_well_labels', this.wellLabelsMinZoom ?? 14);
+        return Math.max(0, Math.min(30, Math.trunc(Number(v) || 0)));
+    },
+
+    getObjectCoordinatesLabelsMinZoom() {
+        const v = this.getSettingNumber('min_zoom_object_coordinates', this.objectCoordinatesLabelsMinZoom ?? 14);
+        return Math.max(0, Math.min(30, Math.trunc(Number(v) || 0)));
+    },
+
+    getSettingString(code, fallback = '') {
+        try {
+            if (typeof App === 'undefined') return (fallback ?? '');
+            const v = (App?.settings?.[code] ?? '').toString().trim();
+            return v !== '' ? v : (fallback ?? '');
+        } catch (_) {
+            return (fallback ?? '');
+        }
+    },
+
+    getCableHighlightStyle() {
+        const color = this.getSettingColor('cable_highlight_color', '#ff0000');
+        const weight = Math.max(0.5, Math.min(50, Number(this.getSettingNumber('cable_highlight_weight', 5)) || 5));
+        const opacity = Math.max(0, Math.min(1, Number(this.getSettingNumber('cable_highlight_opacity', 0.95)) || 0.95));
+        return { color, weight, opacity, className: 'cable-highlight-path' };
+    },
+
     isReadonlyUser() {
         try {
             return (typeof App !== 'undefined') && ((App?.user?.role?.code || '') === 'readonly');
@@ -875,18 +902,36 @@ const MapManager = {
             const lerp = (a, b, t) => Math.round(a + (b - a) * t);
             const toHex = (v) => v.toString(16).padStart(2, '0');
             const rgb = (r, g, b) => `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+            const hexToRgb = (hex) => {
+                try {
+                    const s = String(hex || '').trim();
+                    if (!/^#[0-9a-f]{6}$/i.test(s)) return null;
+                    return [
+                        parseInt(s.slice(1, 3), 16),
+                        parseInt(s.slice(3, 5), 16),
+                        parseInt(s.slice(5, 7), 16),
+                    ];
+                } catch (_) {
+                    return null;
+                }
+            };
+            const colNoData = this.getSettingColor('inventory_color_no_data', '#777777');
+            const colNeg = this.getSettingColor('inventory_color_negative', '#0098ff');
+            const colZero = this.getSettingColor('inventory_color_zero', '#01b73f');
+            const colOne = this.getSettingColor('inventory_color_one', '#f9adad');
+            const colMax = this.getSettingColor('inventory_color_max', '#ff0000');
             const colorForUnaccounted = (u) => {
                 const n0 = Number(u);
                 const n = Number.isFinite(n0) ? Math.trunc(n0) : null;
-                if (n === null) return '#777777';
-                if (n < 0) return '#0098ff';
-                if (n === 0) return '#01b73f';
-                if (n === 1) return '#f9adad';
-                // Градиент от #f9adad (1) до #ff0000 (maxInv)
-                const start = [0xF9, 0xAD, 0xAD];
-                const end = [0xFF, 0x00, 0x00];
+                if (n === null) return colNoData;
+                if (n < 0) return colNeg;
+                if (n === 0) return colZero;
+                if (n === 1) return colOne;
+                // Градиент от "inventory_color_one" (1) до "inventory_color_max" (maxInv)
+                const start = hexToRgb(colOne) || [0xF9, 0xAD, 0xAD];
+                const end = hexToRgb(colMax) || [0xFF, 0x00, 0x00];
                 const max = Math.max(1, Math.trunc(maxInv || 0));
-                if (max <= 1) return '#ff0000';
+                if (max <= 1) return colMax;
                 const t = Math.max(0, Math.min(1, (n - 1) / (max - 1)));
                 return rgb(
                     lerp(start[0], end[0], t),
@@ -916,10 +961,14 @@ const MapManager = {
                     const p = feature?.properties || {};
                     const u = p.inv_unaccounted;
                     const hasInv = (p.inv_unaccounted !== null && p.inv_unaccounted !== undefined);
-                    const color = hasInv ? colorForUnaccounted(u) : '#777777';
+                    const color = hasInv ? colorForUnaccounted(u) : colNoData;
                     // Требование: направления без значения inv_unaccounted — в 2 раза тоньше настройки "Толщина линий — Направление"
                     const base = this.getDirectionLineWeight();
-                    const weight = hasInv ? (base * 2) : Math.max(0.5, base / 2);
+                    const multHas0 = Number(this.getSettingNumber('inventory_weight_multiplier_has_value', 2)) || 2;
+                    const multNo0 = Number(this.getSettingNumber('inventory_weight_multiplier_no_value', 0.5)) || 0.5;
+                    const multHas = Math.max(0.1, Math.min(10, multHas0));
+                    const multNo = Math.max(0.05, Math.min(10, multNo0));
+                    const weight = hasInv ? (base * multHas) : Math.max(0.5, base * multNo);
                     return { color, weight, opacity: 0.85 };
                 },
                 onEachFeature: (feature, layer) => {
@@ -1669,7 +1718,7 @@ const MapManager = {
     updateWellLabelsVisibility() {
         if (!this.map || !this.wellLabelsLayer) return;
         const wellsVisible = !!(this.layers?.wells && this.map.hasLayer(this.layers.wells));
-        const shouldShow = wellsVisible && this.wellLabelsEnabled && this.map.getZoom() >= this.wellLabelsMinZoom;
+        const shouldShow = wellsVisible && this.wellLabelsEnabled && this.map.getZoom() >= this.getWellLabelsMinZoom();
         const hasLayer = this.map.hasLayer(this.wellLabelsLayer);
         if (shouldShow && !hasLayer) this.map.addLayer(this.wellLabelsLayer);
         if (!shouldShow && hasLayer) this.map.removeLayer(this.wellLabelsLayer);
@@ -1678,7 +1727,7 @@ const MapManager = {
     updateObjectCoordinatesLabelsVisibility() {
         if (!this.map || !this.objectCoordinatesLabelsLayer) return;
         const wellsVisible = !!(this.layers?.wells && this.map.hasLayer(this.layers.wells));
-        const shouldShow = wellsVisible && this.objectCoordinatesLabelsEnabled && this.map.getZoom() >= this.objectCoordinatesLabelsMinZoom;
+        const shouldShow = wellsVisible && this.objectCoordinatesLabelsEnabled && this.map.getZoom() >= this.getObjectCoordinatesLabelsMinZoom();
         const hasLayer = this.map.hasLayer(this.objectCoordinatesLabelsLayer);
         if (shouldShow && !hasLayer) this.map.addLayer(this.objectCoordinatesLabelsLayer);
         if (!shouldShow && hasLayer) this.map.removeLayer(this.objectCoordinatesLabelsLayer);
@@ -2152,7 +2201,7 @@ const MapManager = {
                     color: '#555555',
                     weight: 2,
                     opacity: 0.9,
-                    dashArray: '6, 6',
+                    dashArray: this.getSettingString('inbuilding_dash_array', '6, 6'),
                     pane: 'rulerLinePane',
                     interactive: false,
                 }).addTo(this.rulerLayer);
@@ -2256,7 +2305,7 @@ const MapManager = {
                 color: '#555555',
                 weight: 2,
                 opacity: 0.9,
-                dashArray: '6, 6',
+                dashArray: this.getSettingString('inbuilding_dash_array', '6, 6'),
                 pane: 'rulerLinePane',
                 interactive: false,
             }).addTo(this.rulerLayer);
@@ -2308,11 +2357,15 @@ const MapManager = {
                 // для hover-логики нужна полная геометрия направлений (без фильтров)
                 const cd = await API.channelDirections.geojson({});
                 if (cd && cd.type === 'FeatureCollection' && Array.isArray(cd.features)) {
-                    const weight = Math.max(0.5, this.getDirectionLineWeight() / 2);
+                    const mult0 = Number(this.getSettingNumber('assumed_base_grid_weight_multiplier', 0.5)) || 0.5;
+                    const mult = Math.max(0.05, Math.min(10, mult0));
+                    const weight = Math.max(0.5, this.getDirectionLineWeight() * mult);
+                    const baseColor = this.getSettingColor('assumed_base_grid_color', '#777777');
+                    const baseOpacity = Math.max(0, Math.min(1, Number(this.getSettingNumber('assumed_base_grid_opacity', 0.75)) || 0.75));
                     L.geoJSON(cd, {
                         pane: 'assumedCablesBasePane',
                         interactive: false,
-                        style: () => ({ color: '#777777', weight, opacity: 0.75 }),
+                        style: () => ({ color: baseColor, weight, opacity: baseOpacity }),
                         onEachFeature: (feature, layer) => {
                             try {
                                 const p = feature?.properties || {};
@@ -2335,8 +2388,8 @@ const MapManager = {
             if (!features.length) return;
             if (this.directionLengthLabelsGlobalEnabled) this.updateDirectionLengthLabelsVisibility();
 
-            const routeColor = '#8300ff';
-            const routeOpacity = 0.1;
+            const routeColor = this.getSettingColor('assumed_routes_color', '#8300ff');
+            const routeOpacity = Math.max(0, Math.min(1, Number(this.getSettingNumber('assumed_routes_opacity', 0.1)) || 0.1));
             const baseWeight = Math.max(1, this.getDirectionLineWeight());
             const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const fmt = (n) => {
@@ -4815,7 +4868,7 @@ const MapManager = {
             this.highlightLayer = L.geoJSON(fc, {
                 interactive: false,
                 pane: 'highlightPane',
-                style: () => ({ color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' })
+                style: () => this.getCableHighlightStyle()
             }).addTo(this.map);
             this.setHighlightBarVisible(true);
         } catch (e) {
@@ -4829,7 +4882,8 @@ const MapManager = {
             const layer = this.findLayerByMeta('unified_cable', cableId);
             const latlngs = layer?.getLatLngs?.();
             if (!latlngs) return;
-            this.highlightLayer = L.polyline(latlngs, { interactive: false, pane: 'highlightPane', color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' }).addTo(this.map);
+            const st = this.getCableHighlightStyle();
+            this.highlightLayer = L.polyline(latlngs, { interactive: false, pane: 'highlightPane', ...st }).addTo(this.map);
             this.setHighlightBarVisible(true);
             const bounds = this.highlightLayer.getBounds();
             if (bounds && bounds.isValid()) {
@@ -4846,7 +4900,7 @@ const MapManager = {
             if (!geometry) return;
             this.highlightLayer = L.geoJSON(
                 { type: 'FeatureCollection', features: [{ type: 'Feature', geometry, properties: {} }] },
-                { interactive: false, pane: 'highlightPane', style: () => ({ color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' }) }
+                { interactive: false, pane: 'highlightPane', style: () => this.getCableHighlightStyle() }
             ).addTo(this.map);
             this.setHighlightBarVisible(true);
             const bounds = this.highlightLayer.getBounds();
@@ -4865,7 +4919,7 @@ const MapManager = {
             if (resp && resp.type === 'FeatureCollection') {
                 this.highlightLayer = L.geoJSON(resp, {
                     interactive: false,
-                    style: () => ({ color: '#ff0000', weight: 5, opacity: 0.95, className: 'cable-highlight-path' })
+                    style: () => this.getCableHighlightStyle()
                 }).addTo(this.map);
                 this.setHighlightBarVisible(true);
                 const bounds = this.highlightLayer.getBounds();
@@ -5619,12 +5673,12 @@ const MapManager = {
                             color: this.colors.channels,
                             weight: this.getDirectionLineWeight(),
                             opacity: 0.8,
-                            ...(isInbuilding ? { dashArray: '6, 6' } : {}),
+                            ...(isInbuilding ? { dashArray: this.getSettingString('inbuilding_dash_array', '6, 6') } : {}),
                         });
                     } else if (ot === 'ground_cable') {
                         addLine(this.layers.groundCables, 'ground_cable', f, latlngs, { color: this.colors.groundCables, weight: this.getCableLineWeight(), opacity: 0.8 });
                     } else if (ot === 'aerial_cable') {
-                        addLine(this.layers.aerialCables, 'aerial_cable', f, latlngs, { color: this.colors.aerialCables, weight: this.getCableLineWeight(), opacity: 0.8, dashArray: '5, 5' });
+                        addLine(this.layers.aerialCables, 'aerial_cable', f, latlngs, { color: this.colors.aerialCables, weight: this.getCableLineWeight(), opacity: 0.8, dashArray: this.getSettingString('aerial_cable_dash_array', '5, 5') });
                     } else if (ot === 'duct_cable') {
                         addLine(this.layers.ductCables, 'duct_cable', f, latlngs, { color: this.colors.ductCables, weight: this.getCableLineWeight(), opacity: 0.8 });
                     }
