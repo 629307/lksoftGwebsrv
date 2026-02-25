@@ -17,10 +17,33 @@ date_default_timezone_set($config['timezone']);
 use App\Core\Logger;
 $logger = Logger::getInstance();
 
-// Заголовки CORS
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
+// Базовые security headers для API (не заменяют настройку веб-сервера в production)
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: SAMEORIGIN');
+header('Referrer-Policy: same-origin');
+header('X-Permitted-Cross-Domain-Policies: none');
+
+// CORS (управляется через config/app.php -> cors)
+$cors = $config['cors'] ?? [];
+$allowOriginsRaw = (string) ($cors['allow_origins'] ?? '*');
+$allowMethods = (string) ($cors['allow_methods'] ?? 'GET, POST, PUT, DELETE, OPTIONS');
+$allowHeaders = (string) ($cors['allow_headers'] ?? 'Content-Type, Authorization, X-Requested-With');
+$maxAge = (int) ($cors['max_age'] ?? 86400);
+
+$origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
+$allowAll = (trim($allowOriginsRaw) === '*');
+if ($allowAll) {
+    header('Access-Control-Allow-Origin: *');
+} else {
+    $allowed = array_values(array_filter(array_map('trim', explode(',', $allowOriginsRaw))));
+    if ($origin !== '' && in_array($origin, $allowed, true)) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Vary: Origin');
+    }
+}
+header('Access-Control-Allow-Methods: ' . $allowMethods);
+header('Access-Control-Allow-Headers: ' . $allowHeaders);
+header('Access-Control-Max-Age: ' . $maxAge);
 
 // Обработка preflight запросов
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
