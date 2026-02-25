@@ -94,9 +94,16 @@ set_exception_handler(function($e) use ($config, $logger) {
     http_response_code(500);
     header('Content-Type: application/json; charset=utf-8');
     
+    $message = 'Внутренняя ошибка сервера';
+    // Более понятное сообщение для типового production-ошибочного сценария:
+    // не настроено подключение к БД (после перевода конфигов на ENV/.env).
+    if ($e instanceof \PDOException || strpos((string) $e->getMessage(), 'Ошибка подключения к БД') !== false) {
+        $message = 'Ошибка подключения к базе данных. Проверьте настройки IGS_DB_* (ENV или .env).';
+    }
+
     $response = [
         'success' => false,
-        'message' => 'Внутренняя ошибка сервера',
+        'message' => $message,
     ];
     
     if ($config['debug']) {

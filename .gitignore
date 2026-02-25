@@ -1,1 +1,4 @@
 dmessite.log
+.env
+.env.* 
+!.env.example
