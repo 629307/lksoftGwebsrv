@@ -1991,7 +1991,45 @@ const App = {
                 try {
                     const resp = await uploadWithProgress();
                     if (resp?.success === false) throw new Error(resp?.message || 'Ошибка импорта');
-                    this.notify(resp?.message || 'Слой импортирован', 'success');
+                    try {
+                        const cnt = resp?.data?.imported_count;
+                        const msg = resp?.message || 'Слой импортирован';
+                        if (Number.isFinite(Number(cnt))) {
+                            this.notify(`${msg}. Импортировано объектов: ${Number(cnt)}`, 'success');
+                        } else {
+                            this.notify(msg, 'success');
+                        }
+                    } catch (_) {
+                        this.notify(resp?.message || 'Слой импортирован', 'success');
+                    }
+
+                    // Авто-активация слоя для текущего пользователя (чтобы сразу был виден на карте)
+                    try {
+                        const layerCode = (resp?.data?.code ?? '').toString();
+                        if (layerCode) {
+                            const enabled = this._parseCsvSet_(this.settings?.imported_layers_enabled ?? '');
+                            enabled.add(layerCode);
+                            const csv = this._setToCsv_(enabled);
+                            const r2 = await API.settings.update({ imported_layers_enabled: csv });
+                            if (!(r2?.success === false)) {
+                                this.settings.imported_layers_enabled = csv;
+                            }
+                        }
+                    } catch (_) {}
+
+                    // Если сервер вернул bbox — сфокусируем карту на слое
+                    try {
+                        const ex = resp?.data?.extent_wgs84;
+                        if (ex && [ex.minx, ex.miny, ex.maxx, ex.maxy].every((v) => Number.isFinite(Number(v)))) {
+                            const b = L.latLngBounds(
+                                L.latLng(Number(ex.miny), Number(ex.minx)),
+                                L.latLng(Number(ex.maxy), Number(ex.maxx)),
+                            );
+                            if (b && b.isValid && b.isValid()) {
+                                MapManager?.map?.fitBounds?.(b, { padding: [30, 30], maxZoom: 18 });
+                            }
+                        }
+                    } catch (_) {}
                     this.hideModal();
                     await this.refreshImportedLayersMeta({ applyToMap: true });
                     try { await this.loadSettingsPanel?.(); } catch (_) {}
@@ -2040,10 +2078,10 @@ const App = {
                             <div class="text-muted" style="font-size:12px;">code: ${esc(code)} • версия: ${v} • загружено: ${uploaded}</div>
                         </div>
                         <div style="display:flex; gap:8px; flex: 0 0 auto; align-items:center;">
-                            <button class="btn btn-secondary btn-sm btn-imported-layer-view-objects" data-code="${esc(code)}"><i class="fas fa-list"></i> Объекты</button>
-                            <button class="btn btn-secondary btn-sm btn-imported-layer-reimport" data-code="${esc(code)}"><i class="fas fa-file-import"></i> Переимпорт</button>
-                            <button class="btn btn-danger btn-sm btn-imported-layer-delete" data-code="${esc(code)}"><i class="fas fa-trash"></i> Удалить</button>
-                            <button class="btn btn-primary btn-sm btn-imported-layer-save-style" data-code="${esc(code)}"><i class="fas fa-save"></i> Сохранить стиль</button>
+                            <button type="button" class="btn btn-secondary btn-sm btn-imported-layer-view-objects" data-code="${esc(code)}"><i class="fas fa-list"></i> Объекты</button>
+                            <button type="button" class="btn btn-secondary btn-sm btn-imported-layer-reimport" data-code="${esc(code)}"><i class="fas fa-file-import"></i> Переимпорт</button>
+                            <button type="button" class="btn btn-danger btn-sm btn-imported-layer-delete" data-code="${esc(code)}"><i class="fas fa-trash"></i> Удалить</button>
+                            <button type="button" class="btn btn-primary btn-sm btn-imported-layer-save-style" data-code="${esc(code)}"><i class="fas fa-save"></i> Сохранить стиль</button>
                         </div>
                     </div>
 
@@ -2112,6 +2150,7 @@ const App = {
         // bind actions
         document.querySelectorAll('.btn-imported-layer-view-objects').forEach((b) => {
             b.addEventListener('click', (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                 const code = (e.currentTarget?.dataset?.code ?? '').toString();
                 if (!code) return;
                 try { this.showImportedLayerObjectsModal(code); } catch (_) {}
@@ -2119,6 +2158,7 @@ const App = {
         });
         document.querySelectorAll('.btn-imported-layer-reimport').forEach((b) => {
             b.addEventListener('click', (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                 const code = (e.currentTarget?.dataset?.code ?? '').toString();
                 const meta = rows.find(x => String(x?.code ?? '') === code) || null;
                 this.showImportedLayerImportModal({ code, name: meta?.name ?? '', style: meta?.style ?? {} });
@@ -2126,6 +2166,7 @@ const App = {
         });
         document.querySelectorAll('.btn-imported-layer-delete').forEach((b) => {
             b.addEventListener('click', async (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                 const code = (e.currentTarget?.dataset?.code ?? '').toString();
                 if (!code) return;
                 const meta = rows.find(x => String(x?.code ?? '') === code) || null;
@@ -2156,6 +2197,7 @@ const App = {
         });
         document.querySelectorAll('.btn-imported-layer-save-style').forEach((b) => {
             b.addEventListener('click', async (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                 const code = (e.currentTarget?.dataset?.code ?? '').toString();
                 if (!code) return;
 
@@ -2209,15 +2251,17 @@ const App = {
 
         const render = () => {
             const items = state.items || [];
-            const groups = { point: [], line: [], other: [] };
-            items.forEach((f) => {
+            const groups = { point: [], line: [], other: [] }; // [{ idx, f }]
+            items.forEach((f, idx) => {
                 const p = f?.properties || {};
                 const g = geomClass(p?._geometry_type);
-                groups[g].push(f);
+                groups[g].push({ idx, f });
             });
 
             const renderRows = (arr) => {
-                return arr.map((f, idx) => {
+                return arr.map((row, localIdx) => {
+                    const f = row?.f;
+                    const idx = row?.idx;
                     const p = f?.properties || {};
                     const gtype = (p?._geometry_type ?? '').toString();
                     const id = (p?.gid ?? p?.id ?? '').toString();
@@ -2228,12 +2272,12 @@ const App = {
                     const hint = propsKeys.map(k => `${esc(k)}=${esc(p[k])}`).join(' • ');
                     return `
                         <div style="display:flex; gap:10px; align-items:center; padding:8px; border:1px solid var(--border); border-radius:10px; margin-bottom:6px;">
-                            <div style="flex: 0 0 auto; min-width:60px; font-weight:700;">${esc(id || String(idx + 1))}</div>
+                            <div style="flex: 0 0 auto; min-width:60px; font-weight:700;">${esc(id || String(localIdx + 1))}</div>
                             <div style="flex:1 1 auto; min-width:0;">
                                 <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${shortLabel}</div>
                                 <div class="text-muted" style="font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${g} ${hint ? `• ${hint}` : ''}</div>
                             </div>
-                            <button class="btn btn-secondary btn-sm btn-imported-obj-show" data-idx="${state.items.indexOf(f)}"><i class="fas fa-location-crosshairs"></i> На карте</button>
+                            <button type="button" class="btn btn-secondary btn-sm btn-imported-obj-show" data-idx="${esc(String(idx))}"><i class="fas fa-location-crosshairs"></i> На карте</button>
                         </div>
                     `;
                 }).join('');
