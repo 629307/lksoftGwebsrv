@@ -828,6 +828,21 @@ const API = {
         },
     },
 
+    importedLayerProjPresets: {
+        list() {
+            return API.get('/imported-layer-proj-presets');
+        },
+        create(data) {
+            return API.post('/imported-layer-proj-presets', data);
+        },
+        update(id, data) {
+            return API.put(`/imported-layer-proj-presets/${encodeURIComponent(id)}`, data);
+        },
+        delete(id) {
+            return API.delete(`/imported-layer-proj-presets/${encodeURIComponent(id)}`);
+        },
+    },
+
     // ========================
     // Администрирование: журнал действий
     // ========================

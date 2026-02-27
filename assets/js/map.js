@@ -10,6 +10,7 @@ const MapManager = {
     filters: {},
     defaultCenter: [66.10231, 76.68617],
     defaultZoom: 14,
+    baseLayerMode: 'osm', // osm | wmts | none
     
     // Режим добавления направлений
     addDirectionMode: false,
@@ -54,6 +55,9 @@ const MapManager = {
     ownersLegendEl: null,
     _ownersLegendCache: null,
     _lastGroupFilters: null,
+    // Легенда: импортированные слои (DOM overlay)
+    importedLayersLegendEnabled: false,
+    importedLayersLegendEl: null,
     // Панель "Настройки по умолчанию" (персональные дефолты)
     mapDefaultsEnabled: false,
     mapDefaultsEl: null,
@@ -483,6 +487,8 @@ const MapManager = {
 
         // Если слои уже активированы — подгрузим/обновим
         try { this.applyImportedLayersEnabledFromSettings(); } catch (_) {}
+        // Если легенда открыта — перерисуем
+        try { if (this.importedLayersLegendEnabled) this.renderImportedLayersLegend(); } catch (_) {}
     },
 
     _getImportedLayerMeta(code) {
@@ -536,12 +542,15 @@ const MapManager = {
         if (!grp || !this.map) return;
 
         const has = this.map.hasLayer(grp);
-        if (enabled && !has) {
+        const minZ = this._getImportedLayerMinZoom(meta);
+        const z = this.map.getZoom();
+        const allowByZoom = (minZ === null || z >= minZ);
+        if (enabled && allowByZoom && !has) {
             try { grp.addTo(this.map); } catch (_) {}
             // загрузим в пределах текущего bbox
             try { this.refreshImportedLayer(c, { force: false, pane }); } catch (_) {}
         }
-        if (!enabled && has) {
+        if ((!enabled || !allowByZoom) && has) {
             try { this.map.removeLayer(grp); } catch (_) {}
         }
     },
@@ -575,9 +584,12 @@ const MapManager = {
     refreshEnabledImportedLayersInView() {
         const bbox = this._currentBboxString();
         if (!bbox) return;
+        const z = this.map?.getZoom?.() ?? null;
         (this.importedLayersMeta || []).forEach((l) => {
             const code = (l?.code ?? '').toString().trim().toLowerCase();
             if (!code) return;
+            const minZ = this._getImportedLayerMinZoom(l);
+            if (z !== null && minZ !== null && z < minZ) return;
             const st = this.importedLayers.get(code);
             if (!st || !st.group || !this.map || !this.map.hasLayer(st.group)) return;
             // обновляем только если bbox изменился
@@ -608,6 +620,9 @@ const MapManager = {
             const half = Math.round(px / 2);
             html = `<div style="width:0;height:0;border-left:${half}px solid transparent;border-right:${half}px solid transparent;border-bottom:${px}px solid ${col};filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));"></div>`;
             anchor = [half, px * 0.75];
+        } else if (s === 'diamond') {
+            // ромб (квадрат под 45 градусов)
+            html = `<div style="width:${px}px;height:${px}px;transform:rotate(45deg);background:${col};border-radius:3px;border:2px solid rgba(0,0,0,0.35);box-sizing:border-box;"></div>`;
         } else if (s === 'square') {
             html = `<div style="width:${px}px;height:${px}px;background:${col};border-radius:3px;border:2px solid rgba(0,0,0,0.35);box-sizing:border-box;"></div>`;
         } else {
@@ -621,6 +636,41 @@ const MapManager = {
             iconSize: [px, px],
             iconAnchor: anchor,
         });
+    },
+
+    _getImportedLayerMinZoom(meta) {
+        try {
+            const raw = meta?.min_zoom;
+            if (raw === null || raw === undefined || raw === '') return null;
+            const n = Math.max(0, Math.min(30, Math.trunc(Number(raw))));
+            return Number.isFinite(n) ? n : null;
+        } catch (_) {
+            return null;
+        }
+    },
+
+    applyImportedLayersZoomVisibility() {
+        try {
+            if (!this.map) return;
+            const enabled = this._getImportedLayersEnabledSetFromSettings();
+            const z = this.map.getZoom();
+            (this.importedLayersMeta || []).forEach((l) => {
+                const code = (l?.code ?? '').toString().trim().toLowerCase();
+                if (!code) return;
+                const st = this.importedLayers.get(code);
+                if (!st || !st.group) return;
+                const isEnabled = enabled.has(code);
+                const minZ = this._getImportedLayerMinZoom(l);
+                const shouldShow = isEnabled && (minZ === null || z >= minZ);
+                const has = this.map.hasLayer(st.group);
+                if (shouldShow && !has) {
+                    st.group.addTo(this.map);
+                    this.refreshImportedLayer(code, { force: false });
+                } else if (!shouldShow && has) {
+                    this.map.removeLayer(st.group);
+                }
+            });
+        } catch (_) {}
     },
 
     _bindImportedLayerPopup(layer, props) {
@@ -809,19 +859,8 @@ const MapManager = {
     },
 
     setWmtsSatelliteEnabled(enabled) {
-        this.wmtsSatelliteEnabled = !!enabled;
-        if (!this.map) return;
-        if (!this.osmBaseLayer || !this.wmtsSatelliteLayer) return;
-
-        try {
-            if (this.wmtsSatelliteEnabled) {
-                if (this.map.hasLayer(this.osmBaseLayer)) this.map.removeLayer(this.osmBaseLayer);
-                if (!this.map.hasLayer(this.wmtsSatelliteLayer)) this.map.addLayer(this.wmtsSatelliteLayer);
-            } else {
-                if (this.map.hasLayer(this.wmtsSatelliteLayer)) this.map.removeLayer(this.wmtsSatelliteLayer);
-                if (!this.map.hasLayer(this.osmBaseLayer)) this.map.addLayer(this.osmBaseLayer);
-            }
-        } catch (_) {}
+        // backward-compatible toggle (OSM <-> WMTS)
+        this.setBaseLayerMode(enabled ? 'wmts' : 'osm');
     },
 
     toggleExternalWmtsLayer() {
@@ -830,6 +869,39 @@ const MapManager = {
         if (typeof App !== 'undefined') {
             App.notify(this.wmtsSatelliteEnabled ? 'Спутник включён' : 'OSM включён', 'info');
         }
+    },
+
+    setBaseLayerMode(mode, { save = true } = {}) {
+        const m = (mode ?? '').toString().toLowerCase().trim();
+        const next = (m === 'wmts' || m === 'none' || m === 'osm') ? m : 'osm';
+        this.baseLayerMode = next;
+        this.wmtsSatelliteEnabled = (next === 'wmts');
+        if (!this.map) return;
+        try {
+            if (this.osmBaseLayer) {
+                if (next === 'osm') {
+                    if (!this.map.hasLayer(this.osmBaseLayer)) this.map.addLayer(this.osmBaseLayer);
+                } else {
+                    if (this.map.hasLayer(this.osmBaseLayer)) this.map.removeLayer(this.osmBaseLayer);
+                }
+            }
+        } catch (_) {}
+        try {
+            if (this.wmtsSatelliteLayer) {
+                if (next === 'wmts') {
+                    if (!this.map.hasLayer(this.wmtsSatelliteLayer)) this.map.addLayer(this.wmtsSatelliteLayer);
+                } else {
+                    if (this.map.hasLayer(this.wmtsSatelliteLayer)) this.map.removeLayer(this.wmtsSatelliteLayer);
+                }
+            }
+        } catch (_) {}
+        if (save) {
+            try { localStorage.setItem('igs_base_layer_mode', next); } catch (_) {}
+        }
+    },
+
+    getBaseLayerMode() {
+        return (this.baseLayerMode ?? 'osm').toString();
     },
 
     buildWmtsTileUrlTemplateFromSettings() {
@@ -1004,6 +1076,13 @@ const MapManager = {
         });
         this.wmtsSatelliteEnabled = false;
 
+        // Базовая подложка: режим из localStorage (OSM / WMTS / none)
+        try {
+            const saved = (localStorage.getItem('igs_base_layer_mode') || '').toString().trim().toLowerCase();
+            const mode = (saved === 'wmts' || saved === 'none' || saved === 'osm') ? saved : 'osm';
+            this.setBaseLayerMode(mode, { save: false });
+        } catch (_) {}
+
         // Инициализируем пустые слои
         this.layers = {
             wells: L.featureGroup().addTo(this.map),
@@ -1045,6 +1124,25 @@ const MapManager = {
                 el.className = 'owners-legend hidden';
                 host.appendChild(el);
                 this.ownersLegendEl = el;
+            }
+        } catch (_) {}
+
+        // Легенда: импортированные слои (DOM overlay поверх карты)
+        try {
+            const host = this.map.getContainer?.();
+            if (host) {
+                const el = document.createElement('div');
+                el.id = 'imported-layers-legend';
+                el.className = 'owners-legend imported-layers-legend hidden';
+                host.appendChild(el);
+                this.importedLayersLegendEl = el;
+                // чтобы колесо/клики не влияли на карту
+                try {
+                    if (typeof L !== 'undefined' && L?.DomEvent) {
+                        L.DomEvent.disableScrollPropagation(el);
+                        L.DomEvent.disableClickPropagation(el);
+                    }
+                } catch (_) {}
             }
         } catch (_) {}
 
@@ -1184,6 +1282,8 @@ const MapManager = {
             if (this.directionLengthLabelsEnabled || this.directionLengthLabelsGlobalEnabled) {
                 this.updateDirectionLengthLabelsVisibility();
             }
+            // Импортированные слои: скрытие/показ по минимальному зуму
+            try { this.applyImportedLayersZoomVisibility(); } catch (_) {}
         });
         this.updateWellLabelsVisibility();
         this.updateObjectCoordinatesLabelsVisibility();
@@ -2280,6 +2380,7 @@ const MapManager = {
             </div>
         `;
         el.classList.remove('hidden');
+        try { this.updateMapOverlaysLayout?.(); } catch (_) {}
 
         // Персональная смена цвета по клику на маркер
         try {
@@ -2337,6 +2438,101 @@ const MapManager = {
 
     toggleOwnersLegend() {
         this.setOwnersLegendEnabled(!this.ownersLegendEnabled);
+    },
+
+    updateMapOverlaysLayout() {
+        try {
+            const ownersEl = this.ownersLegendEl || document.getElementById('owners-legend');
+            const impEl = this.importedLayersLegendEl || document.getElementById('imported-layers-legend');
+            if (!ownersEl || !impEl) return;
+            // базовое положение
+            ownersEl.style.left = '10px';
+            impEl.style.left = '10px';
+
+            const ownersVisible = !ownersEl.classList.contains('hidden');
+            const impVisible = !impEl.classList.contains('hidden');
+            if (ownersVisible && impVisible) {
+                // импортированные слои сдвигаем вправо на ширину owners legend + gap
+                const w = Math.ceil((ownersEl.getBoundingClientRect?.().width || 0));
+                const left = 10 + (w > 0 ? (w + 12) : 0);
+                impEl.style.left = `${left}px`;
+            }
+        } catch (_) {}
+    },
+
+    async renderImportedLayersLegend() {
+        const el = this.importedLayersLegendEl || document.getElementById('imported-layers-legend');
+        if (!el) return;
+        if (!this.importedLayersLegendEnabled) {
+            el.classList.add('hidden');
+            el.innerHTML = '';
+            return;
+        }
+
+        const layers = Array.isArray(this.importedLayersMeta) ? this.importedLayersMeta : [];
+        const enabledSet = this._getImportedLayersEnabledSetFromSettings();
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const colorFor = (l) => {
+            const c = (l?.style?.point?.color ?? '').toString().trim();
+            return /^#[0-9a-f]{6}$/i.test(c) ? c : '#999999';
+        };
+
+        el.innerHTML = `
+            <div class="owners-legend-title">Импортированные слои</div>
+            <div class="owners-legend-list">
+                ${(layers || []).map((l) => {
+                    const code = String(l?.code ?? '').toLowerCase();
+                    const name = String(l?.name ?? l?.code ?? '').replace(/"/g, '&quot;');
+                    const checked = enabledSet.has(code);
+                    const col = colorFor(l);
+                    return `
+                        <div class="owners-legend-item" title="${name}">
+                            <span class="owners-legend-swatch" style="background:${col}; cursor:default;" title="Цвет точечных объектов"></span>
+                            <span class="owners-legend-text">${esc(l?.name ?? l?.code ?? '')}</span>
+                            <span style="margin-left:auto; display:flex; align-items:center;">
+                                <input type="checkbox" class="imported-layer-enable-cb" data-code="${esc(code)}" ${checked ? 'checked' : ''}>
+                            </span>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+        el.classList.remove('hidden');
+        try { this.updateMapOverlaysLayout?.(); } catch (_) {}
+
+        // bind checkboxes
+        try {
+            el.querySelectorAll('.imported-layer-enable-cb[data-code]').forEach((cb) => {
+                cb.addEventListener('change', async (e) => {
+                    const code = (e.currentTarget?.dataset?.code ?? '').toString();
+                    if (!code) return;
+                    try {
+                        const raw = (typeof App !== 'undefined' ? (App?.settings?.imported_layers_enabled ?? '') : '');
+                        const set = new Set((raw ?? '').toString().split(',').map(x => (x ?? '').toString().trim()).filter(Boolean));
+                        if (e.currentTarget.checked) set.add(code);
+                        else set.delete(code);
+                        const csv = Array.from(set).join(',');
+                        const resp = await API.settings.update({ imported_layers_enabled: csv });
+                        if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                        if (typeof App !== 'undefined') App.settings.imported_layers_enabled = csv;
+                        this.applyImportedLayersEnabledFromSettings();
+                    } catch (err) {
+                        // rollback
+                        try { e.currentTarget.checked = !e.currentTarget.checked; } catch (_) {}
+                        App?.notify?.(err?.message || 'Не удалось сохранить настройку', 'error');
+                    }
+                });
+            });
+        } catch (_) {}
+    },
+
+    toggleImportedLayersLegend() {
+        this.setImportedLayersLegendEnabled(!this.importedLayersLegendEnabled);
+    },
+
+    async setImportedLayersLegendEnabled(enabled) {
+        this.importedLayersLegendEnabled = !!enabled;
+        await this.renderImportedLayersLegend();
     },
 
     // ========================

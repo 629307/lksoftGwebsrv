@@ -557,15 +557,80 @@ const App = {
             try { e.preventDefault(); } catch (_) {}
             try { this.toggleUiHiddenMode(true); } catch (_) {}
         });
-        // Внешний WMTS слой (кнопка в шапке)
-        document.getElementById('btn-toggle-wmts')?.addEventListener('click', async (e) => {
-            try {
-                MapManager.toggleExternalWmtsLayer();
-                e.currentTarget.classList.toggle('active', !!MapManager.wmtsSatelliteEnabled);
-            } catch (_) {
-                // ignore
+        // Подложка карты: меню выбора (OSM / WMTS / без подложки)
+        try {
+            const btn = document.getElementById('btn-toggle-wmts');
+            if (btn) {
+                const ensureMenu = () => {
+                    if (this._baseLayerMenuEl) return this._baseLayerMenuEl;
+                    const el = document.createElement('div');
+                    el.id = 'base-layer-menu';
+                    el.className = 'hidden';
+                    el.style.position = 'fixed';
+                    el.style.zIndex = '10000';
+                    el.style.background = 'var(--bg-card)';
+                    el.style.border = '1px solid var(--border-color)';
+                    el.style.borderRadius = '10px';
+                    el.style.boxShadow = 'var(--shadow)';
+                    el.style.padding = '8px';
+                    el.style.display = 'flex';
+                    el.style.gap = '8px';
+                    el.innerHTML = `
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="osm">OSM</button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="wmts">WMTS</button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="none">Без подложки</button>
+                    `;
+                    document.body.appendChild(el);
+                    this._baseLayerMenuEl = el;
+
+                    // hide on outside click
+                    if (!this._baseLayerMenuBound) {
+                        this._baseLayerMenuBound = true;
+                        document.addEventListener('click', (ev) => {
+                            try {
+                                if (!this._baseLayerMenuEl || this._baseLayerMenuEl.classList.contains('hidden')) return;
+                                const t = ev.target;
+                                if (t === btn || btn.contains(t)) return;
+                                if (t === this._baseLayerMenuEl || this._baseLayerMenuEl.contains(t)) return;
+                                this._baseLayerMenuEl.classList.add('hidden');
+                            } catch (_) {}
+                        });
+                    }
+
+                    el.querySelectorAll('button[data-mode]').forEach((b) => {
+                        b.addEventListener('click', (ev) => {
+                            try { ev.preventDefault(); ev.stopPropagation(); } catch (_) {}
+                            const mode = (b.dataset.mode || 'osm').toString();
+                            try { MapManager?.setBaseLayerMode?.(mode); } catch (_) {}
+                            try { this._baseLayerMenuEl.classList.add('hidden'); } catch (_) {}
+                            try { this._syncBaseLayerMenuButtons?.(); } catch (_) {}
+                        });
+                    });
+                    return el;
+                };
+
+                this._syncBaseLayerMenuButtons = () => {
+                    try {
+                        const mode = MapManager?.getBaseLayerMode?.() || 'osm';
+                        const el = this._baseLayerMenuEl;
+                        if (!el) return;
+                        el.querySelectorAll('button[data-mode]').forEach((b) => {
+                            b.classList.toggle('active', (b.dataset.mode || '') === mode);
+                        });
+                    } catch (_) {}
+                };
+
+                btn.addEventListener('click', (e) => {
+                    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+                    const menu = ensureMenu();
+                    const rect = btn.getBoundingClientRect();
+                    menu.style.top = `${Math.round(rect.bottom + 6)}px`;
+                    menu.style.left = `${Math.round(rect.left)}px`;
+                    menu.classList.toggle('hidden');
+                    this._syncBaseLayerMenuButtons();
+                });
             }
-        });
+        } catch (_) {}
 
         // Порядок отображения слоёв (персональный)
         document.getElementById('btn-layer-order')?.addEventListener('click', (e) => {
@@ -576,7 +641,10 @@ const App = {
         // Импортированные слои: активация (для всех ролей)
         document.getElementById('btn-imported-layers-activate')?.addEventListener('click', (e) => {
             try { e.preventDefault(); } catch (_) {}
-            try { this.showImportedLayersActivateModal(); } catch (_) {}
+            try {
+                MapManager?.toggleImportedLayersLegend?.();
+                e.currentTarget?.classList?.toggle('active', !!MapManager?.importedLayersLegendEnabled);
+            } catch (_) {}
         });
 
         // Импорт MapInfo слоя (только админ; кнопка находится в панели настроек)
@@ -1699,6 +1767,19 @@ const App = {
         }
     },
 
+    async refreshImportedLayerProjPresets() {
+        try {
+            const resp = await API.importedLayerProjPresets.list();
+            if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+            const rows = resp?.data || resp || [];
+            this.importedLayerProjPresets = Array.isArray(rows) ? rows : [];
+            return this.importedLayerProjPresets;
+        } catch (_) {
+            this.importedLayerProjPresets = [];
+            return [];
+        }
+    },
+
     showImportedLayersActivateModal() {
         const isReadonly = ((this.user?.role?.code || '') === 'readonly');
         if (isReadonly) {
@@ -1810,18 +1891,23 @@ const App = {
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
                 <div class="form-group">
                     <label>Исходная система координат</label>
-                    <select id="imported-source-srs-mode">
-                        <option value="auto">Авто (из TAB)</option>
-                        <option value="s_srs">Задать (s_srs)</option>
-                        <option value="a_srs">Назначить (a_srs)</option>
+                    <select id="imported-source-srs-mode" disabled>
+                        <option value="s_srs" selected>Задать (s_srs)</option>
                     </select>
-                    <p class="text-muted">Если TAB содержит неверный/отсутствующий CoordSys — используйте “Задать” или “Назначить”.</p>
+                    <p class="text-muted">По ТЗ импорт всегда выполняется через <strong>s_srs</strong> и переводится в WGS84.</p>
                 </div>
                 <div class="form-group">
-                    <label>Исходная СК (например EPSG:3857)</label>
-                    <input type="text" id="imported-source-srs" placeholder="EPSG:XXXX или \"+proj=... +no_defs\"">
-                    <p class="text-muted">Для s_srs/a_srs можно указать EPSG:XXXX или PROJ-строку <strong>в двойных кавычках</strong>. После импорта слой будет переведён в WGS84 (EPSG:4326).</p>
+                    <label>Преднастройка пересчёта (+proj)</label>
+                    <select id="imported-proj-preset-select">
+                        <option value="">— выберите —</option>
+                    </select>
+                    <p class="text-muted">Выбор по Наименованию. Значение +proj будет подставлено в поле "Исходная СК".</p>
                 </div>
+            </div>
+            <div class="form-group">
+                <label>Исходная СК</label>
+                <input type="text" id="imported-source-srs" placeholder="\"+proj=... +no_defs\"">
+                <p class="text-muted">PROJ-строка должна быть <strong>в двойных кавычках</strong> (как в преднастройке). После импорта слой будет переведён в WGS84 (EPSG:4326).</p>
             </div>
 
             <hr style="margin: 14px 0;">
@@ -1833,6 +1919,7 @@ const App = {
                         <select id="imported-point-symbol">
                             <option value="circle">Круг</option>
                             <option value="square">Квадрат</option>
+                            <option value="diamond">Ромб</option>
                             <option value="triangle">Треугольник</option>
                             <option value="marker">Маркер</option>
                         </select>
@@ -1868,6 +1955,38 @@ const App = {
                 </div>
             </div>
 
+            <div style="margin-top:10px; border-top:1px dashed var(--border); padding-top:10px;">
+                <div style="font-weight:700; margin-bottom:8px;">Параметры слоя</div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                    <div class="form-group">
+                        <label>Минимальный зум (если меньше — слой не показывается)</label>
+                        <input type="number" id="imported-min-zoom" min="0" max="30" step="1" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Доступ</label>
+                        <label style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                            <input type="checkbox" id="imported-is-public">
+                            <span>Слой доступен всем</span>
+                        </label>
+                        <p class="text-muted">Если выключено — слой смогут просматривать только администраторы.</p>
+                    </div>
+                </div>
+                <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="imported-show-points" checked>
+                        <span>Точечные объекты</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="imported-show-lines" checked>
+                        <span>Линейные объекты</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="imported-show-polygons" checked>
+                        <span>Объекты полигон</span>
+                    </label>
+                </div>
+            </div>
+
             <div style="margin-top:12px;">
                 <div class="progress hidden" id="imported-layer-progress" style="height:10px; background: var(--bg-tertiary); border-radius:999px; overflow:hidden;">
                     <div id="imported-layer-progress-bar" style="height:10px; width:0%; background: var(--primary);"></div>
@@ -1887,6 +2006,70 @@ const App = {
                 if (selP) selP.value = String(p.symbol ?? 'circle');
                 const selL = document.getElementById('imported-line-style');
                 if (selL) selL.value = String(l.style ?? 'solid');
+            } catch (_) {}
+
+            // Имя слоя: если пустое — подставляем базовое имя файла при выборе любого файла
+            try {
+                const nameEl = document.getElementById('imported-layer-name');
+                const codeEl = document.getElementById('imported-layer-code');
+                const baseName = (fname) => {
+                    try {
+                        const s = (fname ?? '').toString();
+                        const last = s.split(/[\\/]/).pop() || '';
+                        return last.replace(/\.[^.]+$/, '');
+                    } catch (_) {
+                        return '';
+                    }
+                };
+                const maybeFill = (file) => {
+                    if (!nameEl) return;
+                    const cur = (nameEl.value ?? '').toString().trim();
+                    if (cur) return;
+                    const bn = baseName(file?.name);
+                    if (!bn) return;
+                    nameEl.value = bn;
+                    // опционально: code тоже подставим, если пустой
+                    try {
+                        if (codeEl && !(codeEl.value ?? '').toString().trim()) codeEl.value = bn;
+                    } catch (_) {}
+                };
+                ['imported-layer-tab', 'imported-layer-dat', 'imported-layer-map', 'imported-layer-id'].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    el.addEventListener('change', () => {
+                        const f = el?.files?.[0];
+                        if (f) maybeFill(f);
+                    });
+                });
+            } catch (_) {}
+
+            // Преднастройки PROJ (+proj) -> подстановка в Исходную СК
+            try {
+                const sel = document.getElementById('imported-proj-preset-select');
+                const srs = document.getElementById('imported-source-srs');
+                if (sel && srs) {
+                    (async () => {
+                        const presets = await this.refreshImportedLayerProjPresets();
+                        const rows = Array.isArray(presets) ? presets : [];
+                        sel.innerHTML = `<option value="">— выберите —</option>` + rows.map((r) => {
+                            const id = (r?.id ?? '').toString();
+                            const name = this.escapeHtml((r?.name ?? '').toString());
+                            return `<option value="${this.escapeHtml(id)}">${name}</option>`;
+                        }).join('');
+                        const byId = new Map(rows.map(r => [String(r?.id ?? ''), r]));
+                        const apply = () => {
+                            const id = (sel.value ?? '').toString();
+                            const row = byId.get(id) || null;
+                            srs.value = row ? String(row.proj4 ?? '') : '';
+                        };
+                        sel.addEventListener('change', apply);
+                        // если ровно 1 преднастройка — выберем автоматически
+                        if (rows.length === 1) {
+                            sel.value = String(rows[0]?.id ?? '');
+                            apply();
+                        }
+                    })().catch(() => {});
+                }
             } catch (_) {}
 
             // autodetect CoordSys from TAB
@@ -1936,6 +2119,11 @@ const App = {
                     this.notify('Загрузите все 4 файла (.TAB/.DAT/.MAP/.ID)', 'error');
                     return;
                 }
+                const srcSrs = (document.getElementById('imported-source-srs')?.value || '').toString().trim();
+                if (!srcSrs) {
+                    this.notify('Выберите "Преднастройка пересчёта (+proj)" или укажите "Исходную СК"', 'error');
+                    return;
+                }
 
                 const formData = new FormData();
                 formData.append('name', String(name).trim());
@@ -1944,14 +2132,19 @@ const App = {
                 formData.append('dat_file', fDat);
                 formData.append('map_file', fMap);
                 formData.append('id_file', fId);
-                formData.append('source_srs_mode', (document.getElementById('imported-source-srs-mode')?.value || 'auto'));
-                formData.append('source_srs', (document.getElementById('imported-source-srs')?.value || ''));
+                formData.append('source_srs_mode', 's_srs');
+                formData.append('source_srs', srcSrs);
                 formData.append('point_symbol', (document.getElementById('imported-point-symbol')?.value || 'circle'));
                 formData.append('point_size', (document.getElementById('imported-point-size')?.value || '10'));
                 formData.append('point_color', (document.getElementById('imported-point-color')?.value || '#ff0000'));
                 formData.append('line_style', (document.getElementById('imported-line-style')?.value || 'solid'));
                 formData.append('line_weight', (document.getElementById('imported-line-weight')?.value || '2'));
                 formData.append('line_color', (document.getElementById('imported-line-color')?.value || '#0066ff'));
+                formData.append('min_zoom', (document.getElementById('imported-min-zoom')?.value || ''));
+                formData.append('is_public', (document.getElementById('imported-is-public')?.checked ? '1' : '0'));
+                formData.append('show_points', (document.getElementById('imported-show-points')?.checked ? '1' : '0'));
+                formData.append('show_lines', (document.getElementById('imported-show-lines')?.checked ? '1' : '0'));
+                formData.append('show_polygons', (document.getElementById('imported-show-polygons')?.checked ? '1' : '0'));
 
                 const prog = document.getElementById('imported-layer-progress');
                 const bar = document.getElementById('imported-layer-progress-bar');
@@ -1975,6 +2168,10 @@ const App = {
                         xhr.onerror = () => reject(new Error('network_error'));
                         xhr.onload = () => {
                             try {
+                                if (xhr.status === 413) {
+                                    reject(new Error('Слишком большой слой (413 Request Entity Too Large). Увеличьте лимит загрузки на сервере (nginx: client_max_body_size; php/apache: upload_max_filesize/post_max_size).'));
+                                    return;
+                                }
                                 const text = xhr.responseText || '';
                                 const data = JSON.parse(text);
                                 resolve(data);
@@ -2002,34 +2199,6 @@ const App = {
                     } catch (_) {
                         this.notify(resp?.message || 'Слой импортирован', 'success');
                     }
-
-                    // Авто-активация слоя для текущего пользователя (чтобы сразу был виден на карте)
-                    try {
-                        const layerCode = (resp?.data?.code ?? '').toString();
-                        if (layerCode) {
-                            const enabled = this._parseCsvSet_(this.settings?.imported_layers_enabled ?? '');
-                            enabled.add(layerCode);
-                            const csv = this._setToCsv_(enabled);
-                            const r2 = await API.settings.update({ imported_layers_enabled: csv });
-                            if (!(r2?.success === false)) {
-                                this.settings.imported_layers_enabled = csv;
-                            }
-                        }
-                    } catch (_) {}
-
-                    // Если сервер вернул bbox — сфокусируем карту на слое
-                    try {
-                        const ex = resp?.data?.extent_wgs84;
-                        if (ex && [ex.minx, ex.miny, ex.maxx, ex.maxy].every((v) => Number.isFinite(Number(v)))) {
-                            const b = L.latLngBounds(
-                                L.latLng(Number(ex.miny), Number(ex.minx)),
-                                L.latLng(Number(ex.maxy), Number(ex.maxx)),
-                            );
-                            if (b && b.isValid && b.isValid()) {
-                                MapManager?.map?.fitBounds?.(b, { padding: [30, 30], maxZoom: 18 });
-                            }
-                        }
-                    } catch (_) {}
                     this.hideModal();
                     await this.refreshImportedLayersMeta({ applyToMap: true });
                     try { await this.loadSettingsPanel?.(); } catch (_) {}
@@ -2054,12 +2223,12 @@ const App = {
         if (!listEl) return;
 
         listEl.textContent = 'Загрузка списка...';
-        const layers = await this.refreshImportedLayersMeta({ applyToMap: true });
+        const [layers, presets] = await Promise.all([
+            this.refreshImportedLayersMeta({ applyToMap: true }),
+            this.refreshImportedLayerProjPresets(),
+        ]).catch(() => [[], []]);
         const rows = Array.isArray(layers) ? layers : [];
-        if (!rows.length) {
-            listEl.innerHTML = '<div class="text-muted">Импортированные слои не найдены.</div>';
-            return;
-        }
+        const presetRows = Array.isArray(presets) ? presets : [];
 
         const renderRow = (l) => {
             const code = (l?.code ?? '').toString();
@@ -2093,6 +2262,7 @@ const App = {
                                 <select class="imported-style-point-symbol" data-code="${esc(code)}">
                                     <option value="circle">Круг</option>
                                     <option value="square">Квадрат</option>
+                                    <option value="diamond">Ромб</option>
                                     <option value="triangle">Треугольник</option>
                                     <option value="marker">Маркер</option>
                                 </select>
@@ -2127,11 +2297,155 @@ const App = {
                             </div>
                         </div>
                     </div>
+
+                    <div style="margin-top:10px; border-top:1px dashed var(--border); padding-top:10px;">
+                        <div style="font-weight:700; margin-bottom:8px;">Параметры отображения</div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                            <div class="form-group">
+                                <label>Минимальный зум (если меньше — слой не показывается)</label>
+                                <input type="number" class="imported-layer-min-zoom" data-code="${esc(code)}" min="0" max="30" step="1" placeholder="0" value="${esc(String(l?.min_zoom ?? ''))}">
+                            </div>
+                            <div class="form-group">
+                                <label>Доступ</label>
+                                <label style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                                    <input type="checkbox" class="imported-layer-is-public" data-code="${esc(code)}" ${l?.is_public ? 'checked' : ''}>
+                                    <span>Слой доступен всем</span>
+                                </label>
+                                <p class="text-muted">Если выключено — слой доступен только администраторам.</p>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" class="imported-layer-show-points" data-code="${esc(code)}" ${l?.show_points === false ? '' : 'checked'}>
+                                <span>Точечные объекты</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" class="imported-layer-show-lines" data-code="${esc(code)}" ${l?.show_lines === false ? '' : 'checked'}>
+                                <span>Линейные объекты</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" class="imported-layer-show-polygons" data-code="${esc(code)}" ${l?.show_polygons === false ? '' : 'checked'}>
+                                <span>Объекты полигон</span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
             `;
         };
 
-        listEl.innerHTML = rows.map(renderRow).join('');
+        const esc = (x) => this.escapeHtml((x ?? '').toString());
+        const presetsHtml = `
+            <div style="border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:14px;">
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <div style="font-weight:900;">Преднастройка пересчёта (PROJ)</div>
+                    <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-proj-preset-refresh"><i class="fas fa-rotate"></i> Обновить</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btn-proj-preset-add"><i class="fas fa-plus"></i> Добавить</button>
+                    </div>
+                </div>
+                <div class="text-muted" style="margin-top:6px;">Сохраняйте +proj строки в формате <strong>"... "</strong> (в двойных кавычках) и используйте их при импорте.</div>
+                <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+                    ${(presetRows || []).length ? (presetRows || []).map((p) => `
+                        <div style="border:1px solid var(--border); border-radius:10px; padding:10px;">
+                            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+                                <div style="flex:1 1 auto; min-width:240px;">
+                                    <div style="font-weight:800;">${esc(p?.name)}</div>
+                                    <div class="text-muted" style="font-size:12px; word-break:break-word;">${esc(p?.proj4)}</div>
+                                </div>
+                                <div style="display:flex; gap:8px; flex: 0 0 auto; align-items:center;">
+                                    <button type="button" class="btn btn-secondary btn-sm btn-proj-preset-edit" data-id="${esc(p?.id)}"><i class="fas fa-pen"></i> Изменить</button>
+                                    <button type="button" class="btn btn-danger btn-sm btn-proj-preset-delete" data-id="${esc(p?.id)}"><i class="fas fa-trash"></i> Удалить</button>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('') : `<div class="text-muted">Преднастройки не найдены.</div>`}
+                </div>
+            </div>
+        `;
+
+        const layersHtml = rows.length
+            ? rows.map(renderRow).join('')
+            : '<div class="text-muted">Импортированные слои не найдены.</div>';
+
+        listEl.innerHTML = presetsHtml + layersHtml;
+
+        const openPresetModal = (mode, preset = null) => {
+            const isEdit = mode === 'edit';
+            const title = isEdit ? 'Изменить преднастройку PROJ' : 'Добавить преднастройку PROJ';
+            const name0 = (preset?.name ?? '').toString();
+            const proj0 = (preset?.proj4 ?? '').toString();
+            const content = `
+                <div class="form-group">
+                    <label>Наименование</label>
+                    <input type="text" id="proj-preset-name" value="${esc(name0)}" placeholder="Напр.: MSK86 tmerc lon_0=78.05">
+                </div>
+                <div class="form-group">
+                    <label>+proj строка (в двойных кавычках)</label>
+                    <textarea id="proj-preset-proj4" rows="4" style="width:100%; resize:vertical;" placeholder="&quot;+proj=tmerc ... +no_defs&quot;">${esc(proj0)}</textarea>
+                    <p class="text-muted">Кавычки обязательны. Пример: <strong>" +proj=tmerc ... +no_defs"</strong></p>
+                </div>
+            `;
+            const footer = `
+                <button class="btn btn-secondary" onclick="App.hideModal()">Отмена</button>
+                <button class="btn btn-primary" id="btn-proj-preset-save"><i class="fas fa-save"></i> Сохранить</button>
+            `;
+            this.showModal(title, content, footer, { fitContent: true });
+            setTimeout(() => {
+                document.getElementById('btn-proj-preset-save')?.addEventListener('click', async (e) => {
+                    try { e.preventDefault(); } catch (_) {}
+                    const name = document.getElementById('proj-preset-name')?.value;
+                    const proj4 = document.getElementById('proj-preset-proj4')?.value;
+                    try {
+                        const payload = { name: (name ?? '').toString().trim(), proj4: (proj4 ?? '').toString().trim() };
+                        const resp = isEdit
+                            ? await API.importedLayerProjPresets.update(preset?.id, payload)
+                            : await API.importedLayerProjPresets.create(payload);
+                        if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                        this.notify(resp?.message || 'Сохранено', 'success');
+                        this.hideModal();
+                        await this.renderImportedLayersSettingsBlock_();
+                    } catch (err) {
+                        this.notify(err?.message || 'Не удалось сохранить', 'error');
+                    }
+                });
+            }, 0);
+        };
+
+        // bind presets actions
+        document.getElementById('btn-proj-preset-refresh')?.addEventListener('click', async (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            await this.renderImportedLayersSettingsBlock_();
+        });
+        document.getElementById('btn-proj-preset-add')?.addEventListener('click', (e) => {
+            try { e.preventDefault(); } catch (_) {}
+            openPresetModal('create', null);
+        });
+        document.querySelectorAll('.btn-proj-preset-edit').forEach((b) => {
+            b.addEventListener('click', (e) => {
+                try { e.preventDefault(); } catch (_) {}
+                const id = (e.currentTarget?.dataset?.id ?? '').toString();
+                const p = (presetRows || []).find(x => String(x?.id ?? '') === id) || null;
+                if (!p) return;
+                openPresetModal('edit', p);
+            });
+        });
+        document.querySelectorAll('.btn-proj-preset-delete').forEach((b) => {
+            b.addEventListener('click', async (e) => {
+                try { e.preventDefault(); } catch (_) {}
+                const id = (e.currentTarget?.dataset?.id ?? '').toString();
+                const p = (presetRows || []).find(x => String(x?.id ?? '') === id) || null;
+                const name = (p?.name ?? id).toString();
+                if (!confirm(`Удалить преднастройку "${name}"?`)) return;
+                try {
+                    const resp = await API.importedLayerProjPresets.delete(id);
+                    if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
+                    this.notify(resp?.message || 'Удалено', 'success');
+                    await this.renderImportedLayersSettingsBlock_();
+                } catch (err) {
+                    this.notify(err?.message || 'Не удалось удалить', 'error');
+                }
+            });
+        });
 
         // выставим select значения
         try {
@@ -2214,8 +2528,16 @@ const App = {
                         color: (get('.imported-style-line-color')?.value || '#0066ff'),
                     },
                 };
+                const payload = {
+                    ...style,
+                    is_public: !!get('.imported-layer-is-public')?.checked,
+                    min_zoom: (get('.imported-layer-min-zoom')?.value ?? '').toString(),
+                    show_points: !!get('.imported-layer-show-points')?.checked,
+                    show_lines: !!get('.imported-layer-show-lines')?.checked,
+                    show_polygons: !!get('.imported-layer-show-polygons')?.checked,
+                };
                 try {
-                    const resp = await API.importedLayers.updateStyle(code, style);
+                    const resp = await API.importedLayers.updateStyle(code, payload);
                     if (resp?.success === false) throw new Error(resp?.message || 'Ошибка');
                     this.notify(resp?.message || 'Настройки сохранены', 'success');
                     await this.refreshImportedLayersMeta({ applyToMap: true });
