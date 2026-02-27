@@ -161,14 +161,18 @@ class ImportedLayerController extends BaseController
      */
     public function index(): void
     {
+        $isAdminLike = Auth::isAdmin() || Auth::isRoot();
         try {
             $rows = $this->db->fetchAll(
-                "SELECT id, code, name, table_name, geometry_column, srid, version, uploaded_at, updated_at, style_json
+                "SELECT id, code, name, table_name, geometry_column, srid, version, uploaded_at, updated_at,
+                        style_json, is_public, min_zoom, show_points, show_lines, show_polygons
                  FROM imported_layers
+                 " . ($isAdminLike ? "" : "WHERE is_public = true") . "
                  ORDER BY name ASC, id ASC"
             );
         } catch (\PDOException $e) {
-            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+            // если не применена миграция v24 (нет колонок) — подскажем явно
+            Response::error('Настройки импортированных слоёв не готовы. Примените миграции database/migration_v23.sql и database/migration_v24.sql', 500);
         }
 
         foreach ($rows as &$r) {
@@ -191,12 +195,16 @@ class ImportedLayerController extends BaseController
     public function geojson(string $code): void
     {
         $code = $this->ensureSafeIdent(strtolower(trim($code)));
+        $isAdminLike = Auth::isAdmin() || Auth::isRoot();
         try {
             $layer = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
         } catch (\PDOException $e) {
-            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+            Response::error('Настройки импортированных слоёв не готовы. Примените миграции database/migration_v23.sql и database/migration_v24.sql', 500);
         }
         if (!$layer) Response::error('Слой не найден', 404);
+        if (!$isAdminLike && !((bool) ($layer['is_public'] ?? false))) {
+            Response::error('Доступ запрещён', 403);
+        }
 
         $table = $this->ensureSafeIdent((string) ($layer['table_name'] ?? ''));
         $geomCol = $this->ensureSafeIdent((string) ($layer['geometry_column'] ?? 'geom'));
@@ -205,6 +213,18 @@ class ImportedLayerController extends BaseController
 
         $params = [];
         $where = "{$geomCol} IS NOT NULL";
+
+        // фильтр по типам геометрии (настройки слоя)
+        $sp = (bool) ($layer['show_points'] ?? true);
+        $sl = (bool) ($layer['show_lines'] ?? true);
+        $sg = (bool) ($layer['show_polygons'] ?? true);
+        $typeConds = [];
+        if ($sp) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_Point','ST_MultiPoint')";
+        if ($sl) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_LineString','ST_MultiLineString')";
+        if ($sg) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_Polygon','ST_MultiPolygon')";
+        if ($typeConds) {
+            $where .= " AND (" . implode(" OR ", $typeConds) . ")";
+        }
 
         $bbox = (string) ($this->request->query('bbox', '') ?? '');
         $bbox = trim($bbox);
@@ -278,12 +298,16 @@ class ImportedLayerController extends BaseController
     public function features(string $code): void
     {
         $code = $this->ensureSafeIdent(strtolower(trim($code)));
+        $isAdminLike = Auth::isAdmin() || Auth::isRoot();
         try {
             $layer = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
         } catch (\PDOException $e) {
-            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+            Response::error('Настройки импортированных слоёв не готовы. Примените миграции database/migration_v23.sql и database/migration_v24.sql', 500);
         }
         if (!$layer) Response::error('Слой не найден', 404);
+        if (!$isAdminLike && !((bool) ($layer['is_public'] ?? false))) {
+            Response::error('Доступ запрещён', 403);
+        }
 
         $table = $this->ensureSafeIdent((string) ($layer['table_name'] ?? ''));
         $geomCol = $this->ensureSafeIdent((string) ($layer['geometry_column'] ?? 'geom'));
@@ -294,8 +318,18 @@ class ImportedLayerController extends BaseController
         $offset = (int) ($this->request->query('offset', 0) ?? 0);
         if ($offset < 0) $offset = 0;
 
+        // filter by geometry type settings
+        $sp = (bool) ($layer['show_points'] ?? true);
+        $sl = (bool) ($layer['show_lines'] ?? true);
+        $sg = (bool) ($layer['show_polygons'] ?? true);
+        $typeConds = [];
+        if ($sp) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_Point','ST_MultiPoint')";
+        if ($sl) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_LineString','ST_MultiLineString')";
+        if ($sg) $typeConds[] = "ST_GeometryType({$geomCol}) IN ('ST_Polygon','ST_MultiPolygon')";
+        $typeWhere = $typeConds ? (" AND (" . implode(" OR ", $typeConds) . ")") : "";
+
         try {
-            $totalRow = $this->db->fetch("SELECT COUNT(*)::int AS cnt FROM {$table} WHERE {$geomCol} IS NOT NULL");
+            $totalRow = $this->db->fetch("SELECT COUNT(*)::int AS cnt FROM {$table} WHERE {$geomCol} IS NOT NULL{$typeWhere}");
             $total = (int) ($totalRow['cnt'] ?? 0);
         } catch (\PDOException $e) {
             Response::error('Ошибка чтения слоя из БД', 500);
@@ -311,7 +345,7 @@ class ImportedLayerController extends BaseController
 
         $sql = "SELECT *, ST_AsGeoJSON({$geomCol}) AS __geometry, ST_GeometryType({$geomCol}) AS __gtype
                 FROM {$table}
-                WHERE {$geomCol} IS NOT NULL
+                WHERE {$geomCol} IS NOT NULL{$typeWhere}
                 ORDER BY {$orderCase} ASC" . ($orderId ? (", {$orderId} ASC") : "") . "
                 LIMIT :lim OFFSET :off";
         try {
@@ -507,10 +541,35 @@ class ImportedLayerController extends BaseController
         $uid = (int) ($user['id'] ?? 0);
 
         try {
-            $existing = $this->db->fetch("SELECT id FROM imported_layers WHERE code = :c", ['c' => $code]);
+            $existing = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
         } catch (\PDOException $e) {
-            Response::error('Таблица импортированных слоёв не создана. Примените миграцию database/migration_v23.sql', 500);
+            Response::error('Настройки импортированных слоёв не готовы. Примените миграции database/migration_v23.sql и database/migration_v24.sql', 500);
         }
+
+        $parseBool = function($v, bool $default = false): bool {
+            if ($v === null) return $default;
+            if (is_bool($v)) return $v;
+            $s = strtolower(trim((string) $v));
+            if ($s === '') return $default;
+            return in_array($s, ['1','true','yes','on'], true);
+        };
+        $parseMinZoom = function($v, $default = null) {
+            if ($v === null) return $default;
+            $s = trim((string) $v);
+            if ($s === '') return $default;
+            if (!is_numeric($s)) Response::error('Некорректный min_zoom', 422);
+            $n = (int) $s;
+            if ($n < 0) $n = 0;
+            if ($n > 30) $n = 30;
+            return $n;
+        };
+
+        // Новые свойства слоя (migration_v24)
+        $isPublic = $parseBool($this->request->input('is_public', null), (bool) ($existing['is_public'] ?? false));
+        $minZoom = $parseMinZoom($this->request->input('min_zoom', null), $existing['min_zoom'] ?? null);
+        $showPoints = $parseBool($this->request->input('show_points', null), (bool) ($existing['show_points'] ?? true));
+        $showLines = $parseBool($this->request->input('show_lines', null), (bool) ($existing['show_lines'] ?? true));
+        $showPolygons = $parseBool($this->request->input('show_polygons', null), (bool) ($existing['show_polygons'] ?? true));
 
         $now = date('Y-m-d H:i:s');
         $data = [
@@ -526,6 +585,11 @@ class ImportedLayerController extends BaseController
             'created_by' => $uid > 0 ? $uid : null,
             'updated_by' => $uid > 0 ? $uid : null,
             'style_json' => $styleJson,
+            'is_public' => $isPublic,
+            'min_zoom' => $minZoom,
+            'show_points' => $showPoints,
+            'show_lines' => $showLines,
+            'show_polygons' => $showPolygons,
         ];
 
         try {
@@ -544,7 +608,8 @@ class ImportedLayerController extends BaseController
         try { $this->log('import_mapinfo_layer', 'imported_layers', $layerId, null, ['code' => $code, 'name' => $name, 'table' => $tableName]); } catch (\Throwable $e) {}
 
         $saved = $this->db->fetch(
-            "SELECT id, code, name, table_name, geometry_column, srid, version, uploaded_at, updated_at, style_json
+            "SELECT id, code, name, table_name, geometry_column, srid, version, uploaded_at, updated_at,
+                    style_json, is_public, min_zoom, show_points, show_lines, show_polygons
              FROM imported_layers WHERE id = :id",
             ['id' => $layerId]
         );
@@ -578,12 +643,41 @@ class ImportedLayerController extends BaseController
         $uid = (int) ($user['id'] ?? 0);
 
         try {
-            $layer = $this->db->fetch("SELECT id, style_json FROM imported_layers WHERE code = :c", ['c' => $code]);
+            $layer = $this->db->fetch("SELECT * FROM imported_layers WHERE code = :c", ['c' => $code]);
             if (!$layer) Response::error('Слой не найден', 404);
+
+            $parseBool = function($v, bool $default = false): bool {
+                if ($v === null) return $default;
+                if (is_bool($v)) return $v;
+                $s = strtolower(trim((string) $v));
+                if ($s === '') return $default;
+                return in_array($s, ['1','true','yes','on'], true);
+            };
+            $parseMinZoom = function($v, $default = null) {
+                if ($v === null) return $default;
+                $s = trim((string) $v);
+                if ($s === '') return $default;
+                if (!is_numeric($s)) Response::error('Некорректный min_zoom', 422);
+                $n = (int) $s;
+                if ($n < 0) $n = 0;
+                if ($n > 30) $n = 30;
+                return $n;
+            };
+
+            $isPublic = $parseBool($data['is_public'] ?? null, (bool) ($layer['is_public'] ?? false));
+            $minZoom = $parseMinZoom($data['min_zoom'] ?? null, $layer['min_zoom'] ?? null);
+            $showPoints = $parseBool($data['show_points'] ?? null, (bool) ($layer['show_points'] ?? true));
+            $showLines = $parseBool($data['show_lines'] ?? null, (bool) ($layer['show_lines'] ?? true));
+            $showPolygons = $parseBool($data['show_polygons'] ?? null, (bool) ($layer['show_polygons'] ?? true));
             $this->db->update(
                 'imported_layers',
                 [
                     'style_json' => $styleJson,
+                    'is_public' => $isPublic,
+                    'min_zoom' => $minZoom,
+                    'show_points' => $showPoints,
+                    'show_lines' => $showLines,
+                    'show_polygons' => $showPolygons,
                     'updated_at' => date('Y-m-d H:i:s'),
                     'updated_by' => $uid > 0 ? $uid : null,
                 ],
@@ -595,7 +689,15 @@ class ImportedLayerController extends BaseController
         }
 
         try { $this->log('update_imported_layer_style', 'imported_layers', (int) ($layer['id'] ?? 0), ['style_json' => $layer['style_json'] ?? null], ['style_json' => $styleJson]); } catch (\Throwable $e) {}
-        Response::success(['code' => $code, 'style' => $style], 'Настройки слоя сохранены');
+        Response::success([
+            'code' => $code,
+            'style' => $style,
+            'is_public' => $isPublic ?? null,
+            'min_zoom' => $minZoom ?? null,
+            'show_points' => $showPoints ?? null,
+            'show_lines' => $showLines ?? null,
+            'show_polygons' => $showPolygons ?? null,
+        ], 'Настройки слоя сохранены');
     }
 
     /**

@@ -1002,6 +1002,11 @@ body.assumed-cables-panel-open .info-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px 10px;
 }
+
+/* Imported layers legend: one column list */
+.imported-layers-legend .owners-legend-list {
+    grid-template-columns: 1fr;
+}
 .owners-legend-item {
     display: flex;
     align-items: center;
