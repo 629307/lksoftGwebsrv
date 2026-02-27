@@ -148,6 +148,7 @@ use App\Controllers\PhotoController;
 use App\Controllers\ReportController;
 use App\Controllers\SettingsController;
 use App\Controllers\ImportedLayerController;
+use App\Controllers\ImportedLayerProjPresetController;
 use App\Controllers\DbBackupController;
 use App\Controllers\AuditLogController;
 use App\Controllers\InventoryCardController;
@@ -359,6 +360,12 @@ $router->get('/api/imported-layers/{code}/features', [ImportedLayerController::c
 $router->post('/api/imported-layers/import', [ImportedLayerController::class, 'import'], ['auth']);
 $router->put('/api/imported-layers/{code}/style', [ImportedLayerController::class, 'updateStyle'], ['auth']);
 $router->delete('/api/imported-layers/{code}', [ImportedLayerController::class, 'destroy'], ['auth']);
+
+// PROJ presets (admin only, validation inside controller)
+$router->get('/api/imported-layer-proj-presets', [ImportedLayerProjPresetController::class, 'index'], ['auth']);
+$router->post('/api/imported-layer-proj-presets', [ImportedLayerProjPresetController::class, 'store'], ['auth']);
+$router->put('/api/imported-layer-proj-presets/{id}', [ImportedLayerProjPresetController::class, 'update'], ['auth']);
+$router->delete('/api/imported-layer-proj-presets/{id}', [ImportedLayerProjPresetController::class, 'destroy'], ['auth']);
 
 // Фотографии
 $router->post('/api/photos', [PhotoController::class, 'upload'], ['auth']);
