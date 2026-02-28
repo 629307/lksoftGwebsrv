@@ -577,22 +577,24 @@ const App = {
                     el.className = 'hidden';
                     el.style.position = 'fixed';
                     el.style.zIndex = '10000';
-                    el.style.background = 'var(--bg-card)';
-                    el.style.border = '1px solid var(--border-color)';
+                    // стиль как у системных кнопок (серое с тёмным текстом)
+                    el.style.background = '#e5e7eb';
+                    el.style.border = '1px solid #9ca3af';
                     el.style.borderRadius = '10px';
                     el.style.boxShadow = 'var(--shadow)';
                     el.style.padding = '6px';
                     el.style.display = 'flex';
                     el.style.flexDirection = 'column';
                     el.style.gap = '6px';
+                    el.style.width = 'fit-content';
                     el.innerHTML = `
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="osm" title="OSM">
+                        <button type="button" class="btn btn-sm" data-mode="osm" title="OSM" style="background:#d1d5db; color:#111827; border:1px solid #9ca3af; justify-content:center; padding:6px;">
                             <i class="fas fa-globe"></i>
                         </button>
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="wmts" title="WMTS (спутник)">
+                        <button type="button" class="btn btn-sm" data-mode="wmts" title="WMTS (спутник)" style="background:#d1d5db; color:#111827; border:1px solid #9ca3af; justify-content:center; padding:6px;">
                             <i class="fas fa-satellite"></i>
                         </button>
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="none" title="Без подложки">
+                        <button type="button" class="btn btn-sm" data-mode="none" title="Без подложки" style="background:#d1d5db; color:#111827; border:1px solid #9ca3af; justify-content:center; padding:6px;">
                             <i class="fas fa-ban"></i>
                         </button>
                     `;
@@ -642,13 +644,26 @@ const App = {
                     const rect = btn.getBoundingClientRect();
                     // вертикально под самой кнопкой
                     menu.style.top = `${Math.round(rect.bottom + 6)}px`;
-                    menu.style.left = `${Math.round(rect.left)}px`;
-                    try {
-                        const w = Math.max(32, Math.round(rect.width || 0));
-                        menu.style.width = `${w}px`;
-                    } catch (_) {}
-                    menu.classList.toggle('hidden');
-                    this._syncBaseLayerMenuButtons();
+                    const showing = menu.classList.contains('hidden');
+                    if (showing) {
+                        // первичное положение — под кнопкой; затем уточним по центру
+                        menu.style.left = `${Math.round(rect.left)}px`;
+                        menu.classList.remove('hidden');
+                        this._syncBaseLayerMenuButtons();
+                        // центрируем относительно btn-toggle-wmts, учитывая фактическую ширину меню
+                        setTimeout(() => {
+                            try {
+                                const mw = Math.ceil(menu.getBoundingClientRect().width || 0);
+                                const left = Math.round(rect.left + (rect.width / 2) - (mw / 2));
+                                const clamped = Math.max(6, Math.min(left, window.innerWidth - mw - 6));
+                                menu.style.left = `${clamped}px`;
+                            } catch (_) {
+                                menu.style.left = `${Math.round(rect.left)}px`;
+                            }
+                        }, 0);
+                    } else {
+                        menu.classList.add('hidden');
+                    }
                 });
             }
         } catch (_) {}
