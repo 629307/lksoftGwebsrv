@@ -581,13 +581,20 @@ const App = {
                     el.style.border = '1px solid var(--border-color)';
                     el.style.borderRadius = '10px';
                     el.style.boxShadow = 'var(--shadow)';
-                    el.style.padding = '8px';
+                    el.style.padding = '6px';
                     el.style.display = 'flex';
-                    el.style.gap = '8px';
+                    el.style.flexDirection = 'column';
+                    el.style.gap = '6px';
                     el.innerHTML = `
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="osm">OSM</button>
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="wmts">WMTS</button>
-                        <button type="button" class="btn btn-sm btn-secondary" data-mode="none">Без подложки</button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="osm" title="OSM">
+                            <i class="fas fa-globe"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="wmts" title="WMTS (спутник)">
+                            <i class="fas fa-satellite"></i>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-secondary" data-mode="none" title="Без подложки">
+                            <i class="fas fa-ban"></i>
+                        </button>
                     `;
                     document.body.appendChild(el);
                     this._baseLayerMenuEl = el;
@@ -633,8 +640,13 @@ const App = {
                     try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
                     const menu = ensureMenu();
                     const rect = btn.getBoundingClientRect();
+                    // вертикально под самой кнопкой
                     menu.style.top = `${Math.round(rect.bottom + 6)}px`;
                     menu.style.left = `${Math.round(rect.left)}px`;
+                    try {
+                        const w = Math.max(32, Math.round(rect.width || 0));
+                        menu.style.width = `${w}px`;
+                    } catch (_) {}
                     menu.classList.toggle('hidden');
                     this._syncBaseLayerMenuButtons();
                 });
