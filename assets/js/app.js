@@ -675,11 +675,31 @@ const App = {
         });
 
         // Импортированные слои: активация (для всех ролей)
-        document.getElementById('btn-imported-layers-activate')?.addEventListener('click', (e) => {
+        document.getElementById('btn-imported-layers-activate')?.addEventListener('click', async (e) => {
             try { e.preventDefault(); } catch (_) {}
             try {
+                const wasOpen = !!MapManager?.importedLayersLegendEnabled;
                 MapManager?.toggleImportedLayersLegend?.();
-                e.currentTarget?.classList?.toggle('active', !!MapManager?.importedLayersLegendEnabled);
+                const isOpen = !!MapManager?.importedLayersLegendEnabled;
+                e.currentTarget?.classList?.toggle('active', isOpen);
+
+                // Если окно "Импортированные слои" закрыли — скрываем ВСЕ импортированные слои
+                if (wasOpen && !isOpen) {
+                    try {
+                        if (this.settings) this.settings.imported_layers_enabled = '';
+                        if (typeof window !== 'undefined' && window.App?.settings) window.App.settings.imported_layers_enabled = '';
+                    } catch (_) {}
+
+                    try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
+
+                    // сохраняем персональную настройку (best-effort)
+                    try {
+                        const r = await API.settings.update({ imported_layers_enabled: '' });
+                        if (r?.success === false) throw new Error(r?.error || 'Не удалось сохранить настройку');
+                    } catch (err) {
+                        try { this.notify(err?.message || 'Не удалось сохранить настройку', 'error'); } catch (_) {}
+                    }
+                }
             } catch (_) {}
         });
 
