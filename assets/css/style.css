@@ -707,7 +707,7 @@ body.sidebar-resizing {
 
 #map {
     flex: 1;
-    background: var(--bg-tertiary);
+    background: var(--igs-map-bg, var(--bg-tertiary));
 }
 
 /* Cursor Coordinates */
@@ -786,7 +786,7 @@ body.sidebar-resizing {
     /* keep above cursor coordinates (#cursor-coordinates) */
     bottom: 54px;
     z-index: 600;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.85);
     color: #fff;
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 10px;
@@ -797,7 +797,7 @@ body.sidebar-resizing {
 }
 .owners-legend-title {
     font-weight: 700;
-    font-size: 12px;
+    font-size: 14px;
     margin-bottom: 8px;
     opacity: 0.95;
 }
@@ -1011,10 +1011,14 @@ body.assumed-cables-panel-open .info-panel {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12px;
+    font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+.owners-legend-item:hover {
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
 }
 .owners-legend-swatch {
     width: 14px;

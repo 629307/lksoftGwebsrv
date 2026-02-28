@@ -171,6 +171,7 @@ const App = {
                     'btn-toggle-direction-length-labels',
                     'btn-toggle-direction-length-labels-toolbar',
                     'btn-toggle-owner-legend',
+                    'btn-imported-layers-activate',
                     // безопасная операция (не меняет данные) — разрешаем всем
                     'btn-refresh-map',
                 ]);
@@ -417,6 +418,14 @@ const App = {
             const color = raw && /^#[0-9a-f]{6}$/i.test(raw) ? raw : '#ffff00';
             document.documentElement.style.setProperty('--igs-selected-color', color);
             try { MapManager?.setSelectedHaloLayer?.(MapManager?.selectedLayer); } catch (_) {}
+        } catch (_) {}
+
+        // Фон карты (CSS var)
+        try {
+            const raw = (this.settings.map_background_color ?? '').toString().trim();
+            const val = raw && /^#[0-9a-f]{6}$/i.test(raw) ? raw : '';
+            if (val) document.documentElement.style.setProperty('--igs-map-bg', val);
+            else document.documentElement.style.removeProperty('--igs-map-bg');
         } catch (_) {}
 
         // Применяем ссылки в сайдбаре
@@ -2111,7 +2120,25 @@ const App = {
                 const fDat = document.getElementById('imported-layer-dat')?.files?.[0];
                 const fMap = document.getElementById('imported-layer-map')?.files?.[0];
                 const fId = document.getElementById('imported-layer-id')?.files?.[0];
-                if (!name || !String(name).trim()) {
+                const baseName = (fname) => {
+                    try {
+                        const s = (fname ?? '').toString();
+                        const last = s.split(/[\\/]/).pop() || '';
+                        return last.replace(/\.[^.]+$/, '');
+                    } catch (_) {
+                        return '';
+                    }
+                };
+                let layerName = (name ?? '').toString().trim();
+                if (!layerName) {
+                    const f0 = fTab || fDat || fMap || fId;
+                    const bn = baseName(f0?.name);
+                    if (bn) {
+                        layerName = bn;
+                        try { document.getElementById('imported-layer-name').value = bn; } catch (_) {}
+                    }
+                }
+                if (!layerName) {
                     this.notify('Укажите имя слоя', 'error');
                     return;
                 }
@@ -2126,7 +2153,7 @@ const App = {
                 }
 
                 const formData = new FormData();
-                formData.append('name', String(name).trim());
+                formData.append('name', String(layerName).trim());
                 if (code && String(code).trim()) formData.append('code', String(code).trim());
                 formData.append('tab_file', fTab);
                 formData.append('dat_file', fDat);
@@ -6872,6 +6899,7 @@ const App = {
         const fsWell = document.getElementById('settings-font-size-well-number');
         const fsDirLen = document.getElementById('settings-font-size-direction-length');
         const selColor = document.getElementById('settings-selected-object-highlight-color');
+        const mapBg = document.getElementById('settings-map-background-color');
         const magnetPx = document.getElementById('settings-magnet-pixels');
         const geo = document.getElementById('settings-url-geoproj');
         const cad = document.getElementById('settings-url-cadastre');
@@ -6950,6 +6978,21 @@ const App = {
         if (fsWell) fsWell.value = (this.settings.font_size_well_number_label ?? 12);
         if (fsDirLen) fsDirLen.value = (this.settings.font_size_direction_length_label ?? 12);
         if (selColor) selColor.value = (this.settings.selected_object_highlight_color ?? '#ffff00');
+        if (mapBg) {
+            const raw = (this.settings.map_background_color ?? '').toString().trim();
+            if (raw && /^#[0-9a-f]{6}$/i.test(raw)) {
+                mapBg.value = raw;
+            } else {
+                // default: take from theme var(--bg-tertiary)
+                try {
+                    const cs = getComputedStyle(document.documentElement).getPropertyValue('--bg-tertiary').trim();
+                    if (cs && /^#[0-9a-f]{6}$/i.test(cs)) mapBg.value = cs;
+                    else mapBg.value = '#0f3460';
+                } catch (_) {
+                    mapBg.value = '#0f3460';
+                }
+            }
+        }
         if (magnetPx) magnetPx.value = (this.settings.magnet_pixels ?? 0);
         if (geo) geo.value = (this.settings.url_geoproj ?? '');
         if (cad) cad.value = (this.settings.url_cadastre ?? '');
@@ -7300,6 +7343,7 @@ const App = {
         const fsWell = document.getElementById('settings-font-size-well-number')?.value;
         const fsDirLen = document.getElementById('settings-font-size-direction-length')?.value;
         const selColor = document.getElementById('settings-selected-object-highlight-color')?.value;
+        const mapBg = document.getElementById('settings-map-background-color')?.value;
         const magnetPx = document.getElementById('settings-magnet-pixels')?.value;
         const geo = document.getElementById('settings-url-geoproj')?.value;
         const cad = document.getElementById('settings-url-cadastre')?.value;
@@ -7378,6 +7422,7 @@ const App = {
             font_size_well_number_label: fsWell,
             font_size_direction_length_label: fsDirLen,
             selected_object_highlight_color: (selColor ?? '').toString().trim(),
+            map_background_color: (mapBg ?? '').toString().trim(),
             magnet_pixels: magnetPx,
             url_geoproj: geo,
             url_cadastre: cad,

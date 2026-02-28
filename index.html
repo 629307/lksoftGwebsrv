@@ -16,7 +16,7 @@
     <link rel="icon" href="assets/favicon.svg" />
 
     <!-- Custom CSS (версия для сброса кеша) -->
-    <link rel="stylesheet" href="assets/css/style.css?v=2.6.1" />
+    <link rel="stylesheet" href="assets/css/style.css?v=2.6.2" />
 </head>
 <body class="theme-dark">
     <!-- Экран загрузки -->
@@ -912,6 +912,11 @@
                                 <p class="text-muted">Применяется к подсветке выбранного объекта на карте.</p>
                             </div>
                             <div class="form-group">
+                                <label>Фон карты</label>
+                                <input type="color" id="settings-map-background-color">
+                                <p class="text-muted">Цвет фона карты (область под подложкой и при выключенной подложке).</p>
+                            </div>
+                            <div class="form-group">
                                 <label>Магнитные пиксели</label>
                                 <input type="number" id="settings-magnet-pixels" step="1" min="0" placeholder="0">
                                 <p class="text-muted">Если курсор ближе к объекту чем на X пикселей — попадание/наведение срабатывает “как будто по объекту”. 0 — выключено.</p>
@@ -1102,8 +1107,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     
     <!-- Custom JS (версия для сброса кеша) -->
-    <script src="assets/js/api.js?v=2.6.1"></script>
-    <script src="assets/js/map.js?v=2.6.1"></script>
-    <script src="assets/js/app.js?v=2.6.1"></script>
+    <script src="assets/js/api.js?v=2.6.2"></script>
+    <script src="assets/js/map.js?v=2.6.2"></script>
+    <script src="assets/js/app.js?v=2.6.2"></script>
 </body>
 </html>

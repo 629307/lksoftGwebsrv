@@ -29,6 +29,8 @@ class SettingsController extends BaseController
             'font_size_direction_length_label' => '12',
             // Персональная подсветка выбранного объекта (точка/линия)
             'selected_object_highlight_color' => '#ffff00',
+            // Персональный фон карты (#map background)
+            'map_background_color' => '',
             // Магнитные пиксели для попадания/наведения на объекты карты
             'magnet_pixels' => '0',
             // Ресурс пересчёта координат (по умолчанию)
@@ -310,6 +312,7 @@ class SettingsController extends BaseController
             'font_size_well_number_label',
             'font_size_direction_length_label',
             'selected_object_highlight_color',
+            'map_background_color',
             'magnet_pixels',
         ] : [
             // Разрешаем только персональные настройки
@@ -341,6 +344,7 @@ class SettingsController extends BaseController
             'hotkey_add_ground_cable',
             'hotkey_add_aerial_cable',
             'selected_object_highlight_color',
+            'map_background_color',
             'magnet_pixels',
         ];
 
