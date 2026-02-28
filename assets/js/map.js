@@ -2079,6 +2079,12 @@ const MapManager = {
                             }
                         };
                         layer.on('click', (e) => {
+                            // Линейка: клик по объекту ставит точку, без выбора объекта
+                            if (this.rulerMode && e?.latlng) {
+                                try { L.DomEvent.stopPropagation(e); } catch (_) {}
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             // Проверяем режим добавления направления
                             if (this.addDirectionMode) {
                                 L.DomEvent.stopPropagation(e);
@@ -2445,17 +2451,19 @@ const MapManager = {
             const ownersEl = this.ownersLegendEl || document.getElementById('owners-legend');
             const impEl = this.importedLayersLegendEl || document.getElementById('imported-layers-legend');
             if (!ownersEl || !impEl) return;
-            // базовое положение
+            // базовое положение: вертикально друг над другом
             ownersEl.style.left = '10px';
             impEl.style.left = '10px';
+            ownersEl.style.bottom = '54px';
 
             const ownersVisible = !ownersEl.classList.contains('hidden');
             const impVisible = !impEl.classList.contains('hidden');
             if (ownersVisible && impVisible) {
-                // импортированные слои сдвигаем вправо на ширину owners legend + gap
-                const w = Math.ceil((ownersEl.getBoundingClientRect?.().width || 0));
-                const left = 10 + (w > 0 ? (w + 12) : 0);
-                impEl.style.left = `${left}px`;
+                const h = Math.ceil((ownersEl.getBoundingClientRect?.().height || 0));
+                const bottom = 54 + (h > 0 ? (h + 12) : 0);
+                impEl.style.bottom = `${bottom}px`;
+            } else {
+                impEl.style.bottom = '54px';
             }
         } catch (_) {}
     },
@@ -2486,7 +2494,7 @@ const MapManager = {
                     const checked = enabledSet.has(code);
                     const col = colorFor(l);
                     return `
-                        <div class="owners-legend-item" title="${name}">
+                        <div class="owners-legend-item imported-layer-row" data-code="${esc(code)}" title="${name}" style="cursor:pointer;">
                             <span class="owners-legend-swatch" style="background:${col}; cursor:default;" title="Цвет точечных объектов"></span>
                             <span class="owners-legend-text">${esc(l?.name ?? l?.code ?? '')}</span>
                             <span style="margin-left:auto; display:flex; align-items:center;">
@@ -2521,6 +2529,22 @@ const MapManager = {
                         try { e.currentTarget.checked = !e.currentTarget.checked; } catch (_) {}
                         App?.notify?.(err?.message || 'Не удалось сохранить настройку', 'error');
                     }
+                });
+            });
+        } catch (_) {}
+
+        // клик по строке включает/выключает
+        try {
+            el.querySelectorAll('.imported-layer-row[data-code]').forEach((row) => {
+                row.addEventListener('click', (e) => {
+                    try { e.preventDefault(); } catch (_) {}
+                    const t = e.target;
+                    // если клик по самому чекбоксу — он сам обработает
+                    if (t && (t.tagName || '').toUpperCase() === 'INPUT') return;
+                    const cb = row.querySelector('input.imported-layer-enable-cb');
+                    if (!cb) return;
+                    cb.checked = !cb.checked;
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
                 });
             });
         } catch (_) {}
@@ -3049,6 +3073,12 @@ const MapManager = {
                         if (routeId) this._assumedRouteLayerById.set(routeId, layer);
                         // не даём клику "провалиться" в выбор объектов
                         layer.on('click', (e) => {
+                            // Линейка: клик по объекту ставит точку, без выбора объекта
+                            if (this.rulerMode && e?.latlng) {
+                                try { L.DomEvent.stopPropagation(e); } catch (_) {}
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             try { L.DomEvent.stopPropagation(e); } catch (_) {}
                             try {
                                 const rid = parseInt(routeId || 0, 10);
@@ -3740,6 +3770,12 @@ const MapManager = {
                     onEachFeature: (feature, layer) => {
                         layer._igsMeta = { objectType: 'channel_direction', properties: feature.properties };
                         layer.on('click', async (e) => {
+                            // Линейка: клик по объекту ставит точку, без выбора объекта
+                            if (this.rulerMode && e?.latlng) {
+                                try { L.DomEvent.stopPropagation(e); } catch (_) {}
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             if (this.addDuctCableMode) {
                                 L.DomEvent.stopPropagation(e);
                                 await this.handleDirectionClickForDuctCable(feature.properties?.id);
@@ -3803,6 +3839,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'marker_post', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.rulerMode && e?.latlng) {
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             if (this.addCableMode && e?.latlng) {
                                 this.handleAddCableClick(e.latlng);
                                 return;
@@ -3876,6 +3916,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'unified_cable', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.rulerMode && e?.latlng) {
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             if (this.addCableMode && e?.latlng) {
                                 this.handleAddCableClick(e.latlng);
                                 return;
@@ -6100,6 +6144,10 @@ const MapManager = {
                         layer._igsMeta = { objectType: 'well', properties: feature.properties };
                         layer.on('click', (e) => {
                             L.DomEvent.stopPropagation(e);
+                            if (this.rulerMode && e?.latlng) {
+                                try { this.addRulerPoint(e.latlng); } catch (_) {}
+                                return;
+                            }
                             if (this.addCableMode && e?.latlng) {
                                 this.handleAddCableClick(e.latlng);
                                 return;
@@ -6146,6 +6194,10 @@ const MapManager = {
                     layer._igsMeta = { objectType, properties: feature.properties };
                     layer.on('click', (e) => {
                         L.DomEvent.stopPropagation(e);
+                        if (this.rulerMode && e?.latlng) {
+                            try { this.addRulerPoint(e.latlng); } catch (_) {}
+                            return;
+                        }
                         if (this.addCableMode && e?.latlng) {
                             this.handleAddCableClick(e.latlng);
                             return;
