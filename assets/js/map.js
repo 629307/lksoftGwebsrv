@@ -755,6 +755,18 @@ const MapManager = {
                 },
                 onEachFeature: (feature, lyr) => {
                     try { this._bindImportedLayerPopup(lyr, feature?.properties || {}); } catch (_) {}
+                    // Линейка: клик по импортированному объекту ставит точку, игнорируя попап/выбор
+                    try {
+                        lyr.on('click', (e) => {
+                            if (!this.rulerMode || !e?.latlng) return;
+                            try {
+                                if (e?.originalEvent) L.DomEvent.stop(e.originalEvent);
+                                else L.DomEvent.stopPropagation(e);
+                            } catch (_) {}
+                            try { this.addRulerPoint(e.latlng); } catch (_) {}
+                            try { lyr.closePopup?.(); } catch (_) {}
+                        });
+                    } catch (_) {}
                 },
             });
             layer.addTo(st.group);
@@ -2371,6 +2383,7 @@ const MapManager = {
         if (!this.ownersLegendEnabled) {
             el.classList.add('hidden');
             el.innerHTML = '';
+            try { this.updateMapOverlaysLayout?.(); } catch (_) {}
             return;
         }
         const owners = await this.fetchOwnersLegendData();
