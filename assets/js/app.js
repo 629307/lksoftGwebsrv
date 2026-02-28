@@ -2199,9 +2199,26 @@ const App = {
                                     reject(new Error('Слишком большой слой (413 Request Entity Too Large). Увеличьте лимит загрузки на сервере (nginx: client_max_body_size; php/apache: upload_max_filesize/post_max_size).'));
                                     return;
                                 }
-                                const text = xhr.responseText || '';
-                                const data = JSON.parse(text);
-                                resolve(data);
+                                const ct = (xhr.getResponseHeader('content-type') || '').toString().toLowerCase();
+                                const text = (xhr.responseText || '').toString();
+                                // Сервер/прокси иногда возвращает HTML на ошибках (502/504/500/413 и т.п.)
+                                if (!ct.includes('application/json')) {
+                                    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 260);
+                                    const hint =
+                                        (xhr.status === 502) ? ' (Bad Gateway: PHP-FPM/сервер недоступен)' :
+                                        (xhr.status === 504) ? ' (Gateway Timeout: импорт слишком долгий)' :
+                                        (xhr.status === 500) ? ' (Internal Server Error)' :
+                                        '';
+                                    reject(new Error(`Ошибка ответа сервера (${xhr.status})${hint}. Ожидался JSON. ${snippet ? 'Ответ: ' + snippet : ''}`));
+                                    return;
+                                }
+                                try {
+                                    const data = JSON.parse(text);
+                                    resolve(data);
+                                } catch (_) {
+                                    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 260);
+                                    reject(new Error(`Некорректный JSON в ответе сервера (${xhr.status}). ${snippet ? 'Ответ: ' + snippet : ''}`));
+                                }
                             } catch (err) {
                                 reject(new Error('bad_response'));
                             }
