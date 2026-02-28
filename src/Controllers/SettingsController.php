@@ -213,14 +213,48 @@ class SettingsController extends BaseController
         if (!$user) {
             Response::error('Требуется авторизация', 401);
         }
-        if (Auth::hasRole('readonly')) {
-            Response::error('Настройки недоступны для роли "Только чтение"', 403);
-        }
 
         // JSON body уже распарсен в Request::parseBody() при Content-Type: application/json
         $data = $this->request->input(null, []);
         if (!is_array($data)) {
             Response::error('Некорректные данные', 422);
+        }
+
+        // Роль "Только чтение": не даём доступ к панели настроек,
+        // но разрешаем менять персональные переключатели, необходимые для карты.
+        // По ТЗ: активация импортированных слоёв должна работать для всех ролей.
+        if (Auth::hasRole('readonly')) {
+            $allowedRo = ['imported_layers_enabled'];
+            $toSaveRo = array_intersect_key($data, array_flip($allowedRo));
+            if (!$toSaveRo) {
+                Response::error('Настройки недоступны для роли "Только чтение"', 403);
+            }
+            $saved = [];
+            try {
+                $this->db->beginTransaction();
+                foreach ($toSaveRo as $code => $value) {
+                    if ($value === null) $value = '';
+                    if (is_bool($value) || is_int($value) || is_float($value)) $value = (string) $value;
+                    if (is_array($value) || is_object($value)) {
+                        Response::error('Некорректное значение настройки: ' . $code, 422);
+                    }
+                    $this->db->query(
+                        "INSERT INTO user_settings(user_id, code, value, updated_at)
+                         VALUES (:uid, :code, :value, NOW())
+                         ON CONFLICT (user_id, code) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                        ['uid' => (int) $user['id'], 'code' => $code, 'value' => (string) $value]
+                    );
+                    $saved[$code] = (string) $value;
+                }
+                $this->db->commit();
+            } catch (\PDOException $e) {
+                $this->db->rollback();
+                Response::error('Таблица настроек не создана. Примените миграцию database/migration_v6.sql и database/migration_v7.sql', 500);
+            } catch (\Throwable $e) {
+                $this->db->rollback();
+                throw $e;
+            }
+            Response::success($saved, 'Настройки сохранены');
         }
 
         $isAdmin = Auth::isAdmin();

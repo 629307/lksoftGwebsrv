@@ -389,8 +389,9 @@ class ImportedLayerController extends BaseController
     {
         $this->requireAdminLike();
 
+        // Имя слоя может прийти пустым (например, при больших файлах и нестабильном UI).
+        // В этом случае подставим базовое имя файла.
         $name = trim((string) $this->request->input('name', ''));
-        if ($name === '') Response::error('Необходимо указать "Имя слоя"', 422);
 
         $tab = $this->request->file('tab_file');
         $dat = $this->request->file('dat_file');
@@ -412,6 +413,8 @@ class ImportedLayerController extends BaseController
         if ($base === '' || strcasecmp($base, (string) $baseDat) !== 0 || strcasecmp($base, (string) $baseMap) !== 0 || strcasecmp($base, (string) $baseId) !== 0) {
             Response::error('Файлы слоя должны иметь одинаковое базовое имя (например: layer.tab/layer.dat/layer.map/layer.id)', 422);
         }
+        if ($name === '') $name = $base;
+        if ($name === '') Response::error('Необходимо указать "Имя слоя"', 422);
 
         $codeRaw = trim((string) $this->request->input('code', ''));
         $code = $codeRaw !== '' ? $this->slugifyCode($codeRaw) : $this->slugifyCode($name);
