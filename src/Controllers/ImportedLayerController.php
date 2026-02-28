@@ -389,6 +389,17 @@ class ImportedLayerController extends BaseController
     {
         $this->requireAdminLike();
 
+        // Если PHP отклонил тело POST (post_max_size), $_FILES может быть пустым.
+        try {
+            $filesAll = $this->request->files();
+            $cl = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+            if ($cl > 0 && (!is_array($filesAll) || count($filesAll) === 0)) {
+                $pm = (string) @ini_get('post_max_size');
+                $um = (string) @ini_get('upload_max_filesize');
+                Response::error('Слишком большой запрос или превышены лимиты PHP загрузки. Проверьте post_max_size=' . $pm . ' и upload_max_filesize=' . $um, 413);
+            }
+        } catch (\Throwable $e) {}
+
         // Имя слоя может прийти пустым (например, при больших файлах и нестабильном UI).
         // В этом случае подставим базовое имя файла.
         $name = trim((string) $this->request->input('name', ''));
@@ -398,11 +409,36 @@ class ImportedLayerController extends BaseController
         $map = $this->request->file('map_file');
         $idf = $this->request->file('id_file');
 
-        $need = ['tab_file' => $tab, 'dat_file' => $dat, 'map_file' => $map, 'id_file' => $idf];
-        foreach ($need as $k => $f) {
-            if (!$f || !is_array($f) || ($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                Response::error('Необходимо загрузить файлы .TAB, .DAT, .MAP, .ID', 400);
+        $errText = function($f): string {
+            $e = (int) ($f['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($e === UPLOAD_ERR_OK) return '';
+            if ($e === UPLOAD_ERR_INI_SIZE) return 'файл превышает upload_max_filesize';
+            if ($e === UPLOAD_ERR_FORM_SIZE) return 'файл превышает MAX_FILE_SIZE (форма)';
+            if ($e === UPLOAD_ERR_PARTIAL) return 'файл загружен частично';
+            if ($e === UPLOAD_ERR_NO_FILE) return 'файл не передан';
+            if ($e === UPLOAD_ERR_NO_TMP_DIR) return 'нет временной директории';
+            if ($e === UPLOAD_ERR_CANT_WRITE) return 'ошибка записи на диск';
+            if ($e === UPLOAD_ERR_EXTENSION) return 'загрузка остановлена расширением PHP';
+            return 'ошибка загрузки (код ' . $e . ')';
+        };
+
+        $need = ['TAB' => $tab, 'DAT' => $dat, 'MAP' => $map, 'ID' => $idf];
+        $bad = [];
+        foreach ($need as $ext => $f) {
+            if (!$f || !is_array($f)) {
+                $bad[] = $ext . ': файл не передан';
+                continue;
             }
+            $t = $errText($f);
+            if ($t !== '') $bad[] = $ext . ': ' . $t;
+        }
+        if ($bad) {
+            $pm = (string) @ini_get('post_max_size');
+            $um = (string) @ini_get('upload_max_filesize');
+            Response::error(
+                "Не удалось загрузить файлы слоя:\n- " . implode("\n- ", $bad) . "\n\nЛимиты PHP: post_max_size={$pm}, upload_max_filesize={$um}",
+                400
+            );
         }
 
         $baseTab = pathinfo((string) ($tab['name'] ?? ''), PATHINFO_FILENAME);
