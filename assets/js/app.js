@@ -125,12 +125,12 @@ const App = {
             document.getElementById('btn-delete-object')?.classList.add('hidden');
         }
 
-        // Роль "Только чтение": в меню доступна только карта, в тулбаре карты — только переключатели подписей/легенды
+        // Роль "Только чтение": в меню доступны карта и персональные настройки интерфейса карты
         if ((this.user?.role?.code || '') === 'readonly') {
-            // Навигация: оставляем только "Карта"
+            // Навигация: оставляем только "Карта" и "Настройки"
             document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
                 const p = el?.dataset?.panel;
-                if (p && p !== 'map') el.classList.add('hidden');
+                if (p && p !== 'map' && p !== 'settings') el.classList.add('hidden');
             });
             // Слой/функционал "Инвентаризация" недоступен для роли readonly
             try {
@@ -352,7 +352,7 @@ const App = {
             ]);
         } else if (roleCode === 'readonly') {
             add('Только чтение', [
-                'В меню доступна только “Карта”.',
+                'В меню доступны “Карта” и “Настройки” (только персональные настройки интерфейса карты).',
                 'Доступны слои, фильтры и ссылки.',
                 'Запрещено создание/редактирование/удаление объектов, инцидентов, контрактов, отчётов, справочников, пользователей и системных настроек.',
             ]);
@@ -1437,8 +1437,8 @@ const App = {
      * Переключение панели
      */
     switchPanel(panel) {
-        // Роль "Только чтение": доступна только карта
-        if ((this.user?.role?.code || '') === 'readonly' && panel !== 'map') {
+        // Роль "Только чтение": доступна только карта и настройки (персональный интерфейс карты)
+        if ((this.user?.role?.code || '') === 'readonly' && panel !== 'map' && panel !== 'settings') {
             panel = 'map';
         }
         this.currentPanel = panel;
@@ -6918,7 +6918,7 @@ const App = {
         // По ТЗ:
         // - admin/root: все секции
         // - user: только интерфейс карты + ссылки меню + hotkeys
-        // - readonly: панель недоступна (switchPanel принудительно возвращает на карту), но на всякий случай скроем всё
+        // - readonly: доступны только персональные настройки интерфейса карты ГИС
         const hideSection = (id, hide) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -6944,7 +6944,7 @@ const App = {
         }
         if (roleCode === 'readonly') {
             hideSection('settings-section-data', true);
-            hideSection('settings-section-ui', true);
+            hideSection('settings-section-ui', false);
             hideSection('settings-section-links', true);
             hideSection('settings-section-wmts', true);
             hideSection('settings-section-hotkeys', true);
@@ -7474,7 +7474,18 @@ const App = {
             return s.toLowerCase();
         };
 
-        const payload = {
+        const isReadonly = ((this.user?.role?.code || '') === 'readonly');
+        const payload = isReadonly ? {
+            // readonly: только персональные настройки блока "Настройка интерфейса карты ГИС"
+            line_weight_direction: wDir,
+            line_weight_cable: wCable,
+            icon_size_well_marker: iconSize,
+            font_size_well_number_label: fsWell,
+            font_size_direction_length_label: fsDirLen,
+            selected_object_highlight_color: (selColor ?? '').toString().trim(),
+            map_background_color: (mapBg ?? '').toString().trim(),
+            magnet_pixels: magnetPx,
+        } : {
             map_default_zoom: z,
             map_default_lat: lat,
             map_default_lng: lng,
