@@ -2550,10 +2550,10 @@ const MapManager = {
         try {
             el.querySelectorAll('.imported-layer-row[data-code]').forEach((row) => {
                 row.addEventListener('click', (e) => {
-                    try { e.preventDefault(); } catch (_) {}
                     const t = e.target;
                     // если клик по самому чекбоксу — он сам обработает
                     if (t && (t.tagName || '').toUpperCase() === 'INPUT') return;
+                    try { e.preventDefault(); } catch (_) {}
                     const cb = row.querySelector('input.imported-layer-enable-cb');
                     if (!cb) return;
                     cb.checked = !cb.checked;
