@@ -683,21 +683,44 @@ const App = {
                 const isOpen = !!MapManager?.importedLayersLegendEnabled;
                 e.currentTarget?.classList?.toggle('active', isOpen);
 
-                // Если окно "Импортированные слои" закрыли — скрываем ВСЕ импортированные слои
+                // Если окно "Импортированные слои" закрыли — скрываем ВСЕ импортированные слои,
+                // но персонально запоминаем, какие были активны, чтобы восстановить при следующем включении.
                 if (wasOpen && !isOpen) {
+                    const prevCsv = (this.settings?.imported_layers_enabled ?? '').toString().trim();
                     try {
+                        if (this.settings) this.settings.imported_layers_enabled_stash = prevCsv;
                         if (this.settings) this.settings.imported_layers_enabled = '';
                         if (typeof window !== 'undefined' && window.App?.settings) window.App.settings.imported_layers_enabled = '';
+                        if (typeof window !== 'undefined' && window.App?.settings) window.App.settings.imported_layers_enabled_stash = prevCsv;
                     } catch (_) {}
 
                     try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
 
                     // сохраняем персональную настройку (best-effort)
                     try {
-                        const r = await API.settings.update({ imported_layers_enabled: '' });
+                        const r = await API.settings.update({ imported_layers_enabled: '', imported_layers_enabled_stash: prevCsv });
                         if (r?.success === false) throw new Error(r?.error || 'Не удалось сохранить настройку');
                     } catch (err) {
                         try { this.notify(err?.message || 'Не удалось сохранить настройку', 'error'); } catch (_) {}
+                    }
+                }
+
+                // Если окно включили обратно — восстановим активные слои как были при выключении (если сейчас все выключены)
+                if (!wasOpen && isOpen) {
+                    const cur = (this.settings?.imported_layers_enabled ?? '').toString().trim();
+                    const stash = (this.settings?.imported_layers_enabled_stash ?? '').toString().trim();
+                    if (!cur && stash) {
+                        try {
+                            if (this.settings) this.settings.imported_layers_enabled = stash;
+                            if (typeof window !== 'undefined' && window.App?.settings) window.App.settings.imported_layers_enabled = stash;
+                        } catch (_) {}
+                        try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
+                        try {
+                            const r = await API.settings.update({ imported_layers_enabled: stash });
+                            if (r?.success === false) throw new Error(r?.error || 'Не удалось сохранить настройку');
+                        } catch (err) {
+                            try { this.notify(err?.message || 'Не удалось сохранить настройку', 'error'); } catch (_) {}
+                        }
                     }
                 }
             } catch (_) {}

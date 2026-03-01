@@ -19,6 +19,8 @@ class SettingsController extends BaseController
             'map_default_lng' => '76.68617',
             // Импортированные слои: персональная активация (CSV codes)
             'imported_layers_enabled' => '',
+            // Импортированные слои: "снимок" активных слоёв при временном выключении через кнопку "Активировать"
+            'imported_layers_enabled_stash' => '',
             'cable_in_well_length_m' => '2', // глобально для всех, меняет только root
             'input_well_number_start' => '1', // глобально: начало нумерации для "вводных" колодцев
             'well_pole_number_start' => '100000', // глобально: начало нумерации для "опора-мачта"
@@ -226,6 +228,8 @@ class SettingsController extends BaseController
             $allowedRo = [
                 // Импортированные слои: персональная активация должна работать для всех ролей
                 'imported_layers_enabled',
+                // "Снимок" включённых импортированных слоёв (для восстановления после временного выключения)
+                'imported_layers_enabled_stash',
                 // Настройка интерфейса карты ГИС (персональная)
                 'line_weight_direction',
                 'line_weight_cable',
@@ -318,6 +322,7 @@ class SettingsController extends BaseController
             'url_cadastre',
             'map_layers',
             'imported_layers_enabled',
+            'imported_layers_enabled_stash',
             'sidebar_width',
             // WMTS (спутник)
             'wmts_url_template',
@@ -363,6 +368,7 @@ class SettingsController extends BaseController
             // Разрешаем только персональные настройки
             'map_layers',
             'imported_layers_enabled',
+            'imported_layers_enabled_stash',
             'sidebar_width',
             // Персональные значения по умолчанию (панель карты)
             'default_type_id_direction',
