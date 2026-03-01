@@ -220,11 +220,22 @@ class SettingsController extends BaseController
             Response::error('Некорректные данные', 422);
         }
 
-        // Роль "Только чтение": не даём доступ к панели настроек,
-        // но разрешаем менять персональные переключатели, необходимые для карты.
-        // По ТЗ: активация импортированных слоёв должна работать для всех ролей.
+        // Роль "Только чтение": разрешаем менять только персональные настройки интерфейса карты
+        // (и необходимые переключатели карты). Системные/глобальные настройки недоступны.
         if (Auth::hasRole('readonly')) {
-            $allowedRo = ['imported_layers_enabled'];
+            $allowedRo = [
+                // Импортированные слои: персональная активация должна работать для всех ролей
+                'imported_layers_enabled',
+                // Настройка интерфейса карты ГИС (персональная)
+                'line_weight_direction',
+                'line_weight_cable',
+                'icon_size_well_marker',
+                'font_size_well_number_label',
+                'font_size_direction_length_label',
+                'selected_object_highlight_color',
+                'map_background_color',
+                'magnet_pixels',
+            ];
             $toSaveRo = array_intersect_key($data, array_flip($allowedRo));
             if (!$toSaveRo) {
                 Response::error('Настройки недоступны для роли "Только чтение"', 403);
