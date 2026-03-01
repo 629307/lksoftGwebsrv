@@ -715,6 +715,9 @@ const App = {
                             if (typeof window !== 'undefined' && window.App?.settings) window.App.settings.imported_layers_enabled = stash;
                         } catch (_) {}
                         try { MapManager?.applyImportedLayersEnabledFromSettings?.(); } catch (_) {}
+                        // Важно: легенда могла быть отрисована сразу при открытии (пока imported_layers_enabled был пустым).
+                        // Перерисуем, чтобы чекбоксы и строки отразили восстановленные включенные слои.
+                        try { await MapManager?.renderImportedLayersLegend?.(); } catch (_) {}
                         try {
                             const r = await API.settings.update({ imported_layers_enabled: stash });
                             if (r?.success === false) throw new Error(r?.error || 'Не удалось сохранить настройку');
